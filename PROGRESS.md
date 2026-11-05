@@ -3,8 +3,8 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 1 — Design system & app shell (static)
-- **Next phase:** Phase 2 — Persistence, settings & secrets
+- **Last completed:** Phase 2 — Persistence, settings & secrets
+- **Next phase:** Phase 3 — LLM layer & streaming chat
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -18,7 +18,98 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Linux-side quick checks** (added in Phase 1): once `node_modules` exists on Windows, the VM can run the pure-JS tools directly. Use `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`, `node node_modules/eslint/bin/eslint.js src --max-warnings 0` and `node node_modules/prettier/bin/prettier.cjs --check src`. Vitest and Vite can't run there (they need Windows-native esbuild/rollup). Don't run them while `check.ps1` is in its prettier step, because files are being rewritten.
 - **New npm packages:** add them to `package.json` from the agent side. A plain `npm install` in the phase script then picks them up, with no separate "deps" click needed.
 - **Line endings:** write `.cmd` files with CRLF (`sed -i 's/$/\r/'`). Everything else uses LF. Since Phase 1, `.gitattributes` keeps `*.cmd`/`*.bat` as CRLF on checkout. To commit outside a phase script, write `logs\commit-msg.txt` and ask the user to double-click `scripts\win\commit.cmd`.
+- **Linux-side Rust builds** (added in Phase 2): double-click `scripts\win\phase2-fetch.cmd` after adding crates, then unpack `logs\linux-vendor.tgz` in the cloud container. Edit its scratch manifest in `phase2-fetch.ps1` to add new crates. This builds and tests the library crates offline; `src-tauri` needs Windows.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 2 — Persistence, settings & secrets — 2026-11-05
+Status: done (pending the manual exit check below). Checks run through `scripts\win\phase2.cmd`, which commits when green and then starts the app.
+
+Done:
+- **`oxide-core` types** (serde + specta, camelCase over IPC, timestamps as `i64` ms exported as `number`):
+  - `Conversation { id, title, projectId, model, starred, createdAt, updatedAt }` and `StartConversation`.
+  - `Message { id, conversationId, parentId, role, content, model, createdAt }`. `parentId` makes a tree.
+  - `ContentBlock` = text | image | document | thinking | toolUse | toolResult | artifactRef (tag `type`), plus `MediaSource` (base64 | path) and `plain_text()` for search.
+  - `Project` / `NewProject` / `ProjectPatch`, `SearchHit` (snippet terms marked with U+0002/U+0003).
+  - `AppSettings { profile { name }, appearance { theme, chatFont } }`, all `#[serde(default)]` so new fields never break old documents.
+  - `ProviderKind` (anthropic | openai | lmstudio | strata) with labels, default URLs (all end at `/v1`) and `requires_key`; `ProviderConfig` (masked `keyHint`, never the key), `ProviderInput`, `TestProvider`, `ProviderTestResult`.
+- **`oxide-store`** (sqlx 0.8, bundled SQLite):
+  - `Store::open(path)`: WAL, foreign keys, busy timeout, embedded migrations (`crates/oxide-store/migrations/0001_init.sql`). `open_in_memory()` for tests.
+  - The app opens `%APPDATA%\dev.oxide.app\oxide.db` at startup (`src-tauri/src/state.rs`).
+  - Tables: `projects`, `conversations`, `messages`, `settings`, `providers`, plus FTS5 tables `conversations_fts` and `messages_fts`. These are external-content tables, kept current by triggers, with `unicode61 remove_diacritics 2`.
+  - Searchable tables have an explicit `seq INTEGER PRIMARY KEY`, so FTS rowids survive VACUUM.
+  - Migration seeds the four default endpoints.
+  - Repositories:
+    - Conversations: start (chat + first message in one transaction), rename, star (doesn't bump `updatedAt`), set model, delete (cascades to messages and the index).
+    - Messages: list (all branches, insertion order), add (checks the parent is in the same chat, bumps the chat), edit = add a sibling.
+    - Projects: CRUD; deleting one detaches its chats.
+    - Settings: typed JSON per key; an unreadable document falls back to defaults.
+    - Providers: CRUD, plus key set/clear/read.
+  - Search: each word is quoted and prefix-matched (FTS syntax in the query is harmless). Title hits rank first, then chats by their best message match, with a snippet.
+  - **Secrets:** `SecretStore` trait with `KeyringSecrets` (keyring 3: `windows-native` → Credential Manager, `apple-native`, `linux-native`) and `MemorySecrets` for tests.
+    - Keys are stored as `provider:<id>` under service `dev.oxide.app`.
+    - Calls run on `spawn_blocking`.
+    - `Secret`'s `Debug` output is redacted.
+    - Only a masked hint (`••••abcd`) goes into SQLite.
+- **`oxide-llm::probe::list_models`:** connection test (GET `{base}/models`).
+  - Anthropic uses `x-api-key` and `anthropic-version: 2023-06-01`; the other kinds use bearer auth.
+  - Readable errors (unreachable, 401/403, API error message) that never contain the key.
+  - reqwest 0.13 with native TLS.
+- **`src-tauri`:**
+  - 24 new commands in `commands/{chats,projects,settings,providers}.rs`, registered in `specta_builder`.
+  - Fallible commands return `CommandError { kind: notFound | invalid | keychain | internal, message }`.
+  - Bindings are exported with `BigIntExportBehavior::Number`.
+  - Keys only travel frontend → backend (`setProviderKey`, `testProvider`).
+- **Frontend:**
+  - TanStack Query over `@/bindings` (`lib/api.ts` `unwrap` / `ApiError`; query hooks in `features/{chats,projects,settings,providers}/queries.ts`).
+  - Rename, star and delete are optimistic, with rollback.
+  - The sidebar, title bar breadcrumb, chat page, home and project composers, Chats page, Projects page (new **New project** dialog) and the "+" menu all read real data.
+  - The chat page shows the active branch (`features/chat/thread.ts`, `activeThread`). Editing a message creates a branch. Sending saves the message and shows "Saved. Oxide can't reply yet" until Phase 3.
+  - Search (Ctrl+K and the Chats page filter) uses FTS with highlighted snippets.
+  - Settings: name, theme and chat font are stored in SQLite. `useUi` keeps a persisted first-paint copy, so the theme shows without a flash, and Phase 1 localStorage preferences are imported once.
+  - **Settings → Providers:**
+    - Lists the endpoints; edit name, URL and key.
+    - Add an endpoint (type picker with defaults that follow the type; "Use default" link).
+    - Remove a saved key; delete an endpoint.
+    - "Test connection" works with a typed or saved key, and shows the model count, a sample and latency.
+  - Artifacts page: empty state until Phase 8.
+  - The model list is a static catalog (`features/models/catalog.ts`) until Phase 3.
+  - `features/mock/` is deleted.
+- **Tests:**
+  - 51 Rust tests in core/store/llm, including persistence across reopening the file, FTS (snippets, renames, diacritics, deletes, hostile queries), cascades, key hint vs key, and probe headers against a local TCP server.
+  - A Windows-only test round-trips a real Credential Manager entry (service `dev.oxide.app.test`, cleaned up afterwards).
+  - Vitest: an in-memory fake backend (`src/test/fakeBackend.ts`, mocked into `@/bindings` by `setup.ts`) and fixtures. App tests cover chats, edits, search, rename/star/delete, projects, settings and providers.
+  - `renderApp(path, { ui, backend })` now seeds the fake backend.
+
+Deviations from PLAN.md (and why):
+- **`ContentBlock::ToolUse.inputJson`** is a JSON string, not a `serde_json::Value`, which would need specta's `serde_json` feature. Phase 3 can switch if useful.
+- **Projects got a table and basic CRUD now**, not in Phase 7: conversations reference them and the UI already shows them. Knowledge files, instructions editing and memory stay in Phase 7.
+- **Edits already branch** (sibling message under the same parent); branch navigation is still Phase 4.
+- **Provider endpoints live in a `providers` table**, not the settings JSON, because they're CRUD-shaped and need stable ids for keychain entries.
+- **Linux keys** use the kernel keyring (`linux-native`): no D-Bus build dependency, but keys don't survive a reboot. Revisit with Secret Service in Phase 17.
+- **specta's `derive` feature is now enabled explicitly** in the workspace. Before, it only came through tauri-specta's feature unification, so library crates didn't build on their own.
+- **New workflow, Linux-side Rust builds:**
+  - `scripts\win\phase2-fetch.cmd` runs `cargo vendor` on a scratch manifest and writes `logs\linux-vendor.tgz`.
+  - The agent unpacks it in its cloud container and builds/tests core/store/llm offline (`CARGO_TARGET_DIR=$HOME/oxide-target-linux`). `src-tauri` still only builds on Windows.
+  - specta-macros isn't in that bundle, so the Linux side patches in a no-op stub; type export only runs on Windows.
+
+Known issues / TODO carried forward:
+- **No replies yet:** sending saves the message only. Phase 3 adds streaming and assistant messages via `Store::add_message`.
+- **Model picker:**
+  - It's static, and the composer's model applies to new chats only.
+  - `set_conversation_model` exists but isn't wired to the chat page yet (Phase 3).
+- **Endpoints and models:** the `enabled` flag is stored but unused until Phase 3 lists models.
+- **First run:** a key set before Phase 2's first run doesn't exist; keys only come from Settings → Providers.
+- **Search quirk:** words are prefix-matched, so "pal" finds "palette" but not "napalm". Mid-word matching would need a trigram index.
+- **`src/bindings/index.ts`** is regenerated by `cargo test` (`export_bindings`). If a type change looks wrong in TS, regenerate it before editing the frontend.
+
+Notes for Phase 3:
+- Persist assistant replies with `store.add_message(conversation_id, Some(parent), Role::Assistant, blocks, Some(model))`. The thread's leaf is the last message from `list_messages` (see `activeThread`).
+- Get keys with `store.provider_key(&state.secrets, id)`. Never put them in events or errors.
+- `probe::ANTHROPIC_VERSION` and the URL conventions (base ends at `/v1`) are in `oxide-llm/src/probe.rs`. Reuse them for the real clients.
+- The chat page has a `NoReplyYet` note and `WorkingLine` (unused) ready for streaming.
+- The fake backend in `src/test/fakeBackend.ts` must gain every new command, or tests calling it fail at type-check.
+
+Verified: clippy ✅ tests ✅ typecheck ✅ lint ✅ tauri dev on Windows ⏳ (manual exit check)
 
 ## Phase 1 — Design system & app shell (static) — 2026-11-05
 Status: done. All checks pass on Windows (fmt, prettier, clippy, cargo test, typecheck, lint, vitest 25/25). `cargo tauri dev` shows the shell on mock data in both themes.

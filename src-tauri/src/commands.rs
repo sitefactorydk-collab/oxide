@@ -1,4 +1,10 @@
-//! Tauri commands exposed to the frontend.
+//! Tauri commands exposed to the frontend. Each one is thin glue over `oxide-store` /
+//! `oxide-llm`; register new ones in `specta_builder` (lib.rs) and regenerate the bindings.
+
+pub mod chats;
+pub mod projects;
+pub mod providers;
+pub mod settings;
 
 use serde::Serialize;
 use specta::Type;

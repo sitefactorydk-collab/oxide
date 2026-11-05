@@ -251,7 +251,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 **Exit:** a model chains several MCP and web tools with approvals in one turn on both Anthropic and an LM Studio model. Stop mid-loop is clean.
 
 ### Phase 7 — Projects & memory
-- Projects: create, edit and archive, with instructions, knowledge files (upload; text extracted and stored), and a project page listing its chats and knowledge.
+- Projects: Phase 2 already stores projects (table, CRUD commands, "New project" dialog). This phase adds editing, archive, instructions editing, knowledge files (upload; text extracted and stored), and a project page listing its chats and knowledge.
 - Context strategy: knowledge that fits the budget is included in full with cache breakpoints. Above the budget, a local BM25 index (`tantivy`) and a `project_search` tool are used.
 - Chats can be moved into and out of projects.
 - **Memory (opt-in):**

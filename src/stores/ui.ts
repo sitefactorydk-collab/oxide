@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import type { ChatFont, ThemePref } from "@/bindings";
 import { safeLocalStorage } from "@/lib/storage";
 
-export type ThemePref = "system" | "light" | "dark";
-export type ChatFont = "serif" | "sans" | "system";
+export type { ChatFont, ThemePref };
 
 export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 420;
@@ -15,16 +15,23 @@ export function clampSidebarWidth(w: number): number {
 }
 
 interface UiData {
-  /** Profile name for the greeting. Phase 2 moves this into stored settings. */
+  /**
+   * First-paint cache of stored settings (profile name, theme, chat font). The source of
+   * truth is the settings document in SQLite; `useSettingsSync` keeps these in step, and
+   * persisting them here means the right theme shows before the backend answers.
+   * Change them through `features/settings/queries.ts`, not directly.
+   */
   userName: string;
   theme: ThemePref;
   chatFont: ChatFont;
+  /** Phase 1 kept the cached values above as the only copy; they're imported once. */
+  settingsMigrated: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
   rightPanelOpen: boolean;
   starredOpen: boolean;
   recentsOpen: boolean;
-  /** Selected model id for new chats (mock list until Phase 3). */
+  /** Selected model id for new chats (static catalog until Phase 3). */
   modelId: string;
   thinking: boolean;
   /** Transient overlays: not persisted. */
@@ -33,9 +40,6 @@ interface UiData {
 }
 
 interface UiActions {
-  setUserName: (name: string) => void;
-  setTheme: (theme: ThemePref) => void;
-  setChatFont: (font: ChatFont) => void;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
   toggleRightPanel: () => void;
@@ -52,6 +56,7 @@ export const defaultUiData: UiData = {
   userName: "",
   theme: "system",
   chatFont: "serif",
+  settingsMigrated: false,
   sidebarOpen: true,
   sidebarWidth: SIDEBAR_DEFAULT,
   rightPanelOpen: false,
@@ -67,9 +72,6 @@ export const useUi = create<UiState>()(
   persist(
     (set) => ({
       ...defaultUiData,
-      setUserName: (userName) => set({ userName }),
-      setTheme: (theme) => set({ theme }),
-      setChatFont: (chatFont) => set({ chatFont }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       setSidebarWidth: (w) => set({ sidebarWidth: clampSidebarWidth(w) }),
       toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
@@ -91,6 +93,7 @@ export const useUi = create<UiState>()(
         userName: s.userName,
         theme: s.theme,
         chatFont: s.chatFont,
+        settingsMigrated: s.settingsMigrated,
         sidebarOpen: s.sidebarOpen,
         sidebarWidth: s.sidebarWidth,
         rightPanelOpen: s.rightPanelOpen,

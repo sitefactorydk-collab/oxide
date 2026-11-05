@@ -1,10 +1,11 @@
 import { MessageSquare, Search } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
-import { messageText, useMock } from "@/features/mock/store";
+import { useConversations, useSearch } from "@/features/chats/queries";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/time";
+import { useDebounced } from "@/lib/useDebounced";
 import { useUi } from "@/stores/ui";
 
 interface Hit {
@@ -14,7 +15,7 @@ interface Hit {
   updatedAt: number;
 }
 
-/** Ctrl/Cmd+K: search chat titles and message text (mock data; FTS5 in Phase 2). */
+/** Ctrl/Cmd+K: full-text search over chat titles and message text. */
 export function SearchDialog() {
   const open = useUi((s) => s.searchOpen);
   const setOpen = useUi((s) => s.setSearchOpen);
@@ -35,37 +36,51 @@ export function SearchDialog() {
   );
 }
 
+const MARK_START = "\u0002";
+const MARK_END = "\u0003";
+
+/** Renders an FTS snippet, highlighting terms marked with U+0002 … U+0003. */
+export function Snippet({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  text.split(MARK_START).forEach((chunk, i) => {
+    if (i === 0) {
+      if (chunk) parts.push(chunk);
+      return;
+    }
+    const end = chunk.indexOf(MARK_END);
+    const marked = end >= 0 ? chunk.slice(0, end) : chunk;
+    const rest = end >= 0 ? chunk.slice(end + MARK_END.length) : "";
+    parts.push(
+      <mark key={i} className="rounded-sm bg-accent-soft px-0.5 text-fg">
+        {marked}
+      </mark>,
+    );
+    if (rest) parts.push(rest);
+  });
+  return <>{parts}</>;
+}
+
 function SearchBody({ onDone }: { onDone: () => void }) {
-  const conversations = useMock((s) => s.conversations);
-  const messages = useMock((s) => s.messages);
+  const { data: conversations } = useConversations();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
+  const query = useDebounced(q.trim(), 120);
+  const search = useSearch(query);
 
   const hits = useMemo<Hit[]>(() => {
-    const needle = q.trim().toLowerCase();
-    const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
-    if (!needle)
-      return sorted.slice(0, 8).map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }));
-    const out: Hit[] = [];
-    for (const c of sorted) {
-      if (c.title.toLowerCase().includes(needle)) {
-        out.push({ id: c.id, title: c.title, updatedAt: c.updatedAt });
-        continue;
-      }
-      for (const m of messages[c.id] ?? []) {
-        const text = messageText(m);
-        const at = text.toLowerCase().indexOf(needle);
-        if (at >= 0) {
-          const start = Math.max(0, at - 30);
-          const snippet = `${start > 0 ? "…" : ""}${text.slice(start, at + needle.length + 50)}…`;
-          out.push({ id: c.id, title: c.title, snippet, updatedAt: c.updatedAt });
-          break;
-        }
-      }
+    if (!query) {
+      return conversations
+        .slice(0, 8)
+        .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }));
     }
-    return out;
-  }, [q, conversations, messages]);
+    return (search.data ?? []).map((h) => ({
+      id: h.conversation.id,
+      title: h.conversation.title,
+      updatedAt: h.conversation.updatedAt,
+      ...(h.snippet ? { snippet: h.snippet } : {}),
+    }));
+  }, [query, conversations, search.data]);
 
   const go = (hit: Hit | undefined) => {
     if (!hit) return;
@@ -120,15 +135,19 @@ function SearchBody({ onDone }: { onDone: () => void }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-md text-fg">{h.title}</span>
                 {h.snippet && (
-                  <span className="block truncate text-sm text-fg-muted">{h.snippet}</span>
+                  <span className="block truncate text-sm text-fg-muted">
+                    <Snippet text={h.snippet} />
+                  </span>
                 )}
               </span>
               <span className="shrink-0 text-xs text-fg-subtle">{formatRelative(h.updatedAt)}</span>
             </button>
           </li>
         ))}
-        {hits.length === 0 && (
-          <li className="px-3 py-8 text-center text-fg-muted">No chats match “{q}”</li>
+        {hits.length === 0 && (query ? !search.isFetching : true) && (
+          <li className="px-3 py-8 text-center text-fg-muted">
+            {query ? `No chats match “${q.trim()}”` : "No chats yet"}
+          </li>
         )}
       </ul>
     </>

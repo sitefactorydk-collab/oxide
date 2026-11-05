@@ -6,9 +6,11 @@ import { OxideMark } from "@/components/OxideMark";
 import { IconButton } from "@/components/ui/IconButton";
 import { cn } from "@/lib/cn";
 import { type ChatFont, type ThemePref, useUi } from "@/stores/ui";
+import { ProvidersSection } from "@/features/providers/ProvidersSection";
+import { useSetChatFont, useSetProfileName, useSetTheme } from "./queries";
 import { findSection, SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 
-/** Static settings shell: left nav + section pages. Sections become real in the phase they name. */
+/** Settings: left nav + section pages. Sections become real in the phase they name. */
 export function SettingsDialog({
   open,
   sectionId,
@@ -82,6 +84,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <GeneralSection />;
     case "appearance":
       return <AppearanceSection />;
+    case "providers":
+      return <ProvidersSection />;
     case "about":
       return <AboutSection />;
     default:
@@ -105,7 +109,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 function GeneralSection() {
   const userName = useUi((s) => s.userName);
-  const setUserName = useUi((s) => s.setUserName);
+  const setUserName = useSetProfileName();
   return (
     <Field label="What should Oxide call you?" hint="Used in the greeting on the new chat screen.">
       <input
@@ -175,9 +179,9 @@ function ThemePreview({ mode }: { mode: "light" | "dark" | "split" }) {
 
 function AppearanceSection() {
   const theme = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
+  const setTheme = useSetTheme();
   const chatFont = useUi((s) => s.chatFont);
-  const setChatFont = useUi((s) => s.setChatFont);
+  const setChatFont = useSetChatFont();
   const themes: Array<{
     id: ThemePref;
     label: string;

@@ -13,7 +13,7 @@ import {
   MenuTrigger,
 } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { useMock } from "@/features/mock/store";
+import { useProjects } from "@/features/projects/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 
 const MOCK_CONNECTORS = ["filesystem", "github", "everything"];
@@ -26,7 +26,7 @@ export function PlusMenu({
   onPickFiles: () => void;
   onAddProjectContext: (label: string) => void;
 }) {
-  const projects = useMock((s) => s.projects);
+  const { data: projects } = useProjects();
   const openSettings = useOpenSettings();
   const [webSearch, setWebSearch] = useState(true);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({ filesystem: true });
@@ -51,6 +51,12 @@ export function PlusMenu({
             Add from a project
           </MenuSubTrigger>
           <MenuSubContent>
+            {projects.length === 0 && (
+              <MenuItem disabled>
+                <FolderClosed />
+                No projects yet
+              </MenuItem>
+            )}
             {projects.map((p) => (
               <MenuItem key={p.id} onSelect={() => onAddProjectContext(`${p.name} knowledge`)}>
                 <FolderClosed />

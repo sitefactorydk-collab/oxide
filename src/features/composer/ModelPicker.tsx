@@ -9,18 +9,17 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/ui/Menu";
-import { MOCK_MODELS, modelLabel } from "@/features/mock/data";
-import type { ModelOption } from "@/features/mock/types";
+import { MODEL_CATALOG, modelLabel, type ModelOption } from "@/features/models/catalog";
 import { useUi } from "@/stores/ui";
 
-/** Model pill in the composer. Mock list until Phase 3 discovers real models per provider. */
+/** Model pill in the composer. Static list until Phase 3 discovers real models per provider. */
 export function ModelPicker() {
   const modelId = useUi((s) => s.modelId);
   const setModelId = useUi((s) => s.setModelId);
 
   const groups = useMemo(() => {
     const map = new Map<ModelOption["provider"], ModelOption[]>();
-    for (const m of MOCK_MODELS) map.set(m.provider, [...(map.get(m.provider) ?? []), m]);
+    for (const m of MODEL_CATALOG) map.set(m.provider, [...(map.get(m.provider) ?? []), m]);
     return [...map.entries()];
   }, []);
 

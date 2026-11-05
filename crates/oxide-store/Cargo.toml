@@ -9,6 +9,26 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+oxide-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+sqlx.workspace = true
+
+# Keys go to the OS credential store. keyring 3 needs a backend feature per OS; without one
+# it silently falls back to an in-memory mock.
+[target.'cfg(windows)'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["linux-native"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

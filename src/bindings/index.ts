@@ -12,6 +12,235 @@ export const commands = {
  */
 async ping(name: string) : Promise<PingResponse> {
     return await TAURI_INVOKE("ping", { name });
+},
+/**
+ * All chats, most recently updated first.
+ */
+async listConversations() : Promise<Result<Conversation[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_conversations") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getConversation(id: string) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_conversation", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates a chat with its first user message; the title comes from the message.
+ */
+async startConversation(input: StartConversation) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_conversation", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameConversation(id: string, title: string) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_conversation", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setConversationStarred(id: string, starred: boolean) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_conversation_starred", { id, starred }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setConversationModel(id: string, model: string) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_conversation_model", { id, model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteConversation(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_conversation", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every message of a chat, all branches, parents before children.
+ */
+async listMessages(conversationId: string) : Promise<Result<Message[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_messages", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Appends a user message under `parent_id` (the current leaf of the visible thread).
+ */
+async addUserMessage(conversationId: string, parentId: string | null, text: string) : Promise<Result<Message, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_user_message", { conversationId, parentId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Edits a user message by adding a sibling branch with the new text.
+ */
+async editUserMessage(messageId: string, text: string) : Promise<Result<Message, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("edit_user_message", { messageId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Full-text search over chat titles and message text.
+ */
+async searchConversations(query: string, limit: number) : Promise<Result<SearchHit[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_conversations", { query, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listProjects() : Promise<Result<Project[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProject(id: string) : Promise<Result<Project, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_project", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createProject(input: NewProject) : Promise<Result<Project, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_project", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateProject(id: string, patch: ProjectPatch) : Promise<Result<Project, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_project", { id, patch }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes a project; its chats stay, outside any project.
+ */
+async deleteProject(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_project", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSettings() : Promise<Result<AppSettings, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Replaces the settings; returns them as stored (trimmed).
+ */
+async saveSettings(settings: AppSettings) : Promise<Result<AppSettings, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_settings", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listProviders() : Promise<Result<ProviderConfig[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_providers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates (`id: null`) or updates an endpoint.
+ */
+async saveProvider(input: ProviderInput) : Promise<Result<ProviderConfig, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_provider", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes an endpoint and its key.
+ */
+async deleteProvider(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stores an API key in the OS keychain. Returns the endpoint with the key's masked hint.
+ */
+async setProviderKey(id: string, key: string) : Promise<Result<ProviderConfig, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_provider_key", { id, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearProviderKey(id: string) : Promise<Result<ProviderConfig, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_provider_key", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lists the endpoint's models to check the URL and key. Uses `apiKey` when given, otherwise
+ * the stored key of `providerId`. Failures come back as `ok: false` with a readable message.
+ */
+async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_provider", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -25,10 +254,130 @@ async ping(name: string) : Promise<PingResponse> {
 
 /** user-defined types **/
 
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings }
+export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
+export type ChatFont = "serif" | "sans" | "system"
+export type CommandError = 
+/**
+ * The thing asked for doesn't exist (any more).
+ */
+{ kind: "notFound"; message: string } | 
+/**
+ * The request was rejected; the message says why and can be shown as is.
+ */
+{ kind: "invalid"; message: string } | 
+/**
+ * The OS keychain failed or is unavailable.
+ */
+{ kind: "keychain"; message: string } | 
+/**
+ * Anything else (database, I/O). Details are in the log.
+ */
+{ kind: "internal"; message: string }
+/**
+ * A piece of message content. Mirrors the block types of the model APIs.
+ */
+export type ContentBlock = { type: "text"; text: string } | { type: "image"; mediaType: string; source: MediaSource } | { type: "document"; mediaType: string; name: string; source: MediaSource } | 
+/**
+ * Extended-thinking output. `signature` is the provider's opaque token for replaying it.
+ */
+{ type: "thinking"; text: string; signature: string | null; durationMs: number | null } | 
+/**
+ * A tool call made by the model. `input` is the JSON arguments as text.
+ */
+{ type: "toolUse"; id: string; name: string; inputJson: string } | { type: "toolResult"; toolUseId: string; content: ContentBlock[]; isError: boolean } | { type: "artifactRef"; artifactId: string; title: string; version: number }
+/**
+ * One chat. Messages hang off it as a tree (see [`crate::Message::parent_id`]).
+ */
+export type Conversation = { id: string; title: string; projectId: string | null; 
+/**
+ * Model id chosen for this chat (`<provider>/<model>`).
+ */
+model: string; starred: boolean; createdAt: number; updatedAt: number }
+/**
+ * Where the bytes of an image or document live.
+ */
+export type MediaSource = 
+/**
+ * Inline base64 data.
+ */
+{ kind: "base64"; data: string } | 
+/**
+ * A file on disk (attachments are copied into app data in Phase 4).
+ */
+{ kind: "path"; path: string }
+/**
+ * One message in a conversation.
+ * 
+ * `parent_id` makes the messages a tree: editing a message adds a sibling under the same
+ * parent, and regenerating a reply adds a sibling reply. The visible thread is one path
+ * from the root to a leaf.
+ */
+export type Message = { id: string; conversationId: string; parentId: string | null; role: Role; content: ContentBlock[]; 
+/**
+ * Model that wrote an assistant message.
+ */
+model: string | null; createdAt: number }
+export type NewProject = { name: string; description: string }
 /**
  * Response of [`ping`]: proves the IPC round trip and the generated bindings work.
  */
 export type PingResponse = { message: string; appName: string; appVersion: string; coreVersion: string }
+export type ProfileSettings = { 
+/**
+ * What Oxide calls the user (greeting, avatar initials).
+ */
+name: string }
+export type Project = { id: string; name: string; description: string; instructions: string; createdAt: number; updatedAt: number }
+/**
+ * Partial update: `None` leaves a field as it is.
+ */
+export type ProjectPatch = { name: string | null; description: string | null; instructions: string | null }
+/**
+ * A configured endpoint as the UI sees it.
+ */
+export type ProviderConfig = { id: string; kind: ProviderKind; name: string; baseUrl: string; enabled: boolean; 
+/**
+ * Masked form of the stored key (e.g. `…a1b2`), or `None` when no key is stored.
+ */
+keyHint: string | null; createdAt: number; updatedAt: number }
+/**
+ * Create (`id: None`) or update an endpoint. Keys are set separately.
+ */
+export type ProviderInput = { id: string | null; kind: ProviderKind; name: string; baseUrl: string; enabled: boolean }
+/**
+ * The API family an endpoint speaks.
+ */
+export type ProviderKind = "anthropic" | "openai" | "lmstudio" | "strata"
+export type ProviderTestResult = { ok: boolean; 
+/**
+ * Human-readable outcome. Never contains the key.
+ */
+message: string; modelCount: number; 
+/**
+ * Up to 20 model ids, as a sample.
+ */
+models: string[]; latencyMs: number }
+/**
+ * Who wrote a message.
+ */
+export type Role = "user" | "assistant"
+/**
+ * A chat matching a search, with the best matching message excerpt if the hit was in the text.
+ * 
+ * `snippet` marks matched terms with U+0002 (start) and U+0003 (end).
+ */
+export type SearchHit = { conversation: Conversation; messageId: string | null; snippet: string | null }
+/**
+ * Creates a chat together with its first user message.
+ */
+export type StartConversation = { text: string; model: string; projectId: string | null }
+/**
+ * Connection test request. Uses `api_key` if given, otherwise the key stored for
+ * `provider_id`, so the form can be tested before or after saving.
+ */
+export type TestProvider = { kind: ProviderKind; baseUrl: string; apiKey: string | null; providerId: string | null }
+export type ThemePref = "system" | "light" | "dark"
 
 /** tauri-specta globals **/
 

@@ -3,6 +3,12 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 import { createMemoryStorage, isUsableStorage } from "@/lib/storage";
 
+// Every test talks to the in-memory fake backend instead of Tauri IPC.
+vi.mock("@/bindings", async () => {
+  const { fakeCommands } = await import("./fakeBackend");
+  return { commands: fakeCommands };
+});
+
 // Node 25+ ships its own `localStorage` global (undefined without --localstorage-file) that
 // shadows jsdom's. Give tests a working in-memory one.
 let ls: Storage | undefined;

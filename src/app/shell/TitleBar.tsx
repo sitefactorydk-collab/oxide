@@ -20,7 +20,13 @@ import { IconButton } from "@/components/ui/IconButton";
 import { MenuContent, MenuItem, MenuRoot, MenuSeparator, MenuTrigger } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ChatMenuItems } from "@/features/chat/ChatMenuItems";
-import { useMock } from "@/features/mock/store";
+import {
+  useConversation,
+  useDeleteConversation,
+  useRenameConversation,
+  useStarConversation,
+} from "@/features/chats/queries";
+import { useProject, useProjects } from "@/features/projects/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { cn } from "@/lib/cn";
 import { platform } from "@/lib/platform";
@@ -151,12 +157,11 @@ const PAGE_TITLES: Array<[string, string]> = [
 function Breadcrumb({ pagePath }: { pagePath: string }) {
   const chat = matchPath("/chat/:id", pagePath);
   const project = matchPath("/project/:id", pagePath);
-  const projects = useMock((s) => s.projects);
+  const { project: p } = useProject(project?.params.id);
 
   if (chat?.params.id) return <ChatBreadcrumb id={chat.params.id} />;
 
   if (project?.params.id) {
-    const p = projects.find((x) => x.id === project.params.id);
     return (
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-md">
         <Link to="/projects" className="shrink-0 text-fg-muted hover:text-fg">
@@ -173,16 +178,15 @@ function Breadcrumb({ pagePath }: { pagePath: string }) {
 }
 
 function ChatBreadcrumb({ id }: { id: string }) {
-  const conversations = useMock((s) => s.conversations);
-  const projects = useMock((s) => s.projects);
-  const toggleStar = useMock((s) => s.toggleStar);
-  const rename = useMock((s) => s.rename);
-  const remove = useMock((s) => s.remove);
+  const { conversation: convo } = useConversation(id);
+  const { data: projects } = useProjects();
+  const star = useStarConversation();
+  const rename = useRenameConversation();
+  const remove = useDeleteConversation();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
   const renameRequested = useRef(false);
 
-  const convo = conversations.find((c) => c.id === id);
   if (!convo) return null;
   const project = convo.projectId ? projects.find((p) => p.id === convo.projectId) : undefined;
 
@@ -204,7 +208,7 @@ function ChatBreadcrumb({ id }: { id: string }) {
           value={convo.title}
           className="h-8 w-72"
           onCommit={(t) => {
-            rename(id, t);
+            rename.mutate({ id, title: t });
             setRenaming(false);
           }}
           onCancel={() => setRenaming(false)}
@@ -231,13 +235,13 @@ function ChatBreadcrumb({ id }: { id: string }) {
           >
             <ChatMenuItems
               starred={convo.starred}
-              onStar={() => toggleStar(id)}
+              onStar={() => star.mutate({ id, starred: !convo.starred })}
               onRename={() => {
                 renameRequested.current = true;
                 setRenaming(true);
               }}
               onDelete={() => {
-                remove(id);
+                remove.mutate(id);
                 navigate("/new");
               }}
             />

@@ -5,7 +5,11 @@
 //! the TypeScript bindings in `src/bindings/index.ts`.
 
 mod commands;
+mod error;
+mod state;
 
+use specta_typescript::BigIntExportBehavior;
+use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
 use tracing_subscriber::EnvFilter;
 
@@ -18,13 +22,47 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![commands::ping])
+    use commands::{chats, projects, providers, settings};
+    Builder::<tauri::Wry>::new().commands(collect_commands![
+        commands::ping,
+        // Chats
+        chats::list_conversations,
+        chats::get_conversation,
+        chats::start_conversation,
+        chats::rename_conversation,
+        chats::set_conversation_starred,
+        chats::set_conversation_model,
+        chats::delete_conversation,
+        chats::list_messages,
+        chats::add_user_message,
+        chats::edit_user_message,
+        chats::search_conversations,
+        // Projects
+        projects::list_projects,
+        projects::get_project,
+        projects::create_project,
+        projects::update_project,
+        projects::delete_project,
+        // Settings
+        settings::get_settings,
+        settings::save_settings,
+        // Providers
+        providers::list_providers,
+        providers::save_provider,
+        providers::delete_provider,
+        providers::set_provider_key,
+        providers::clear_provider_key,
+        providers::test_provider,
+    ])
 }
 
 /// Writes the TypeScript bindings for all registered commands and events.
 pub fn export_bindings() -> anyhow::Result<()> {
     specta_builder().export(
-        specta_typescript::Typescript::default().header(BINDINGS_HEADER),
+        specta_typescript::Typescript::default()
+            .header(BINDINGS_HEADER)
+            // Timestamps are i64 milliseconds: well inside JS's safe integer range.
+            .bigint(BigIntExportBehavior::Number),
         BINDINGS_PATH,
     )?;
     Ok(())
@@ -53,6 +91,10 @@ pub fn run() -> anyhow::Result<()> {
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
+            let data_dir = app.path().app_data_dir()?;
+            let service = app.config().identifier.clone();
+            let state = tauri::async_runtime::block_on(state::AppState::open(&data_dir, &service))?;
+            app.manage(state);
             tracing::info!("{} {} started", oxide_core::APP_NAME, oxide_core::version());
             Ok(())
         })

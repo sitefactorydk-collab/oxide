@@ -1,0 +1,95 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { commands, type AppSettings, type ChatFont, type ThemePref } from "@/bindings";
+import { unwrap } from "@/lib/api";
+import { useUi } from "@/stores/ui";
+
+export const settingsKeys = { app: ["settings", "app"] as const };
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  profile: { name: "" },
+  appearance: { theme: "system", chatFont: "serif" },
+};
+
+export function useSettings() {
+  return useQuery({
+    queryKey: settingsKeys.app,
+    queryFn: () => unwrap(commands.getSettings()),
+  });
+}
+
+/**
+ * Updates settings: applies the change at once (query cache + the UI cache that drives the
+ * theme), then saves. On failure the stored settings are reloaded.
+ */
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (next: AppSettings) => unwrap(commands.saveSettings(next)),
+    // Don't write the response back: a slower earlier save could overwrite a newer edit.
+    onError: () => qc.invalidateQueries({ queryKey: settingsKeys.app }),
+  });
+  return (change: (s: AppSettings) => AppSettings) => {
+    const current = qc.getQueryData<AppSettings>(settingsKeys.app) ?? DEFAULT_SETTINGS;
+    const next = change(current);
+    qc.setQueryData(settingsKeys.app, next);
+    cacheForFirstPaint(next);
+    mutation.mutate(next);
+  };
+}
+
+/** Mirrors the appearance and name into `useUi`, which persists them for the first frame. */
+function cacheForFirstPaint(s: AppSettings) {
+  useUi.setState({
+    userName: s.profile.name,
+    theme: s.appearance.theme,
+    chatFont: s.appearance.chatFont,
+  });
+}
+
+function isDefault(s: AppSettings): boolean {
+  return JSON.stringify(s) === JSON.stringify(DEFAULT_SETTINGS);
+}
+
+/**
+ * Keeps the first-paint cache in step with stored settings. Once, it also carries over
+ * preferences saved by Phase 1 builds (which only lived in localStorage).
+ */
+export function useSettingsSync(): void {
+  const { data } = useSettings();
+  const update = useUpdateSettings();
+  useEffect(() => {
+    if (!data) return;
+    const ui = useUi.getState();
+    if (!ui.settingsMigrated) {
+      useUi.setState({ settingsMigrated: true });
+      const legacy: AppSettings = {
+        profile: { name: ui.userName },
+        appearance: { theme: ui.theme, chatFont: ui.chatFont },
+      };
+      if (isDefault(data) && !isDefault(legacy)) {
+        update(() => legacy);
+        return;
+      }
+    }
+    cacheForFirstPaint(data);
+    // `update` is a fresh closure each render; only stored data should re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+}
+
+export function useSetTheme() {
+  const update = useUpdateSettings();
+  return (theme: ThemePref) => update((s) => ({ ...s, appearance: { ...s.appearance, theme } }));
+}
+
+export function useSetChatFont() {
+  const update = useUpdateSettings();
+  return (chatFont: ChatFont) =>
+    update((s) => ({ ...s, appearance: { ...s.appearance, chatFont } }));
+}
+
+export function useSetProfileName() {
+  const update = useUpdateSettings();
+  return (name: string) => update((s) => ({ ...s, profile: { ...s.profile, name } }));
+}

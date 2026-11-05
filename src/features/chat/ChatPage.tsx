@@ -1,15 +1,19 @@
 import { FileText, Lightbulb, Plug, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { IconButton } from "@/components/ui/IconButton";
+import {
+  useAddUserMessage,
+  useConversation,
+  useEditUserMessage,
+  useMessages,
+} from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
-import { modelLabel } from "@/features/mock/data";
-import { messageText, useMock } from "@/features/mock/store";
-import type { Message } from "@/features/mock/types";
+import { modelLabel } from "@/features/models/catalog";
+import { errorMessage } from "@/lib/api";
 import { useUi } from "@/stores/ui";
-import { AssistantMessage, UserMessage, WorkingLine } from "./Messages";
-
-const NO_MESSAGES: Message[] = [];
+import { AssistantMessage, UserMessage } from "./Messages";
+import { activeThread } from "./thread";
 
 export function ChatPage() {
   const { id = "" } = useParams();
@@ -18,22 +22,23 @@ export function ChatPage() {
 }
 
 function ChatView({ id }: { id: string }) {
-  const convo = useMock((s) => s.conversations.find((c) => c.id === id));
-  const messages = useMock((s) => s.messages[id]) ?? NO_MESSAGES;
-  const streaming = useMock((s) => s.streaming);
-  const sendReply = useMock((s) => s.sendReply);
-  const editMessage = useMock((s) => s.editMessage);
-  const stop = useMock((s) => s.stop);
+  const { conversation: convo, isPending: listPending } = useConversation(id);
+  const messagesQuery = useMessages(convo ? id : "");
+  const addMessage = useAddUserMessage();
+  const editMessage = useEditUserMessage();
   const rightPanelOpen = useUi((s) => s.rightPanelOpen);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const isStreaming = streaming?.conversationId === id;
+  const thread = useMemo(() => activeThread(messagesQuery.data ?? []), [messagesQuery.data]);
+  const leaf = thread[thread.length - 1];
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, isStreaming, id]);
+  }, [thread.length, id]);
+
+  if (listPending) return <div className="flex-1" />;
 
   if (!convo) {
     return (
@@ -48,32 +53,38 @@ function ChatView({ id }: { id: string }) {
   }
 
   let lastAssistantIdx = -1;
-  messages.forEach((m, i) => {
+  thread.forEach((m, i) => {
     if (m.role === "assistant") lastAssistantIdx = i;
   });
-  const retry = () => {
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    if (lastUser && !isStreaming) sendReply(id, messageText(lastUser));
-  };
+  const sendError = addMessage.error ?? editMessage.error;
 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-thread flex-col gap-6 px-6 pb-10 pt-8">
-            {messages.map((m, i) =>
+            {messagesQuery.error && (
+              <p role="alert" className="text-danger">
+                Couldn’t load messages: {errorMessage(messagesQuery.error)}
+              </p>
+            )}
+            {thread.map((m, i) =>
               m.role === "user" ? (
-                <UserMessage key={m.id} message={m} onEdit={(t) => editMessage(id, m.id, t)} />
-              ) : (
-                <AssistantMessage
+                <UserMessage
                   key={m.id}
                   message={m}
-                  isLast={i === lastAssistantIdx && !isStreaming}
-                  onRetry={retry}
+                  onEdit={(text) => editMessage.mutate({ messageId: m.id, text })}
                 />
+              ) : (
+                <AssistantMessage key={m.id} message={m} isLast={i === lastAssistantIdx} />
               ),
             )}
-            {isStreaming && streaming && <WorkingLine startedAt={streaming.startedAt} />}
+            {leaf?.role === "user" && <NoReplyYet />}
+            {sendError && (
+              <p role="alert" className="text-danger">
+                Couldn’t send: {errorMessage(sendError)}
+              </p>
+            )}
           </div>
         </div>
         <div className="mx-auto w-full max-w-thread px-6 pb-3">
@@ -81,18 +92,28 @@ function ChatView({ id }: { id: string }) {
             variant="reply"
             value={draft}
             onChange={setDraft}
-            streaming={isStreaming}
-            onStop={stop}
             autoFocus
             onSubmit={(text) => {
-              sendReply(id, text || "(attachment)");
-              setDraft("");
+              const body = text.trim() || "(attachment)";
+              addMessage.mutate(
+                { conversationId: id, parentId: leaf?.id ?? null, text: body },
+                { onSuccess: () => setDraft("") },
+              );
             }}
           />
         </div>
       </div>
-      {rightPanelOpen && <ChatDetailsPanel modelId={convo.modelId} />}
+      {rightPanelOpen && <ChatDetailsPanel modelId={convo.model} />}
     </div>
+  );
+}
+
+/** Shown under an unanswered message until model connections land in Phase 3. */
+function NoReplyYet() {
+  return (
+    <p role="note" className="text-md text-fg-subtle">
+      Saved. Oxide can’t reply yet: model connections arrive in Phase 3.
+    </p>
   );
 }
 

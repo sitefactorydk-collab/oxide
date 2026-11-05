@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 oxide-core.workspace = true
+oxide-store.workspace = true
+oxide-llm.workspace = true
 
 tauri = { version = "2", features = [] }
 serde.workspace = true
@@ -26,12 +28,11 @@ serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tokio.workspace = true
 
-# Typed IPC: Rust commands/events -> generated TypeScript bindings.
-# These three are released together and must stay pinned as a set.
-specta = "=2.0.0-rc.22"
-specta-typescript = "0.0.9"
-tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+specta.workspace = true
+specta-typescript.workspace = true
+tauri-specta.workspace = true
 
 [lints]
 workspace = true

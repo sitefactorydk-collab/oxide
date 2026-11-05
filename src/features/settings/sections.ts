@@ -36,7 +36,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "providers",
     label: "Providers",
     icon: KeyRound,
-    phase: 2,
     blurb:
       "Endpoints and API keys for Anthropic, OpenAI, LM Studio and Strata. Keys live in the system keychain.",
   },

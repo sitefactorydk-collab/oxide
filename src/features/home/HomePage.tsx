@@ -3,7 +3,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { OxideMark } from "@/components/OxideMark";
 import { Composer } from "@/features/composer/Composer";
-import { useMock } from "@/features/mock/store";
+import { useStartConversation } from "@/features/chats/queries";
+import { errorMessage } from "@/lib/api";
 import { greetingFor } from "@/lib/time";
 import { useUi } from "@/stores/ui";
 
@@ -18,7 +19,7 @@ const CHIPS: Array<{ label: string; icon: LucideIcon; prompt: string }> = [
 export function HomePage() {
   const userName = useUi((s) => s.userName);
   const modelId = useUi((s) => s.modelId);
-  const createConversation = useMock((s) => s.createConversation);
+  const start = useStartConversation();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   const [hour] = useState(() => new Date().getHours());
@@ -39,11 +40,22 @@ export function HomePage() {
           onChange={setDraft}
           autoFocus
           onSubmit={(text) => {
-            const id = createConversation(text || "Attached files", modelId);
-            setDraft("");
-            navigate(`/chat/${id}`);
+            start.mutate(
+              { text: text.trim() || "Attached files", model: modelId, projectId: null },
+              {
+                onSuccess: (c) => {
+                  setDraft("");
+                  navigate(`/chat/${c.id}`);
+                },
+              },
+            );
           }}
         />
+        {start.error && (
+          <p role="alert" className="mt-3 text-center text-danger">
+            Couldn’t start the chat: {errorMessage(start.error)}
+          </p>
+        )}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           {CHIPS.map(({ label, icon: Icon, prompt }) => (
             <button

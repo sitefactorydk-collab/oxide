@@ -15,8 +15,13 @@ import { InlineRename } from "@/components/InlineRename";
 import { MenuContent, MenuRoot, MenuTrigger } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ChatMenuItems } from "@/features/chat/ChatMenuItems";
-import { useMock } from "@/features/mock/store";
-import type { Conversation } from "@/features/mock/types";
+import type { Conversation } from "@/bindings";
+import {
+  useConversations,
+  useDeleteConversation,
+  useRenameConversation,
+  useStarConversation,
+} from "@/features/chats/queries";
 import { cn } from "@/lib/cn";
 import { SIDEBAR_DEFAULT, useUi } from "@/stores/ui";
 import { ProfileMenu } from "./ProfileMenu";
@@ -27,11 +32,11 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
   const starredOpen = useUi((s) => s.starredOpen);
   const recentsOpen = useUi((s) => s.recentsOpen);
   const toggleSection = useUi((s) => s.toggleSection);
-  const conversations = useMock((s) => s.conversations);
+  const { data: conversations, isPending } = useConversations();
 
   const [starred, recents] = useMemo(() => {
-    const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
-    return [sorted.filter((c) => c.starred), sorted.filter((c) => !c.starred)];
+    // The list arrives newest first.
+    return [conversations.filter((c) => c.starred), conversations.filter((c) => !c.starred)];
   }, [conversations]);
 
   return (
@@ -69,7 +74,7 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
           onToggle={() => toggleSection("recents")}
           items={recents}
           activeChatId={activeChatId}
-          empty="No chats yet"
+          empty={isPending ? undefined : "No chats yet"}
         />
       </div>
 
@@ -160,9 +165,9 @@ function Section({
 }
 
 function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
-  const toggleStar = useMock((s) => s.toggleStar);
-  const rename = useMock((s) => s.rename);
-  const remove = useMock((s) => s.remove);
+  const star = useStarConversation();
+  const rename = useRenameConversation();
+  const remove = useDeleteConversation();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -175,7 +180,7 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
           value={convo.title}
           className="h-8 w-full"
           onCommit={(t) => {
-            rename(convo.id, t);
+            rename.mutate({ id: convo.id, title: t });
             setRenaming(false);
           }}
           onCancel={() => setRenaming(false)}
@@ -225,13 +230,13 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
         >
           <ChatMenuItems
             starred={convo.starred}
-            onStar={() => toggleStar(convo.id)}
+            onStar={() => star.mutate({ id: convo.id, starred: !convo.starred })}
             onRename={() => {
               renameRequested.current = true;
               setRenaming(true);
             }}
             onDelete={() => {
-              remove(convo.id);
+              remove.mutate(convo.id);
               if (active) navigate("/new");
             }}
           />

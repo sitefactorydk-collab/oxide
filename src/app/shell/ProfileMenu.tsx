@@ -24,6 +24,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "@/components/ui/Menu";
+import { useSetTheme } from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { displayName, initials } from "@/lib/profile";
 import { useUi, type ThemePref } from "@/stores/ui";
@@ -43,7 +44,7 @@ export function Avatar({ name, className = "size-7" }: { name: string; className
 export function ProfileMenu() {
   const userName = useUi((s) => s.userName);
   const theme = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
+  const setTheme = useSetTheme();
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
   const openSettings = useOpenSettings();
 

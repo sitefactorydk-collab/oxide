@@ -1,9 +1,26 @@
 //! Domain types shared across Oxide.
 //!
-//! Phase 2 fills this crate with `Conversation`, `Message`, `ContentBlock` and friends.
+//! Plain data only: no I/O and no Tauri. Every type that crosses the IPC boundary derives
+//! `serde` + `specta::Type`, so the frontend gets it through the generated bindings.
+//! Timestamps are Unix milliseconds (`i64`), exported to TypeScript as `number`.
+
+pub mod conversation;
+pub mod message;
+pub mod project;
+pub mod provider;
+pub mod settings;
+
+pub use conversation::{Conversation, SearchHit, StartConversation};
+pub use message::{ContentBlock, MediaSource, Message, Role};
+pub use project::{NewProject, Project, ProjectPatch};
+pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
+pub use settings::{AppSettings, AppearanceSettings, ChatFont, ProfileSettings, ThemePref};
 
 /// Product name shown in the UI and window titles.
 pub const APP_NAME: &str = "Oxide";
+
+/// Unix time in milliseconds.
+pub type Timestamp = i64;
 
 /// Version of the core crate (kept in lockstep with the workspace version).
 pub fn version() -> &'static str {

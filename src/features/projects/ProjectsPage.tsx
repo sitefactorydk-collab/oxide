@@ -2,13 +2,16 @@ import { FolderClosed, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { PageHeader, PrimaryButton, SearchField } from "@/components/PageHeader";
-import { useMock } from "@/features/mock/store";
+import { useConversations } from "@/features/chats/queries";
 import { formatRelative } from "@/lib/time";
+import { NewProjectDialog } from "./NewProjectDialog";
+import { useProjects } from "./queries";
 
 export function ProjectsPage() {
-  const projects = useMock((s) => s.projects);
-  const conversations = useMock((s) => s.conversations);
+  const { data: projects, isPending } = useProjects();
+  const { data: conversations } = useConversations();
   const [q, setQ] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -23,7 +26,7 @@ export function ProjectsPage() {
         <PageHeader
           title="Projects"
           action={
-            <PrimaryButton disabled title="Projects arrive in Phase 7">
+            <PrimaryButton onClick={() => setCreating(true)}>
               <Plus />
               New project
             </PrimaryButton>
@@ -49,7 +52,7 @@ export function ProjectsPage() {
                     {p.name}
                   </span>
                   <span className="line-clamp-2 flex-1 text-base text-fg-muted">
-                    {p.description}
+                    {p.description || "No description"}
                   </span>
                   <span className="text-sm text-fg-subtle">
                     Updated {formatRelative(p.updatedAt)} · {chats} {chats === 1 ? "chat" : "chats"}
@@ -59,7 +62,16 @@ export function ProjectsPage() {
             );
           })}
         </ul>
+        {!isPending && projects.length === 0 && (
+          <div className="rounded-xl border border-dashed border-line-strong p-8 text-center">
+            <p className="text-md text-fg">No projects yet</p>
+            <p className="mt-1 text-base text-fg-muted">
+              Projects keep related chats together under shared instructions.
+            </p>
+          </div>
+        )}
       </div>
+      <NewProjectDialog open={creating} onOpenChange={setCreating} />
     </div>
   );
 }

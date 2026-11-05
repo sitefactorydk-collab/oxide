@@ -1,39 +1,30 @@
 import { Check, ChevronRight, Copy, Pencil, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Message } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
-import { messageText } from "@/features/mock/store";
-import type { Block, Message, Thinking } from "@/features/mock/types";
 import { cn } from "@/lib/cn";
+import { messageText, segments, thinkingOf, type ThinkingInfo } from "./thread";
 
-/** Blocks → prose. Phase 4 replaces this with react-markdown + Shiki + KaTeX. */
-function Blocks({ blocks }: { blocks: Block[] }) {
+/** Text → paragraphs and code blocks. Phase 4 replaces this with react-markdown + Shiki + KaTeX. */
+function Prose({ text }: { text: string }) {
   return (
     <>
-      {blocks.map((b, i) => {
-        switch (b.type) {
-          case "p":
-            return <p key={i}>{b.text}</p>;
-          case "ul":
-            return (
-              <ul key={i}>
-                {b.items.map((it, j) => (
-                  <li key={j}>{it}</li>
-                ))}
-              </ul>
-            );
-          case "code":
-            return (
-              <div key={i} className="overflow-hidden rounded-lg border border-line bg-code">
-                <div className="flex h-8 items-center border-b border-line px-3 font-sans text-xs text-fg-subtle">
-                  {b.lang}
-                </div>
-                <pre className="!rounded-none !border-0 px-4 py-3">
-                  <code>{b.code}</code>
-                </pre>
-              </div>
-            );
-        }
-      })}
+      {segments(text).map((seg, i) =>
+        seg.kind === "p" ? (
+          <p key={i} className="whitespace-pre-wrap">
+            {seg.text}
+          </p>
+        ) : (
+          <div key={i} className="overflow-hidden rounded-lg border border-line bg-code">
+            <div className="flex h-8 items-center border-b border-line px-3 font-sans text-xs text-fg-subtle">
+              {seg.lang}
+            </div>
+            <pre className="!rounded-none !border-0 px-4 py-3">
+              <code>{seg.code}</code>
+            </pre>
+          </div>
+        ),
+      )}
     </>
   );
 }
@@ -149,14 +140,15 @@ export function AssistantMessage({
 }: {
   message: Message;
   isLast: boolean;
-  onRetry: () => void;
+  onRetry?: () => void;
 }) {
   const [copied, copy] = useCopy();
+  const thinking = thinkingOf(message);
   return (
     <div className="group flex flex-col gap-2">
-      {message.thinking && <ThinkingBlock thinking={message.thinking} />}
+      {thinking && <ThinkingBlock thinking={thinking} />}
       <div className="ox-prose select-text">
-        <Blocks blocks={message.blocks} />
+        <Prose text={messageText(message)} />
       </div>
       <Actions visible={isLast}>
         <IconButton
@@ -166,9 +158,11 @@ export function AssistantMessage({
         >
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </IconButton>
-        <IconButton size="sm" label="Retry" onClick={onRetry}>
-          <RotateCcw className="size-4" />
-        </IconButton>
+        {onRetry && (
+          <IconButton size="sm" label="Retry" onClick={onRetry}>
+            <RotateCcw className="size-4" />
+          </IconButton>
+        )}
       </Actions>
     </div>
   );
@@ -184,7 +178,7 @@ function WorkingDots() {
 }
 
 /** Collapsed "Thought for Ns" line; expands to show the reasoning text. */
-export function ThinkingBlock({ thinking }: { thinking: Thinking }) {
+export function ThinkingBlock({ thinking }: { thinking: ThinkingInfo }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
