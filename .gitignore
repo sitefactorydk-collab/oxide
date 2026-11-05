@@ -1,0 +1,25 @@
+# Rust
+target/
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tauri generated
+src-tauri/gen/schemas/
+
+# Sidecar binaries are fetched by the build (Phase 12)
+src-tauri/binaries/*
+!src-tauri/binaries/README.md
+
+# Misc
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.idea/
+
+# Local script logs
+logs/

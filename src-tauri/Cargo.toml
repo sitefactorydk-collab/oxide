@@ -1,0 +1,37 @@
+[package]
+name = "oxide"
+description = "Oxide desktop app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+default-run = "oxide"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the binary on Windows.
+name = "oxide_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+oxide-core.workspace = true
+
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Typed IPC: Rust commands/events -> generated TypeScript bindings.
+# These three are released together and must stay pinned as a set.
+specta = "=2.0.0-rc.22"
+specta-typescript = "0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+
+[lints]
+workspace = true

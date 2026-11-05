@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Map design tokens to Tailwind utilities (bg-surface, text-fg, …). Phase 1 expands this. */
+@theme inline {
+  --color-surface: var(--ox-surface);
+  --color-fg: var(--ox-fg);
+  --color-fg-muted: var(--ox-fg-muted);
+  --color-accent: var(--ox-accent);
+  --font-sans: var(--ox-font-sans);
+  --font-serif: var(--ox-font-serif);
+  --font-mono: var(--ox-font-mono);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ox-surface);
+  color: var(--ox-fg);
+  font-family: var(--ox-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
