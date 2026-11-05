@@ -24,4 +24,9 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  {
+    // Test files and helpers are never hot-reloaded.
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
 );

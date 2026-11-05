@@ -40,6 +40,9 @@ Library crates must not depend on `tauri`. Only `src-tauri` does.
 - Import via the `@/` alias. Folders: `app/` (shell, routes, providers), `components/` (shared UI), `features/<name>/` (feature code), `styles/`, `bindings/` (generated).
 - Styling: Tailwind v4 utilities backed by CSS variables in `styles/tokens.css`. No hard-coded colors in components.
 - Backend calls only through `@/bindings` (`commands.*`, `events.*`). Never call `invoke` with string names.
+  Core window/webview APIs (`@tauri-apps/api/window`, `/webview`) are allowed, but only via the wrappers in `src/lib/window.ts`.
+- Colours, radii, shadows and fonts come from `--ox-*` tokens (`styles/tokens.css`), used through Tailwind names like `bg-app`, `text-fg-muted` and `border-line`.
+- Tests render the app with `renderApp()` (`src/test/renderApp.tsx`), which uses `MemoryRouter`. Data routers break under jsdom on Node 26 (AbortSignal mismatch).
 - State: Zustand for UI state, TanStack Query for backend data (from Phase 2).
 
 ## Checks (must pass before a phase is done)

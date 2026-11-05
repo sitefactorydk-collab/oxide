@@ -170,7 +170,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
   - Hover actions (copy, retry, edit), and a "thinking" block style.
 - **Composer:** auto-grow textarea, "+" menu (attach, add from project, connectors and tools toggles), model picker pill, extended-thinking toggle, send/stop button, drop-zone overlay.
 - Static settings modal shell with left-nav sections.
-- Routing: `/new`, `/chat/:id`, `/projects`, `/project/:id`, `/artifacts`, `/settings/*`.
+- Routing: `/new`, `/chat/:id`, `/chats`, `/projects`, `/project/:id`, `/artifacts`, `/settings/*` (settings is a modal over the previous page).
 - Keyboard shortcuts: Ctrl/Cmd+K (search), Ctrl/Cmd+Shift+O (new chat), Ctrl/Cmd+/ (shortcuts), Ctrl/Cmd+B (toggle sidebar).
 
 **Exit:** side-by-side comparison screenshots (Oxide vs Claude desktop) are saved to `docs/ui-parity/`, layout differences are listed in `PROGRESS.md`, and both themes work.
