@@ -177,6 +177,7 @@ mod tests {
                 text: "in project".into(),
                 model: "m".into(),
                 project_id: Some(p.id.clone()),
+                attachments: Vec::new(),
             })
             .await
             .expect("creates");

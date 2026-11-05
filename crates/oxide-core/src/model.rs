@@ -16,6 +16,46 @@ pub enum ThinkingStyle {
     Budget,
     /// The model decides how long to think. It can also be switched off explicitly.
     Adaptive,
+    /// A local reasoning model whose thinking can only be switched on or off, through the
+    /// chat template (`chat_template_kwargs.enable_thinking`). Verified on Strata.
+    Switch,
+}
+
+/// How much effort a model puts into an answer (thinking, length, tool use). The names match
+/// Anthropic's `output_config.effort`; OpenAI-compatible servers get the nearest
+/// `reasoning_effort`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    /// "Extra" in the UI.
+    Xhigh,
+    Max,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 5] = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::Xhigh,
+        Effort::Max,
+    ];
+
+    /// The API value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::Xhigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
 }
 
 /// What a model supports. Filled from the provider's own metadata where it has any, and from
@@ -32,6 +72,28 @@ pub struct ModelCapabilities {
     pub thinking_off: bool,
     pub images: bool,
     pub pdfs: bool,
+    /// Effort levels the model accepts, lowest first. Empty: no effort control.
+    pub effort: Vec<Effort>,
+    /// The level that applies when none is sent.
+    pub default_effort: Option<Effort>,
+}
+
+impl ModelCapabilities {
+    /// The level to use for a requested effort: the request itself if the model accepts it,
+    /// otherwise the nearest lower level it accepts (or its lowest). `None` when the model has
+    /// no effort control or nothing was requested.
+    pub fn effective_effort(&self, requested: Option<Effort>) -> Option<Effort> {
+        let requested = requested?;
+        if self.effort.contains(&requested) {
+            return Some(requested);
+        }
+        self.effort
+            .iter()
+            .copied()
+            .filter(|e| *e <= requested)
+            .max()
+            .or_else(|| self.effort.iter().copied().min())
+    }
 }
 
 /// A model the picker can offer.
@@ -91,6 +153,41 @@ mod tests {
         assert_eq!(split_model_id("anthropic/"), None);
         assert_eq!(split_model_id("nothing"), None);
         assert_eq!(model_id("openai", "gpt-5"), "openai/gpt-5");
+    }
+
+    #[test]
+    fn effort_names_match_the_api() {
+        for e in Effort::ALL {
+            let json = serde_json::to_string(&e).expect("serializes");
+            assert_eq!(json, format!("\"{}\"", e.as_str()));
+        }
+        assert!(Effort::Low < Effort::Max);
+    }
+
+    #[test]
+    fn effort_falls_back_to_the_nearest_lower_level() {
+        let caps = ModelCapabilities {
+            effort: vec![Effort::Low, Effort::Medium, Effort::High],
+            ..ModelCapabilities::default()
+        };
+        assert_eq!(caps.effective_effort(None), None);
+        assert_eq!(
+            caps.effective_effort(Some(Effort::Medium)),
+            Some(Effort::Medium)
+        );
+        assert_eq!(caps.effective_effort(Some(Effort::Max)), Some(Effort::High));
+        let high_only = ModelCapabilities {
+            effort: vec![Effort::High, Effort::Max],
+            ..ModelCapabilities::default()
+        };
+        assert_eq!(
+            high_only.effective_effort(Some(Effort::Low)),
+            Some(Effort::High)
+        );
+        assert_eq!(
+            ModelCapabilities::default().effective_effort(Some(Effort::Low)),
+            None
+        );
     }
 
     #[test]

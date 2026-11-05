@@ -1,6 +1,7 @@
 import "@fontsource-variable/inter";
 import "@fontsource-variable/source-serif-4";
 import "@fontsource-variable/jetbrains-mono";
+import "katex/dist/katex.min.css";
 import "@/styles/index.css";
 
 import { StrictMode } from "react";

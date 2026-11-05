@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { ChatFont, ThemePref } from "@/bindings";
+import type { ChatFont, Effort, ThemePref } from "@/bindings";
 import { safeLocalStorage } from "@/lib/storage";
 
 export type { ChatFont, ThemePref };
@@ -37,6 +37,11 @@ interface UiData {
    */
   modelId: string;
   thinking: boolean;
+  /**
+   * Effort level picked in the composer, or `null` for each model's default. Models that
+   * don't offer the level use the nearest lower one (see `effectiveEffort`).
+   */
+  effort: Effort | null;
   /** Transient overlays: not persisted. */
   searchOpen: boolean;
   shortcutsOpen: boolean;
@@ -49,6 +54,7 @@ interface UiActions {
   toggleSection: (section: "starred" | "recents") => void;
   setModelId: (id: string) => void;
   toggleThinking: () => void;
+  setEffort: (effort: Effort | null) => void;
   setSearchOpen: (open: boolean) => void;
   setShortcutsOpen: (open: boolean) => void;
 }
@@ -67,6 +73,7 @@ export const defaultUiData: UiData = {
   recentsOpen: true,
   modelId: "anthropic/claude-sonnet-4-5",
   thinking: false,
+  effort: null,
   searchOpen: false,
   shortcutsOpen: false,
 };
@@ -84,6 +91,7 @@ export const useUi = create<UiState>()(
         ),
       setModelId: (modelId) => set({ modelId }),
       toggleThinking: () => set((s) => ({ thinking: !s.thinking })),
+      setEffort: (effort) => set({ effort }),
       setSearchOpen: (searchOpen) => set({ searchOpen }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
     }),
@@ -104,6 +112,7 @@ export const useUi = create<UiState>()(
         recentsOpen: s.recentsOpen,
         modelId: s.modelId,
         thinking: s.thinking,
+        effort: s.effort,
       }),
     },
   ),

@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::capabilities::anthropic_from_api;
 use crate::http::{describe, send_with_retry, streaming_client};
-use crate::media::{base64_of, is_text, text_of};
+use crate::media::{IMAGE_OMITTED, base64_of, is_text, pdf_as_text, text_of};
 use crate::sse::SseEvent;
 use crate::stream::{Decoder, Out, sse_stream};
 use crate::{
@@ -151,7 +151,7 @@ struct ModelEntry {
 pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::new();
     for m in &req.messages {
-        let blocks = convert_blocks(&m.content).await?;
+        let blocks = convert_blocks(&m.content, req).await?;
         if !blocks.is_empty() {
             messages.push(json!({ "role": m.role.as_str(), "content": blocks }));
         }
@@ -211,6 +211,9 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
             );
         }
     }
+    if let Some(effort) = req.effort {
+        body.insert("output_config".into(), json!({ "effort": effort.as_str() }));
+    }
     body.insert("messages".into(), json!(messages));
     Ok(Value::Object(body))
 }
@@ -246,7 +249,10 @@ fn add_message_breakpoints(messages: &mut [Value]) {
     }
 }
 
-async fn convert_blocks(content: &[ContentBlock]) -> Result<Vec<Value>, LlmError> {
+async fn convert_blocks(
+    content: &[ContentBlock],
+    req: &ChatRequest,
+) -> Result<Vec<Value>, LlmError> {
     let mut out = Vec::new();
     for block in content {
         match block {
@@ -255,16 +261,24 @@ async fn convert_blocks(content: &[ContentBlock]) -> Result<Vec<Value>, LlmError
                     out.push(json!({ "type": "text", "text": text }));
                 }
             }
-            ContentBlock::Image { media_type, source } => out.push(json!({
-                "type": "image",
-                "source": { "type": "base64", "media_type": media_type, "data": base64_of(source).await? },
-            })),
+            ContentBlock::Image { media_type, source } => {
+                if req.images {
+                    out.push(json!({
+                        "type": "image",
+                        "source": { "type": "base64", "media_type": media_type, "data": base64_of(source).await? },
+                    }));
+                } else {
+                    out.push(json!({ "type": "text", "text": IMAGE_OMITTED }));
+                }
+            }
             ContentBlock::Document {
                 media_type,
                 name,
                 source,
             } => {
-                if media_type == "application/pdf" {
+                if media_type == "application/pdf" && !req.native_pdfs {
+                    out.push(json!({ "type": "text", "text": pdf_as_text(name, source).await }));
+                } else if media_type == "application/pdf" {
                     out.push(json!({
                         "type": "document",
                         "title": name,
@@ -304,7 +318,7 @@ async fn convert_blocks(content: &[ContentBlock]) -> Result<Vec<Value>, LlmError
                 content,
                 is_error,
             } => {
-                let inner = Box::pin(convert_blocks(content)).await?;
+                let inner = Box::pin(convert_blocks(content, req)).await?;
                 out.push(json!({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
@@ -761,6 +775,27 @@ mod tests {
         let body = request_body(&req).await.expect("builds");
         assert_eq!(body["thinking"], json!({"type": "disabled"}));
         assert!(body["system"][0].get("cache_control").is_none());
+        assert!(body.get("output_config").is_none());
+
+        // Effort, and media for a model that can't see images or read PDFs natively.
+        req.effort = Some(oxide_core::Effort::Low);
+        req.images = false;
+        req.native_pdfs = false;
+        let body = request_body(&req).await.expect("builds");
+        assert_eq!(body["output_config"], json!({"effort": "low"}));
+        let first = &body["messages"][0]["content"];
+        assert_eq!(first[1]["type"], "text");
+        assert!(
+            first[1]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("can't see images"))
+        );
+        assert_eq!(first[2]["type"], "text");
+        assert!(
+            first[2]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("a.pdf"))
+        );
     }
 
     #[tokio::test]

@@ -138,6 +138,7 @@ mod tests {
                     text: "Persist me".into(),
                     model: "anthropic/sonnet".into(),
                     project_id: None,
+                    attachments: Vec::new(),
                 })
                 .await
                 .expect("creates");

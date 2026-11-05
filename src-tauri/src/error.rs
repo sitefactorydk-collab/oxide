@@ -58,8 +58,16 @@ impl From<AgentError> for CommandError {
             AgentError::NotFound(what) => CommandError::NotFound(format!("{what} not found")),
             // Provider errors are written for users and never contain keys.
             AgentError::Llm(l) => CommandError::Invalid(l.to_string()),
-            AgentError::Busy | AgentError::Invalid(_) => CommandError::Invalid(e.to_string()),
+            AgentError::Busy | AgentError::Invalid(_) | AgentError::Attachment(_) => {
+                CommandError::Invalid(e.to_string())
+            }
         }
+    }
+}
+
+impl From<oxide_agent::AttachmentError> for CommandError {
+    fn from(e: oxide_agent::AttachmentError) -> Self {
+        CommandError::Invalid(e.to_string())
     }
 }
 

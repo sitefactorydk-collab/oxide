@@ -1,5 +1,6 @@
-import { FolderClosed, Globe, Paperclip, Plug, Plus, Settings2 } from "lucide-react";
+import { Globe, Paperclip, Plug, Plus, Settings2 } from "lucide-react";
 import { useState } from "react";
+import type { AttachmentLimits } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
 import {
   MenuCheckboxItem,
@@ -13,20 +14,22 @@ import {
   MenuTrigger,
 } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { useProjects } from "@/features/projects/queries";
+import { formatBytes } from "@/features/attachments/limits";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 
 const MOCK_CONNECTORS = ["filesystem", "github", "everything"];
 
-/** Composer "+" menu: attach, add from project, and per-chat tool toggles (UI only in Phase 1). */
+/**
+ * Composer "+" menu: attach files, and per-chat tool toggles (web search and connectors are
+ * placeholders until Phases 5–6).
+ */
 export function PlusMenu({
   onPickFiles,
-  onAddProjectContext,
+  limits,
 }: {
   onPickFiles: () => void;
-  onAddProjectContext: (label: string) => void;
+  limits: AttachmentLimits;
 }) {
-  const { data: projects } = useProjects();
   const openSettings = useOpenSettings();
   const [webSearch, setWebSearch] = useState(true);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({ filesystem: true });
@@ -40,31 +43,18 @@ export function PlusMenu({
           </IconButton>
         </MenuTrigger>
       </Tooltip>
-      <MenuContent align="start" side="top" className="w-64">
+      <MenuContent align="start" side="top" className="w-80">
         <MenuItem onSelect={onPickFiles}>
           <Paperclip />
-          Add files or photos
+          <span className="flex min-w-0 flex-col">
+            <span>Add files or photos</span>
+            <span className="text-xs text-fg-subtle">
+              Up to {limits.maxFiles} · images {formatBytes(limits.maxImageBytes)} · PDFs{" "}
+              {formatBytes(limits.maxPdfBytes)}, {limits.maxPdfPages} pages · text{" "}
+              {formatBytes(limits.maxTextBytes)}
+            </span>
+          </span>
         </MenuItem>
-        <MenuSub>
-          <MenuSubTrigger>
-            <FolderClosed />
-            Add from a project
-          </MenuSubTrigger>
-          <MenuSubContent>
-            {projects.length === 0 && (
-              <MenuItem disabled>
-                <FolderClosed />
-                No projects yet
-              </MenuItem>
-            )}
-            {projects.map((p) => (
-              <MenuItem key={p.id} onSelect={() => onAddProjectContext(`${p.name} knowledge`)}>
-                <FolderClosed />
-                {p.name}
-              </MenuItem>
-            ))}
-          </MenuSubContent>
-        </MenuSub>
         <MenuSeparator />
         <MenuCheckboxItem
           checked={webSearch}

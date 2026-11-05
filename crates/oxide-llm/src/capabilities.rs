@@ -7,7 +7,7 @@
 //! - LM Studio: its native `/api/v0/models` endpoint reports `tool_use` and vision.
 //! - Strata: nothing is reported; the caller probes each model once.
 
-use oxide_core::{ModelCapabilities, ThinkingStyle};
+use oxide_core::{Effort, ModelCapabilities, ThinkingStyle};
 use serde_json::Value;
 
 /// The generation number in a Claude model id: `claude-3-5-haiku-…` → 3, `claude-sonnet-4-5` → 4.
@@ -32,6 +32,18 @@ pub fn anthropic_curated(id: &str) -> ModelCapabilities {
         thinking_off: false,
         images: modern,
         pdfs: modern && point_five_plus,
+        effort: Vec::new(),
+        default_effort: None,
+    }
+}
+
+/// The effort level a Claude model uses when none is sent (from the effort docs: medium on
+/// Opus 5.5 and Haiku 5.5, high elsewhere).
+pub fn anthropic_default_effort(id: &str) -> Effort {
+    if id.starts_with("claude-opus-5-5") || id.starts_with("claude-haiku-5-5") {
+        Effort::Medium
+    } else {
+        Effort::High
     }
 }
 
@@ -51,6 +63,20 @@ pub fn anthropic_from_api(id: &str, capabilities: Option<&Value>) -> ModelCapabi
     }
     if let Some(pdfs) = supported(c.get("pdf_input")) {
         caps.pdfs = pdfs;
+    }
+    if let Some(effort) = c.get("effort").filter(|e| supported(Some(e)) == Some(true)) {
+        caps.effort = Effort::ALL
+            .into_iter()
+            .filter(|level| supported(effort.get(level.as_str())) == Some(true))
+            .collect();
+        if !caps.effort.is_empty() {
+            let default = anthropic_default_effort(id);
+            caps.default_effort = Some(if caps.effort.contains(&default) {
+                default
+            } else {
+                caps.effort[caps.effort.len() / 2]
+            });
+        }
     }
     if let Some(thinking) = c.get("thinking") {
         caps.thinking = match supported(Some(thinking)) {
@@ -131,12 +157,28 @@ pub fn openai_curated(id: &str) -> OpenAiModel {
         || (id.starts_with("o1") && !id.starts_with("o1-mini") && !id.starts_with("o1-preview"))
         || id.starts_with("o3")
         || id.starts_with("o4");
+    // Reasoning models take `reasoning_effort` (low / medium / high).
+    let reasoning =
+        (id.starts_with("o1") && !id.starts_with("o1-mini") && !id.starts_with("o1-preview"))
+            || id.starts_with("o3")
+            || id.starts_with("o4")
+            || (id.starts_with("gpt-5") && !id.contains("chat"));
+    let (effort, default_effort) = if reasoning {
+        (
+            vec![Effort::Low, Effort::Medium, Effort::High],
+            Some(Effort::Medium),
+        )
+    } else {
+        (Vec::new(), None)
+    };
     OpenAiModel::Chat(ModelCapabilities {
         tools: !no_tools,
         thinking: ThinkingStyle::None,
         thinking_off: false,
         images,
         pdfs: false,
+        effort,
+        default_effort,
     })
 }
 
@@ -154,10 +196,8 @@ pub fn lmstudio_from_native(entry: &Value) -> Option<ModelCapabilities> {
     };
     Some(ModelCapabilities {
         tools: has("tool_use") || has("trained_for_tool_use"),
-        thinking: ThinkingStyle::None,
-        thinking_off: false,
         images: kind == "vlm" || has("vision"),
-        pdfs: false,
+        ..ModelCapabilities::default()
     })
 }
 
@@ -219,6 +259,25 @@ mod tests {
         let c = anthropic_from_api("claude-sonnet-4-5", Some(&none));
         assert_eq!(c.thinking, ThinkingStyle::None);
 
+        // Effort levels come from the API; the default follows the docs.
+        let effort = json!({"effort": {"supported": true,
+            "low": {"supported": true}, "medium": {"supported": true}, "high": {"supported": true},
+            "max": {"supported": true}, "xhigh": null}});
+        let c = anthropic_from_api("claude-sonnet-4-6", Some(&effort));
+        assert_eq!(
+            c.effort,
+            vec![Effort::Low, Effort::Medium, Effort::High, Effort::Max]
+        );
+        assert_eq!(c.default_effort, Some(Effort::High));
+        let c = anthropic_from_api("claude-opus-5-5", Some(&effort));
+        assert_eq!(c.default_effort, Some(Effort::Medium));
+        let none = json!({"effort": {"supported": false, "low": {"supported": false}}});
+        assert!(
+            anthropic_from_api("claude-sonnet-4-5", Some(&none))
+                .effort
+                .is_empty()
+        );
+
         // Null capabilities fall back to the table.
         let c = anthropic_from_api("claude-3-7-sonnet", Some(&Value::Null));
         assert_eq!(c.thinking, ThinkingStyle::Budget);
@@ -256,7 +315,12 @@ mod tests {
         let OpenAiModel::Chat(c) = openai_curated("gpt-3.5-turbo") else {
             panic!("chat model")
         };
-        assert!(c.tools && !c.images);
+        assert!(c.tools && !c.images && c.effort.is_empty());
+        let OpenAiModel::Chat(c) = openai_curated("o4-mini") else {
+            panic!("chat model")
+        };
+        assert_eq!(c.effort.len(), 3);
+        assert_eq!(c.default_effort, Some(Effort::Medium));
     }
 
     #[test]

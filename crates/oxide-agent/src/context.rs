@@ -1,8 +1,8 @@
 //! Turning the visible thread into a model request.
 
 use oxide_core::{
-    ContentBlock, Message, ModelCapabilities, ProviderKind, Role, ThinkingStyle,
-    settings::MIN_THINKING_BUDGET,
+    ContentBlock, Effort, GenerateOptions, Message, ModelCapabilities, ProviderKind, Role,
+    ThinkingStyle, settings::MIN_THINKING_BUDGET,
 };
 use oxide_llm::{ChatMessage, ChatRequest, Thinking};
 
@@ -10,6 +10,8 @@ use oxide_llm::{ChatMessage, ChatRequest, Thinking};
 const FALLBACK_MAX_OUTPUT: u32 = 8_192;
 /// Upper bound on output tokens for a normal reply.
 const REPLY_MAX_OUTPUT: u32 = 32_000;
+/// Upper bound at `xhigh` / `max` effort (the effort docs advise a large limit there).
+const HIGH_EFFORT_MAX_OUTPUT: u32 = 64_000;
 /// Room left for the answer after a thinking budget.
 const ANSWER_ROOM: u32 = 4_096;
 
@@ -69,7 +71,7 @@ pub fn system_prompt(user_name: &str, now_ms: i64) -> String {
 }
 
 /// Year, month and day (UTC) of a Unix time in milliseconds.
-fn civil_date(ms: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_date(ms: i64) -> (i64, u32, u32) {
     // Howard Hinnant's days-to-civil algorithm.
     let z = ms.div_euclid(86_400_000) + 719_468;
     let era = z.div_euclid(146_097);
@@ -87,33 +89,55 @@ fn civil_date(ms: i64) -> (i64, u32, u32) {
     )
 }
 
-/// Fills in thinking, output limit and caching for a model.
+/// Fills in thinking, effort, media handling, output limit and caching for a model.
 ///
-/// `thinking_on` is the composer toggle; `budget` the configured thinking budget.
+/// `options` are the composer's choices; `budget` the configured thinking budget.
 pub fn plan_request(
     request: &mut ChatRequest,
     kind: ProviderKind,
     caps: &ModelCapabilities,
     max_output: Option<u32>,
-    thinking_on: bool,
+    options: GenerateOptions,
     budget: u32,
 ) {
+    let thinking_on = options.thinking;
+    let effort = caps.effective_effort(options.effort);
+    // Strata doesn't report vision support: let the server decide.
+    request.images = caps.images || kind == ProviderKind::Strata;
+    request.native_pdfs = kind == ProviderKind::Anthropic && caps.pdfs;
     if kind != ProviderKind::Anthropic {
-        // OpenAI-compatible servers pick their own output limit and reasoning behavior.
+        // OpenAI-compatible servers pick their own output limit.
         request.max_tokens = None;
-        request.thinking = Thinking::Default;
         request.cache = false;
+        request.effort = if kind == ProviderKind::OpenAi {
+            effort
+        } else {
+            None
+        };
+        request.thinking = match (caps.thinking, thinking_on) {
+            (ThinkingStyle::Switch, false) => Thinking::Off,
+            _ => Thinking::Default,
+        };
         return;
     }
     request.cache = true;
+    request.effort = effort;
+    let high_effort = matches!(effort, Some(Effort::Xhigh | Effort::Max));
     let model_max = max_output
         .unwrap_or(FALLBACK_MAX_OUTPUT)
         .max(MIN_THINKING_BUDGET * 2);
-    let normal = model_max.min(REPLY_MAX_OUTPUT);
+    let normal = model_max.min(if high_effort {
+        HIGH_EFFORT_MAX_OUTPUT
+    } else {
+        REPLY_MAX_OUTPUT
+    });
     let (thinking, max) = match (caps.thinking, thinking_on) {
         (ThinkingStyle::Adaptive, true) => (Thinking::Adaptive, normal),
         // Only models that accept it are told not to think; the others use their default.
-        (ThinkingStyle::Adaptive, false) if caps.thinking_off => (Thinking::Off, normal),
+        // Thinking can't be disabled at xhigh / max effort (400 on several models).
+        (ThinkingStyle::Adaptive, false) if caps.thinking_off && !high_effort => {
+            (Thinking::Off, normal)
+        }
         (ThinkingStyle::Adaptive, false) => (Thinking::Default, normal),
         (ThinkingStyle::Budget, true) => {
             let max = model_max.min(normal.max(budget.saturating_add(ANSWER_ROOM)));
@@ -146,6 +170,7 @@ mod tests {
             created_at: 0,
             stop_reason: None,
             usage: None,
+            feedback: None,
         }
     }
 
@@ -200,6 +225,17 @@ mod tests {
         assert!(!system_prompt("", 0).contains("name"));
     }
 
+    fn on() -> GenerateOptions {
+        GenerateOptions {
+            thinking: true,
+            effort: None,
+        }
+    }
+
+    fn off() -> GenerateOptions {
+        GenerateOptions::default()
+    }
+
     #[test]
     fn anthropic_thinking_and_limits() {
         let mut req = ChatRequest::new("m", vec![]);
@@ -212,7 +248,7 @@ mod tests {
             ProviderKind::Anthropic,
             &budget,
             Some(64_000),
-            true,
+            on(),
             8_000,
         );
         assert_eq!(req.thinking, Thinking::Budget(8_000));
@@ -225,7 +261,7 @@ mod tests {
             ProviderKind::Anthropic,
             &budget,
             Some(64_000),
-            true,
+            on(),
             60_000,
         );
         assert_eq!(req.max_tokens, Some(64_000));
@@ -237,7 +273,7 @@ mod tests {
             ProviderKind::Anthropic,
             &budget,
             Some(8_192),
-            true,
+            on(),
             8_000,
         );
         assert_eq!(req.max_tokens, Some(8_192));
@@ -248,7 +284,7 @@ mod tests {
             ProviderKind::Anthropic,
             &budget,
             None,
-            false,
+            off(),
             8_000,
         );
         assert_eq!(req.thinking, Thinking::Default);
@@ -262,7 +298,7 @@ mod tests {
             ProviderKind::Anthropic,
             &always_thinks,
             Some(128_000),
-            false,
+            off(),
             8_000,
         );
         assert_eq!(
@@ -281,7 +317,7 @@ mod tests {
             ProviderKind::Anthropic,
             &adaptive,
             Some(128_000),
-            false,
+            off(),
             8_000,
         );
         assert_eq!(req.thinking, Thinking::Off);
@@ -290,7 +326,7 @@ mod tests {
             ProviderKind::Anthropic,
             &adaptive,
             Some(128_000),
-            true,
+            on(),
             8_000,
         );
         assert_eq!(req.thinking, Thinking::Adaptive);
@@ -306,11 +342,92 @@ mod tests {
             ProviderKind::LmStudio,
             &ModelCapabilities::default(),
             Some(9),
-            true,
+            on(),
             8_000,
         );
         assert_eq!(req.max_tokens, None);
         assert_eq!(req.thinking, Thinking::Default);
         assert!(!req.cache);
+        assert!(!req.images && !req.native_pdfs);
+    }
+
+    #[test]
+    fn effort_media_and_local_thinking_switch() {
+        let mut req = ChatRequest::new("m", vec![]);
+        let opus = ModelCapabilities {
+            thinking: ThinkingStyle::Adaptive,
+            thinking_off: true,
+            images: true,
+            pdfs: true,
+            effort: Effort::ALL.to_vec(),
+            default_effort: Some(Effort::Medium),
+            ..ModelCapabilities::default()
+        };
+        let max = GenerateOptions {
+            thinking: false,
+            effort: Some(Effort::Max),
+        };
+        plan_request(
+            &mut req,
+            ProviderKind::Anthropic,
+            &opus,
+            Some(128_000),
+            max,
+            8_000,
+        );
+        assert_eq!(req.effort, Some(Effort::Max));
+        // No `disabled` at max effort, and a larger output limit.
+        assert_eq!(req.thinking, Thinking::Default);
+        assert_eq!(req.max_tokens, Some(64_000));
+        assert!(req.images && req.native_pdfs);
+
+        let low = GenerateOptions {
+            thinking: false,
+            effort: Some(Effort::Low),
+        };
+        plan_request(
+            &mut req,
+            ProviderKind::Anthropic,
+            &opus,
+            Some(128_000),
+            low,
+            8_000,
+        );
+        assert_eq!(req.effort, Some(Effort::Low));
+        assert_eq!(req.thinking, Thinking::Off);
+        assert_eq!(req.max_tokens, Some(32_000));
+
+        // Models without effort control get none.
+        plan_request(
+            &mut req,
+            ProviderKind::Anthropic,
+            &ModelCapabilities::default(),
+            None,
+            low,
+            8_000,
+        );
+        assert_eq!(req.effort, None);
+
+        // OpenAI reasoning models: nearest supported level.
+        let o4 = ModelCapabilities {
+            effort: vec![Effort::Low, Effort::Medium, Effort::High],
+            ..ModelCapabilities::default()
+        };
+        plan_request(&mut req, ProviderKind::OpenAi, &o4, None, max, 8_000);
+        assert_eq!(req.effort, Some(Effort::High));
+        assert!(!req.native_pdfs);
+
+        // Strata: thinking off through the switch, images left to the server.
+        let local = ModelCapabilities {
+            thinking: ThinkingStyle::Switch,
+            thinking_off: true,
+            ..ModelCapabilities::default()
+        };
+        plan_request(&mut req, ProviderKind::Strata, &local, None, max, 8_000);
+        assert_eq!(req.thinking, Thinking::Off);
+        assert_eq!(req.effort, None);
+        assert!(req.images);
+        plan_request(&mut req, ProviderKind::Strata, &local, None, on(), 8_000);
+        assert_eq!(req.thinking, Thinking::Default);
     }
 }

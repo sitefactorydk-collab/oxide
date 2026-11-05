@@ -6,8 +6,8 @@ import type { ContentBlock, Message } from "@/bindings";
  * Messages form a tree (edits and regenerated replies add siblings). The backend returns every
  * message in insertion order, so the last one is the newest leaf, and it is always on the
  * branch the user last worked on. While a reply is written, the thread ends at the message it
- * answers (`leafId`), so a reply being regenerated replaces the old one on screen. Branch
- * navigation (‹ 1/2 ›) arrives in Phase 4.
+ * answers (`leafId`), so a reply being regenerated replaces the old one on screen. The
+ * branch navigator (‹ 1/2 ›) passes the leaf of the branch the user picked.
  */
 export function activeThread(messages: Message[], leafId?: string): Message[] {
   const leaf =
@@ -56,37 +56,39 @@ export function thinkingOf(m: Pick<Message, "content">): ThinkingInfo | undefine
   };
 }
 
-/** A paragraph or a fenced code block. Phase 4 replaces this with full Markdown. */
-export type Segment = { kind: "p"; text: string } | { kind: "code"; lang: string; code: string };
+/**
+ * Versions of a message: messages under the same parent with the same role (edits of a user
+ * message, or regenerated replies), oldest first.
+ */
+export function siblingsOf(messages: Message[], m: Message): Message[] {
+  return messages.filter((x) => x.parentId === m.parentId && x.role === m.role);
+}
 
-/** Splits text into paragraphs and ``` fenced code blocks. */
-export function segments(text: string): Segment[] {
-  const out: Segment[] = [];
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let para: string[] = [];
-  const flush = () => {
-    const t = para.join("\n").trim();
-    if (t) out.push({ kind: "p", text: t });
-    para = [];
-  };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const fence = /^```\s*([\w+#.-]*)\s*$/.exec(line);
-    if (fence) {
-      flush();
-      const code: string[] = [];
-      i++;
-      while (i < lines.length && !/^```\s*$/.test(lines[i] ?? "")) {
-        code.push(lines[i] ?? "");
-        i++;
-      }
-      out.push({ kind: "code", lang: fence[1] || "text", code: code.join("\n") });
-    } else if (line.trim() === "") {
-      flush();
-    } else {
-      para.push(line);
+/**
+ * The newest message in the subtree under `rootId`. Messages are in insertion order and a
+ * child always comes after its parent, so this is a leaf: where the user last left that
+ * branch.
+ */
+export function newestLeafUnder(messages: Message[], rootId: string): string {
+  const inTree = new Set([rootId]);
+  let newest = rootId;
+  for (const m of messages) {
+    if (m.parentId !== null && inTree.has(m.parentId)) {
+      inTree.add(m.id);
+      newest = m.id;
     }
   }
-  flush();
-  return out;
+  return newest;
+}
+
+/** Images and documents attached to a message. */
+export type AttachedBlock = Extract<ContentBlock, { type: "image" } | { type: "document" }>;
+
+export function attachmentsOf(m: Pick<Message, "content">): AttachedBlock[] {
+  return m.content.filter((b): b is AttachedBlock => b.type === "image" || b.type === "document");
+}
+
+/** The stored path of an attachment block (empty for inline data). */
+export function attachmentPath(b: AttachedBlock): string {
+  return b.source.kind === "path" ? b.source.path : "";
 }

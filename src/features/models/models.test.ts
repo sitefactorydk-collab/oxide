@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { ModelInfo, ProviderModels } from "@/bindings";
-import { findModel, modelNameFromId, pickDefaultModel } from "./models";
+import { effectiveEffort, findModel, modelNameFromId, pickDefaultModel } from "./models";
 
 const model = (providerId: string, name: string, tools = true): ModelInfo => ({
   id: `${providerId}/${name}`,
   providerId,
   model: name,
   label: name,
-  capabilities: { tools, thinking: "none", thinkingOff: false, images: false, pdfs: false },
+  capabilities: {
+    tools,
+    thinking: "none",
+    thinkingOff: false,
+    images: false,
+    pdfs: false,
+    effort: [],
+    defaultEffort: null,
+  },
   contextWindow: null,
   maxOutputTokens: null,
 });
@@ -45,5 +53,16 @@ describe("models", () => {
     expect(findModel(lists, "anthropic/claude-opus-5-5")?.label).toBe("claude-opus-5-5");
     expect(modelNameFromId("lmstudio/qwen/qwen3-14b")).toBe("qwen/qwen3-14b");
     expect(modelNameFromId("plain")).toBe("plain");
+  });
+});
+
+describe("effectiveEffort", () => {
+  it("uses the level asked for, or the nearest lower one the model has", () => {
+    const caps = { effort: ["low", "medium", "high"] as const };
+    expect(effectiveEffort({ effort: [...caps.effort] }, null)).toBeNull();
+    expect(effectiveEffort({ effort: [...caps.effort] }, "medium")).toBe("medium");
+    expect(effectiveEffort({ effort: [...caps.effort] }, "max")).toBe("high");
+    expect(effectiveEffort({ effort: ["high", "max"] }, "low")).toBe("high");
+    expect(effectiveEffort({ effort: [] }, "low")).toBeNull();
   });
 });

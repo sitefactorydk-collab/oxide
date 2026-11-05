@@ -36,6 +36,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 base64 = "0.22"
 keyring = "3"
 tempfile = "3"
+# Attachments: image resizing/compression and PDF text extraction (Phase 4).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+pdf-extract = "0.8"
 
 # Typed IPC: tauri-specta, specta and specta-typescript are released together and stay
 # pinned as a set (see PROGRESS.md, Phase 0).
@@ -59,5 +62,6 @@ incremental = true
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# Unwind (the default) rather than abort: third-party file parsers (pdf-extract) can panic on
+# malformed input, and Oxide catches that instead of losing the whole app.
 strip = true

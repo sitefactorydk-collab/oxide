@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { OxideMark } from "@/components/OxideMark";
 import { Composer } from "@/features/composer/Composer";
 import { useStartConversation } from "@/features/chats/queries";
+import { useGenerateOptions } from "@/features/composer/options";
 import { useNewChatModel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
 import { greetingFor } from "@/lib/time";
@@ -20,7 +21,7 @@ const CHIPS: Array<{ label: string; icon: LucideIcon; prompt: string }> = [
 export function HomePage() {
   const userName = useUi((s) => s.userName);
   const [modelId, setModelId] = useNewChatModel();
-  const thinking = useUi((s) => s.thinking);
+  const options = useGenerateOptions();
   const start = useStartConversation();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
@@ -43,11 +44,11 @@ export function HomePage() {
           autoFocus
           modelId={modelId}
           onModelChange={setModelId}
-          onSubmit={(text) => {
+          onSubmit={(text, attachments) => {
             start.mutate(
               {
-                input: { text: text.trim() || "Attached files", model: modelId, projectId: null },
-                options: { thinking },
+                input: { text: text.trim(), model: modelId, projectId: null, attachments },
+                options,
               },
               {
                 onSuccess: (c) => {

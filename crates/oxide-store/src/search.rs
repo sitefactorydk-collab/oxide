@@ -127,6 +127,7 @@ mod tests {
             text: text.into(),
             model: "m".into(),
             project_id: None,
+            attachments: Vec::new(),
         })
         .await
         .expect("creates")

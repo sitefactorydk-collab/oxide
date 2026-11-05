@@ -32,10 +32,11 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Browser agent | Browser-Use wrapped as a local MCP server (`oxide-browser-agent`, Python, runs in the uv venv) |
 | Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
 | Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring` |
+| OS dialogs and links | `tauri-plugin-dialog` (file picker, save dialog) and `tauri-plugin-opener` (links open in the system browser), called from Rust commands so the frontend still only uses `@/bindings` (Phase 4) |
 | IPC typing | `tauri-specta` generates TS bindings from Rust commands and events. No hand-written IPC types |
 | Frontend state | Zustand for UI state, TanStack Query for backend data |
 | Styling | Tailwind CSS v4 + CSS variables design tokens. Radix UI primitives for menus, dialogs and tooltips |
-| Markdown | `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` + Shiki for code |
+| Markdown | `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` + Shiki for code (JavaScript regex engine, since the CSP blocks WASM; colours from a CSS-variables theme in `tokens.css`). Model output is pre-processed (`components/markdown/prepare.ts`) for LaTeX delimiters, prices vs `$math$`, and partial input while streaming |
 | Location | `C:\AI Apps\Oxide` |
 
 ### Repository layout (target)
@@ -209,7 +210,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 ### Phase 4 — Chat UX completeness
 - Markdown rendering: GFM tables, KaTeX, Shiki code blocks with language label, copy and wrap toggle. Streaming-safe rendering with no flicker or layout jump.
 - Branch navigator ‹ n/m › on edited messages.
-- Attachments: drag-drop, paste and file picker. Thumbnails and file chips. Images are resized and compressed in Rust.
+- Attachments: drag-drop, paste and file picker. Thumbnails and file chips. Images are resized and compressed in Rust (`image` crate; fit 1568 px, JPEG q85 or PNG when transparent). Files are copied into `<app data>\attachments` and messages store the copy's path.
   - PDFs go natively to Anthropic and as extracted text (`pdf-extract`) to others.
   - Text and code files are inlined with filename headers.
   - Size limits shown in the UI.
@@ -218,6 +219,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
   - Anthropic: `output_config.effort`, with the levels from the Models API `capabilities.effort`.
   - OpenAI reasoning models: `reasoning_effort`.
   - LM Studio / Strata: whatever the server honors (tested first). At least thinking on/off.
+    - Tested on 2026-11-05 (`scripts\win\local-thinking.ps1`): Strata honors `chat_template_kwargs.enable_thinking=false` and `reasoning_effort: "none"`; low/high made no measurable difference. So Strata gets an on/off switch (`ThinkingStyle::Switch`). LM Studio wasn't running and stays untested.
 - Search modal (Ctrl+K) across titles and content.
 - Export a conversation as Markdown or JSON.
 - Scroll anchoring and a "jump to latest" button. Accessibility pass (focus rings, ARIA on composer and menus).

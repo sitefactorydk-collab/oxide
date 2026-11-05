@@ -15,6 +15,7 @@ import { InlineRename } from "@/components/InlineRename";
 import { MenuContent, MenuRoot, MenuTrigger } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ChatMenuItems } from "@/features/chat/ChatMenuItems";
+import { useExportChat } from "@/features/chat/useExportChat";
 import type { Conversation } from "@/bindings";
 import {
   useConversations,
@@ -168,6 +169,7 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
   const star = useStarConversation();
   const rename = useRenameConversation();
   const remove = useDeleteConversation();
+  const exportChat = useExportChat();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -235,6 +237,7 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
               renameRequested.current = true;
               setRenaming(true);
             }}
+            onExport={(format) => exportChat(convo.id, format)}
             onDelete={() => {
               remove.mutate(convo.id);
               if (active) navigate("/new");

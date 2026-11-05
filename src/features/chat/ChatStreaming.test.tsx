@@ -68,7 +68,7 @@ describe("streaming replies", () => {
     await screen.findByText(/warm neutral palette/);
     await send("Think hard");
     await screen.findByText("Reply to: Think hard");
-    expect(fakeState().replyOptions.at(-1)).toEqual({ thinking: true });
+    expect(fakeState().replyOptions.at(-1)).toEqual({ thinking: true, effort: null });
   });
 
   it("applies automatic titles that arrive in the background", async () => {

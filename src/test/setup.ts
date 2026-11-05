@@ -1,7 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { useBranches } from "@/features/chat/branches";
 import { resetStreams } from "@/features/chat/streams";
+import { useToasts } from "@/lib/toast";
 import { createMemoryStorage, isUsableStorage } from "@/lib/storage";
 
 // Every test talks to the in-memory fake backend instead of Tauri IPC.
@@ -59,4 +61,6 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   resetStreams();
+  useBranches.setState({ leaf: {} });
+  useToasts.setState({ toasts: [] });
 });

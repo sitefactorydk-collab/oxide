@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 3 — LLM layer & streaming chat (manual exit checks against all four providers: see Phase 3 below)
-- **Next phase:** Phase 4 — Chat UX completeness
+- **In progress:** Phase 4 — Chat UX completeness (code done and checked on Windows; manual exit check pending, see Phase 4 below)
+- **Next phase:** Phase 5 — MCP client
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -26,6 +27,88 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - New crates must already be in the vendor bundle. `futures-util` stays `default-features = false` because `futures-macro` isn't vendored.
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 4 — Chat UX completeness — 2026-11-05
+Status: code done and checked on Windows. The first `scripts\win\phase4.cmd` run passed fmt, prettier, clippy, cargo test (including `src-tauri` with both new plugins) and typecheck; lint and 90 of 93 Vitest tests also passed. The 3 failures were test setup only: `Markdown.test.tsx` rendered code blocks (which have tooltip buttons) without `Tooltip.Provider`. The test now wraps them, and the second `phase4.cmd` run commits when green. The manual exit check below is still open.
+
+Exit criteria, to check by hand in `cargo tauri dev`:
+- [ ] Settings → About → **Create demo chat** (development builds only) makes a 50-message chat with code in several languages, inline and display math, tables, task lists, generated images and a PDF. It must render correctly and scroll smoothly; "Jump to latest" appears when scrolled up.
+- [ ] Attach a screenshot (paste), a large photo (resized, note on the chip), a PDF and a code file (drag and drop and the "+" menu). Send to Strata and to Anthropic.
+- [ ] Effort menu on an Anthropic model; thinking switch on Strata (off should stop Qwen's long thinking).
+- [ ] Branch navigator after an edit and after Retry; thumbs up/down; usage tooltip; export as Markdown and JSON from the title-bar menu; links open in the browser.
+- [x] Vitest covers Markdown edge cases (`prepare.test.ts`, `Markdown.test.tsx`).
+
+Done:
+- **Local thinking test first** (`scripts\win\local-thinking.ps1`, run by `phase4-prep.cmd`; results in `logs\local-thinking.log`). Strata `swift-iq2_xs`, prompt "What is 17 + 25?":
+
+  | Switch | Reasoning chars | Completion tokens |
+  |---|---|---|
+  | baseline | 80 | 37 |
+  | `reasoning_effort: low` / `high` | 66 / 67 | 34 / 35 |
+  | `reasoning_effort: none` | 0 | 3 |
+  | `chat_template_kwargs.enable_thinking: false` | 0 | 3 |
+  | `/no_think` in the prompt | 164 | 68 |
+
+  So Strata gets on/off only. LM Studio wasn't running (untested, no thinking control).
+- **`oxide-core`:**
+  - `Effort` (low, medium, high, xhigh, max; `as_str` = API value). `ModelCapabilities.effort` (levels, lowest first) and `defaultEffort`. `effective_effort(requested)` falls back to the nearest lower level the model has.
+  - `ThinkingStyle::Switch`: local reasoning models that can only be switched on/off through the chat template.
+  - `GenerateOptions.effort: Option<Effort>`.
+  - `attachment.rs`: `Attachment` (id, name, kind image|pdf|text, mediaType, stored `path`, size, originalSize, width/height, pages, `thumbnail` data URL, `note`), `AttachmentSource` (path | base64 bytes), `AttachmentLimits` + `ATTACHMENT_LIMITS` (20 files; images 30 MB in, fit 1568 px; PDFs 32 MB / 100 pages; text 1 MB), `TEXT_EXTENSIONS`, `to_block()`.
+  - `Message.feedback: Option<Feedback { rating: good|bad, note, createdAt }>`. `StartConversation.attachments`.
+- **`oxide-store`:** migration `0003_feedback.sql` (`messages.feedback`). `set_feedback`. `start_conversation` takes attachments (files first, then text; a files-only message is titled after the first file). `edit_user_message` keeps the original's attachments and allows empty text when files remain.
+- **`oxide-llm`:**
+  - `ChatRequest.effort`, `.images`, `.native_pdfs`.
+  - Anthropic: `output_config: {effort}`; images replaced by a note for models without vision; PDFs sent as extracted text when the model can't read PDFs.
+  - OpenAI-compatible: `reasoning_effort` (OpenAI only, low/medium/high); `chat_template_kwargs: {enable_thinking: false}` for local servers when thinking is off; PDFs as `<file name=… type="pdf, extracted text">` (replaces the Phase 3 placeholder).
+  - Capabilities: Anthropic effort levels from the Models API `capabilities.effort` (default medium on Opus 5.5 / Haiku 5.5, else high, per the effort docs); OpenAI reasoning models (o1, o3, o4, gpt-5 non-chat) get low/medium/high; Strata models are `Switch`.
+  - `media`: `pdf_pages` (pdf-extract on a blocking thread, panics caught), `join_pages` (`[Page n]` markers), `pdf_text_sidecar` (`<file>.pdf.txt`), `sample_pdf` (a tiny valid PDF for tests and the demo).
+- **`oxide-agent`:**
+  - `AttachmentStore` (`attachments.rs`): sniffs content (PDF magic, image formats, UTF-8 text) before the extension; size checks with readable errors that name the file and the limit; images kept as is when small, else resized (Lanczos3) and re-encoded (JPEG q85 on white, or PNG when really transparent; JPEG fallback above 5 MB); 160 px thumbnails; PDFs counted and their text saved in a sidecar (kept with a note if no text can be extracted); text BOM stripped, invalid UTF-8 replaced with a note. `blocks()` only accepts paths directly inside the attachments folder. `image_data_url(path, max_side)` for previews.
+  - `plan_request(…, options: GenerateOptions, …)`: effort (clamped to the model's levels), no `thinking: disabled` at xhigh/max (400 on several models), 64k output cap at xhigh/max, `images`/`native_pdfs` from capabilities (Strata images left to the server), Strata thinking switch. Titles on Strata are written with thinking off.
+  - `export.rs`: Markdown of one thread (thinking left out, files and tool calls listed), JSON of every branch (`format: "oxide.conversation"`, `version: 1`), safe file names.
+  - `demo.rs`: the 50-message demo chat.
+  - `path_to` is public (export uses it).
+- **`src-tauri`:**
+  - Plugins `tauri-plugin-dialog` and `tauri-plugin-opener`, used only from Rust (no JS permissions needed).
+  - New commands: `pick_files`, `prepare_attachment`, `attachment_preview`, `attachment_limits`, `set_message_feedback`, `export_conversation(id, leafId, format)` (save dialog), `create_demo_conversation(model)`, `open_external(url)` (http, https, mailto only).
+  - `send_message` takes `attachments`; `start_conversation` checks them. `AppState.attachments` = `<app data>\attachments`.
+- **Frontend:**
+  - `components/markdown/`: `prepare.ts` (LaTeX `\( \)`/`\[ \]` → `$`/`$$`, Pandoc dollar rule so "$5 and $10" stays text, code untouched; while streaming: open fences closed, unclosed `$$`/`\[` and inline code held back, half table rows held back), `Markdown.tsx` (react-markdown + GFM + math + KaTeX, `useDeferredValue` while streaming, links via `openExternal`, remote images shown as links, tables in a scroll region, no raw HTML), `CodeBlock.tsx` (language label, copy, wrap toggle; plain text first, Shiki colours after 120 ms with identical text so nothing moves), `highlight.ts` (lazy Shiki, JS regex engine, per-language chunks, LRU cache).
+  - Syntax colours `--ox-shiki-*` in `tokens.css` (light/dark); prose styles for headings, ordered lists, task lists, links, blockquotes, tables, KaTeX and footnotes. KaTeX CSS imported in `main.tsx`.
+  - Messages: Markdown replies; branch navigator ‹ n / m › on edited messages and regenerated replies (`siblingsOf`, `newestLeafUnder`; the chosen leaf per chat lives in `features/chat/branches.ts`, persisted, cleared after send/edit/retry); thumbs up/down with an optional "what went wrong" note; token usage tooltip; attachments above the user bubble (image thumbnails with a full-size view, file chips).
+  - Chat page: the live reply subscribes to the stream store itself and message components are memoized, so older messages don't re-render 25×/s; stick-to-bottom via `ResizeObserver`; "Jump to latest"; `role="log"` thread and a polite status line.
+  - Composer: attachments via the native picker, paste and drag-and-drop (`features/attachments/`: `useAttachments` prepares files at once; chips show thumbnail, size/pages, "Preparing…", errors and model warnings; Send waits for files). Limits in the "+" menu and the drop overlay. The Phase 1 "Add from a project" mock is removed (Phase 7).
+  - Effort menu (Default / Low / Medium / High / Extra / Max, only the model's levels) and a thinking toggle that shows "always thinks" models as on and locked.
+  - Export as Markdown / JSON in the chat menus (title bar and sidebar), with a toast (`lib/toast.ts`, `components/ui/Toaster.tsx`).
+  - Settings → About: "Create demo chat" in development builds.
+- **Tests:**
+  - Rust library crates (Linux): core 28, store 31, llm 43, agent 33. New: effort parsing and fallback, request bodies (effort, switch, media fallbacks), real PDF extraction, attachments (resize, transparency, text, limits, PDFs, ownership), feedback and edits with files, export, demo.
+  - Vitest: `prepare.test.ts` (dollars, math delimiters, code, streaming), `Markdown.test.tsx` (GFM, KaTeX, errors, code blocks, links, raw HTML, streaming), `ChatPhase4.test.tsx` (branches, feedback, usage, export, attachments, effort, jump to latest), plus updated thread/model tests. The fake backend implements every new command.
+
+Deviations from PLAN.md (and why):
+- **Local servers get on/off only**, and only Strata (tested); see the table above.
+- **Release builds unwind on panic** (`panic = "abort"` removed from `[profile.release]`): pdf-extract can panic on malformed PDFs, and the panic is caught instead of closing the app.
+- **Two Tauri plugins** (dialog, opener), called from Rust commands so the frontend still goes through `@/bindings`. PLAN.md decisions table updated.
+- **Shiki uses the JavaScript regex engine** (the CSP has no `wasm-unsafe-eval`) and a CSS-variables theme. PLAN.md updated.
+- **Text attachments to Anthropic** stay `document` blocks with a title (as in Phase 3) rather than inline text; OpenAI-compatible models get `<file name="…">` blocks.
+- **Search (Ctrl+K)** already existed from Phase 2; nothing changed.
+- **"Add from a project"** mock removed from the "+" menu until Phase 7.
+
+Known issues / TODO carried forward:
+- Attachment files aren't deleted when a chat (or an unsent draft) is removed. Phase 17's data delete should sweep `<app data>\attachments` for files no message references.
+- LM Studio: thinking control untested; re-run `scripts\win\local-thinking.ps1` with it running.
+- OpenAI `xhigh`/`none`/`minimal` reasoning levels aren't offered (curated list is low/medium/high).
+- Markdown footnote links scroll to the first matching id on the page (ids can repeat across messages).
+- Edits keep the original's attachments; adding or removing files while editing isn't possible yet.
+- `src/bindings/index.ts` was edited by hand on the agent side to typecheck before Windows could regenerate it; `cargo test` (export_bindings) overwrites it with the real output.
+
+Notes for Phase 5:
+- The "+" menu's Web search and Connectors items are still placeholders; wire Connectors to the MCP server manager.
+- `open_external` exists for OAuth's system-browser step.
+- Agent-side workflow this phase: edit in the container mirror, `tar` changed sources to `/mnt/user-data/outputs/sync-N.tgz`, commit it to `logs\`, and unpack on the device with `tar xzf … --overwrite` (plain `tar` can't replace files without delete permission). Run prettier on the device, then copy `src` back. Don't include `package.json`, `PLAN.md`, `PROGRESS.md` or `scripts` in the tarball unless the mirror's copy is current.
+
+Verified: clippy ✅ cargo test ✅ typecheck ✅ lint ✅ (Windows, phase4.cmd). Vitest: 90/93 on the first run, test-setup fix applied (see Status). tauri dev manual exit check: pending.
 
 ## Phase 3 — LLM layer & streaming chat — 2026-11-05
 Status: done. `scripts\win\phase3.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test 119/119, typecheck, lint, vitest 57/57) and committed `phase 3: LLM layer & streaming chat`. Before that, the first run showed one flaky Vitest test, which checked the thinking toggle before the model list had loaded; the test now waits for it. The manual exit checks below are still open.

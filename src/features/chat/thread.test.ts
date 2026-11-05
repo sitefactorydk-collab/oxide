@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "@/bindings";
-import { activeThread, messageText, segments, thinkingOf } from "./thread";
+import { activeThread, messageText, newestLeafUnder, siblingsOf, thinkingOf } from "./thread";
 
 function msg(id: string, parentId: string | null, text = id): Message {
   return {
@@ -12,6 +12,7 @@ function msg(id: string, parentId: string | null, text = id): Message {
     model: null,
     stopReason: null,
     usage: null,
+    feedback: null,
     createdAt: 0,
   };
 }
@@ -43,12 +44,22 @@ describe("message helpers", () => {
     expect(thinkingOf({ content: [] })).toBeUndefined();
   });
 
-  it("splits paragraphs and fenced code", () => {
-    expect(segments("Intro\n\n```json\n{ }\n```\nAfter")).toEqual([
-      { kind: "p", text: "Intro" },
-      { kind: "code", lang: "json", code: "{ }" },
-      { kind: "p", text: "After" },
-    ]);
+  it("finds versions of a message and the newest leaf of a branch", () => {
+    // a → b → c; b edited to b2 → d; c has a regenerated sibling c2.
+    const all = [
+      msg("a", null),
+      msg("b", "a"),
+      msg("c", "b"),
+      msg("b2", "a"),
+      msg("d", "b2"),
+      msg("c2", "b"),
+    ];
+    const b = all[1]!;
+    expect(siblingsOf(all, b).map((m) => m.id)).toEqual(["b", "b2"]);
+    expect(newestLeafUnder(all, "b")).toBe("c2");
+    expect(newestLeafUnder(all, "b2")).toBe("d");
+    expect(newestLeafUnder(all, "d")).toBe("d");
+    expect(activeThread(all, newestLeafUnder(all, "b")).map((m) => m.id)).toEqual(["a", "b", "c2"]);
   });
 });
 
@@ -64,6 +75,7 @@ describe("activeThread with a leaf", () => {
       createdAt: 0,
       stopReason: null,
       usage: null,
+      feedback: null,
     });
     const all = [m("a", null), m("b", "a"), m("c", "b")];
     expect(activeThread(all, "b").map((x) => x.id)).toEqual(["a", "b"]);

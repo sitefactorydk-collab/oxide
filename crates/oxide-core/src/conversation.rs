@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::Timestamp;
+use crate::{Attachment, Timestamp};
 
 /// Longest title derived from a first message, in characters (an ellipsis is added).
 pub const MAX_DERIVED_TITLE_CHARS: usize = 48;
@@ -32,6 +32,8 @@ pub struct StartConversation {
     pub text: String,
     pub model: String,
     pub project_id: Option<String>,
+    /// Files sent with the first message (see [`Attachment`]).
+    pub attachments: Vec<Attachment>,
 }
 
 /// A chat matching a search, with the best matching message excerpt if the hit was in the text.

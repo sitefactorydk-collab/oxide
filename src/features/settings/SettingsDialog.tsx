@@ -4,6 +4,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { commands, type PingResponse } from "@/bindings";
 import { OxideMark } from "@/components/OxideMark";
 import { IconButton } from "@/components/ui/IconButton";
+import { useNavigate } from "react-router";
+import { useCreateDemoConversation } from "@/features/chats/queries";
+import { useNewChatModel } from "@/features/models/queries";
+import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { type ChatFont, type ThemePref, useUi } from "@/stores/ui";
 import { ModelsSection } from "@/features/models/ModelsSection";
@@ -276,9 +280,36 @@ function AboutSection() {
         </p>
         <p className="mt-4 max-w-md text-base text-fg-muted">
           A desktop AI assistant written in Rust on Tauri. Fonts: Inter, Source Serif 4 and
-          JetBrains Mono (SIL Open Font License). Icons: Lucide (ISC).
+          JetBrains Mono (SIL Open Font License); KaTeX fonts for math (SIL OFL). Icons: Lucide
+          (ISC). Syntax highlighting: Shiki (MIT).
         </p>
+        {import.meta.env.DEV && <DemoChatButton />}
       </div>
+    </div>
+  );
+}
+
+/** Development builds: a 50-message chat with code, math and images, for checking rendering. */
+function DemoChatButton() {
+  const [modelId] = useNewChatModel();
+  const create = useCreateDemoConversation();
+  const navigate = useNavigate();
+  return (
+    <div className="mt-6 rounded-xl border border-dashed border-line-strong p-4">
+      <p className="text-base font-medium text-fg">Developer tools</p>
+      <p className="mt-1 text-sm text-fg-muted">
+        Creates a 50-message chat with code, math, tables, images and a PDF. Nothing is sent to a
+        model.
+      </p>
+      <button
+        type="button"
+        disabled={create.isPending}
+        onClick={() => create.mutate(modelId, { onSuccess: (c) => navigate(`/chat/${c.id}`) })}
+        className="mt-3 h-8 rounded-lg border border-line bg-raised px-3 text-sm text-fg hover:bg-hover disabled:opacity-50"
+      >
+        {create.isPending ? "Creating…" : "Create demo chat"}
+      </button>
+      {create.error && <p className="mt-2 text-sm text-danger">{errorMessage(create.error)}</p>}
     </div>
   );
 }

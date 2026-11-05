@@ -7,7 +7,10 @@ import {
 } from "@tanstack/react-query";
 import {
   commands,
+  type Attachment,
   type Conversation,
+  type ExportFormat,
+  type Feedback,
   type GenerateOptions,
   type Message,
   type StartConversation,
@@ -182,8 +185,10 @@ export function useSendMessage() {
       conversationId: string;
       parentId: string | null;
       text: string;
+      attachments: Attachment[];
       options: GenerateOptions;
-    }) => unwrap(commands.sendMessage(v.conversationId, v.parentId, v.text, v.options)),
+    }) =>
+      unwrap(commands.sendMessage(v.conversationId, v.parentId, v.text, v.attachments, v.options)),
   );
 }
 
@@ -205,5 +210,49 @@ export function useRegenerate() {
 export function useStopGeneration() {
   return useMutation({
     mutationFn: (conversationId: string) => unwrap(commands.stopGeneration(conversationId)),
+  });
+}
+
+/** Replaces a message in its chat's cached thread (e.g. after it was rated). */
+function replaceMessageInCache(qc: QueryClient, m: Message) {
+  qc.setQueryData<Message[]>(chatKeys.messages(m.conversationId), (old) =>
+    old?.map((x) => (x.id === m.id ? m : x)),
+  );
+}
+
+/** Rates a reply (thumbs up/down with an optional note), or clears the rating. */
+export function useSetFeedback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { message: Message; feedback: Feedback | null }) =>
+      unwrap(commands.setMessageFeedback(v.message.id, v.feedback)),
+    onMutate: ({ message, feedback }) => {
+      const previous = qc.getQueryData<Message[]>(chatKeys.messages(message.conversationId));
+      replaceMessageInCache(qc, { ...message, feedback });
+      return { previous, conversationId: message.conversationId };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(chatKeys.messages(ctx.conversationId), ctx.previous);
+    },
+    onSuccess: (m) => replaceMessageInCache(qc, m),
+  });
+}
+
+/** Saves a chat as Markdown (the visible thread) or JSON (every branch). */
+export function useExportConversation() {
+  return useMutation({
+    mutationFn: (v: { id: string; leafId: string | null; format: ExportFormat }) =>
+      unwrap(commands.exportConversation(v.id, v.leafId, v.format)),
+  });
+}
+
+/** Creates the 50-message demo chat (Settings → About, development builds). */
+export function useCreateDemoConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (model: string) => unwrap(commands.createDemoConversation(model)),
+    onSuccess: (c) => {
+      patchList(qc, (list) => sortByUpdated([c, ...list.filter((x) => x.id !== c.id)]));
+    },
   });
 }

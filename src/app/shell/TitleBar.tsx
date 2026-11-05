@@ -20,6 +20,7 @@ import { IconButton } from "@/components/ui/IconButton";
 import { MenuContent, MenuItem, MenuRoot, MenuSeparator, MenuTrigger } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ChatMenuItems } from "@/features/chat/ChatMenuItems";
+import { useExportChat } from "@/features/chat/useExportChat";
 import {
   useConversation,
   useDeleteConversation,
@@ -183,6 +184,7 @@ function ChatBreadcrumb({ id }: { id: string }) {
   const star = useStarConversation();
   const rename = useRenameConversation();
   const remove = useDeleteConversation();
+  const exportChat = useExportChat();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
   const renameRequested = useRef(false);
@@ -240,6 +242,7 @@ function ChatBreadcrumb({ id }: { id: string }) {
                 renameRequested.current = true;
                 setRenaming(true);
               }}
+              onExport={(format) => exportChat(id, format)}
               onDelete={() => {
                 remove.mutate(id);
                 navigate("/new");

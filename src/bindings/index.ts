@@ -88,12 +88,13 @@ async listMessages(conversationId: string) : Promise<Result<Message[], CommandEr
 }
 },
 /**
- * Sends a user message under `parent_id` (the leaf of the visible thread) and starts the
- * reply. Returns the saved message; the reply streams as `chatStream` events.
+ * Sends a user message under `parent_id` (the leaf of the visible thread) with optional
+ * attachments, and starts the reply. Returns the saved message; the reply streams as
+ * `chatStream` events.
  */
-async sendMessage(conversationId: string, parentId: string | null, text: string, options: GenerateOptions) : Promise<Result<Message, CommandError>> {
+async sendMessage(conversationId: string, parentId: string | null, text: string, attachments: Attachment[], options: GenerateOptions) : Promise<Result<Message, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("send_message", { conversationId, parentId, text, options }) };
+    return { status: "ok", data: await TAURI_INVOKE("send_message", { conversationId, parentId, text, attachments, options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -140,6 +141,94 @@ async stopGeneration(conversationId: string) : Promise<Result<boolean, CommandEr
 async searchConversations(query: string, limit: number) : Promise<Result<SearchHit[], CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("search_conversations", { query, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rates a reply (or clears the rating with `None`). Ratings stay on this computer.
+ */
+async setMessageFeedback(messageId: string, feedback: Feedback | null) : Promise<Result<Message, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_message_feedback", { messageId, feedback }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a chat to a file the user picks. Markdown exports the thread ending at `leaf_id`
+ * (the newest message when `None`); JSON exports every branch. Returns the saved path, or
+ * `None` if the user cancelled.
+ */
+async exportConversation(id: string, leafId: string | null, format: ExportFormat) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_conversation", { id, leafId, format }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Creates a 50-message demo chat (code, math, tables, images) on `model`, for checking
+ * rendering and scrolling. Nothing is sent to the model.
+ */
+async createDemoConversation(model: string) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_demo_conversation", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the system file picker. Returns the chosen paths (empty if cancelled).
+ */
+async pickFiles() : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pick_files") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Checks, converts and stores one file for sending. Images are resized and compressed,
+ * PDFs checked and their text extracted, text files validated.
+ */
+async prepareAttachment(source: AttachmentSource) : Promise<Result<Attachment, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_attachment", { source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A stored attachment image as a `data:` URL, scaled to fit `max_side` pixels (full size
+ * when `None`). Only files in the attachments folder can be read.
+ */
+async attachmentPreview(path: string, maxSide: number | null) : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("attachment_preview", { path, maxSide }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The size and count limits for attachments.
+ */
+async attachmentLimits() : Promise<AttachmentLimits> {
+    return await TAURI_INVOKE("attachment_limits");
+},
+/**
+ * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
+ */
+async openExternal(url: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_external", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -302,6 +391,70 @@ conversationUpdated: "conversation-updated"
 
 export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
+/**
+ * A prepared attachment, ready to send.
+ */
+export type Attachment = { id: string; 
+/**
+ * The original file name.
+ */
+name: string; kind: AttachmentKind; mediaType: string; 
+/**
+ * The stored copy in the app's data folder.
+ */
+path: string; 
+/**
+ * Size of the stored copy, in bytes.
+ */
+size: number; 
+/**
+ * Size of the original file, in bytes.
+ */
+originalSize: number; width: number | null; height: number | null; 
+/**
+ * Page count of a PDF.
+ */
+pages: number | null; 
+/**
+ * A small JPEG preview of an image, as a `data:` URL.
+ */
+thumbnail: string | null; 
+/**
+ * Something the user should know, such as "Resized from 4032×3024".
+ */
+note: string | null }
+/**
+ * What kind of file an attachment is.
+ */
+export type AttachmentKind = "image" | "pdf" | 
+/**
+ * Plain text or source code, inlined into the prompt with a filename header.
+ */
+"text"
+/**
+ * Limits on attachments, shown in the UI and enforced when files are added.
+ */
+export type AttachmentLimits = { maxFiles: number; 
+/**
+ * Largest image accepted before resizing, in bytes.
+ */
+maxImageBytes: number; 
+/**
+ * Images are scaled down to fit inside this many pixels on each side.
+ */
+maxImageSide: number; maxPdfBytes: number; maxPdfPages: number; maxTextBytes: number }
+/**
+ * Where a new attachment comes from.
+ */
+export type AttachmentSource = 
+/**
+ * A file on disk (file picker, drag and drop).
+ */
+{ kind: "path"; path: string } | 
+/**
+ * Bytes from the clipboard or a browser file input, base64-encoded.
+ */
+{ kind: "bytes"; name: string; data: string }
 export type ChatFont = "serif" | "sans" | "system"
 /**
  * A step of a reply being written (`events.chatStream` in TypeScript).
@@ -358,13 +511,43 @@ export type ConversationChanged = { conversation: Conversation }
  */
 export type ConversationUpdated = ConversationChanged
 /**
+ * How much effort a model puts into an answer (thinking, length, tool use). The names match
+ * Anthropic's `output_config.effort`; OpenAI-compatible servers get the nearest
+ * `reasoning_effort`.
+ */
+export type Effort = "low" | "medium" | "high" | 
+/**
+ * "Extra" in the UI.
+ */
+"xhigh" | "max"
+/**
+ * Export formats.
+ */
+export type ExportFormat = 
+/**
+ * The visible thread as Markdown.
+ */
+"markdown" | 
+/**
+ * Every message and branch as JSON.
+ */
+"json"
+/**
+ * A rating with an optional note ("what went wrong").
+ */
+export type Feedback = { rating: Rating; note: string | null; createdAt: number }
+/**
  * Per-request options chosen in the composer.
  */
 export type GenerateOptions = { 
 /**
  * Extended thinking, for models that support it. Ignored by the others.
  */
-thinking: boolean }
+thinking: boolean; 
+/**
+ * Effort level. `None` (and levels the model doesn't accept) leave the model's default.
+ */
+effort: Effort | null }
 /**
  * Where the bytes of an image or document live.
  */
@@ -374,7 +557,7 @@ export type MediaSource =
  */
 { kind: "base64"; data: string } | 
 /**
- * A file on disk (attachments are copied into app data in Phase 4).
+ * A file on disk: an attachment's copy in the app's data folder.
  */
 { kind: "path"; path: string }
 /**
@@ -396,7 +579,11 @@ stopReason: StopReason | null;
 /**
  * Token counts of an assistant reply, when the provider reported them.
  */
-usage: Usage | null }
+usage: Usage | null; 
+/**
+ * The user's rating of an assistant reply. Stored locally; never sent anywhere.
+ */
+feedback: Feedback | null }
 /**
  * What a model supports. Filled from the provider's own metadata where it has any, and from
  * Oxide's curated tables or a probe otherwise.
@@ -411,7 +598,15 @@ tools: boolean; thinking: ThinkingStyle;
  * always think reject that (Claude Opus 5.5 answers 400), so it's only sent when the
  * provider says it's supported.
  */
-thinkingOff: boolean; images: boolean; pdfs: boolean }
+thinkingOff: boolean; images: boolean; pdfs: boolean; 
+/**
+ * Effort levels the model accepts, lowest first. Empty: no effort control.
+ */
+effort: Effort[]; 
+/**
+ * The level that applies when none is sent.
+ */
+defaultEffort: Effort | null }
 /**
  * A model the picker can offer.
  */
@@ -495,6 +690,10 @@ message: string; modelCount: number;
  */
 models: string[]; latencyMs: number }
 /**
+ * Thumbs up or down on a reply.
+ */
+export type Rating = "good" | "bad"
+/**
  * Who wrote a message.
  */
 export type Role = "user" | "assistant"
@@ -507,7 +706,11 @@ export type SearchHit = { conversation: Conversation; messageId: string | null; 
 /**
  * Creates a chat together with its first user message.
  */
-export type StartConversation = { text: string; model: string; projectId: string | null }
+export type StartConversation = { text: string; model: string; projectId: string | null; 
+/**
+ * Files sent with the first message (see [`Attachment`]).
+ */
+attachments: Attachment[] }
 /**
  * Why a reply ended.
  */
@@ -585,7 +788,12 @@ export type ThinkingStyle =
 /**
  * The model decides how long to think. It can also be switched off explicitly.
  */
-"adaptive"
+"adaptive" | 
+/**
+ * A local reasoning model whose thinking can only be switched on or off, through the
+ * chat template (`chat_template_kwargs.enable_thinking`). Verified on Strata.
+ */
+"switch"
 /**
  * Token counts for one reply.
  */

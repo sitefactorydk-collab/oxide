@@ -6,15 +6,22 @@
 //!   the model's answer to an [`EventSink`], saves the reply (also when stopped or failed
 //!   part-way) and names new chats after their first exchange.
 //!
+//! - [`AttachmentStore`]: checks, converts and stores attached files.
+//! - [`export`]: conversations as Markdown or JSON.
+//!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
+pub mod attachments;
 mod chat;
 mod context;
+pub mod demo;
 mod error;
+pub mod export;
 mod registry;
 mod title;
 
-pub use chat::{ChatService, EventSink};
+pub use attachments::{AttachmentError, AttachmentStore};
+pub use chat::{ChatService, EventSink, path_to};
 pub use context::{build_messages, plan_request, system_prompt};
 pub use error::AgentError;
 pub use registry::{Connector, ModelRegistry};

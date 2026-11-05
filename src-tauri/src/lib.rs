@@ -25,7 +25,7 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{chats, models, projects, providers, settings};
+    use commands::{attachments, chats, models, projects, providers, settings, system};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::ChatStream,
@@ -47,6 +47,16 @@ fn specta_builder() -> Builder<tauri::Wry> {
             chats::regenerate,
             chats::stop_generation,
             chats::search_conversations,
+            chats::set_message_feedback,
+            chats::export_conversation,
+            chats::create_demo_conversation,
+            // Attachments
+            attachments::pick_files,
+            attachments::prepare_attachment,
+            attachments::attachment_preview,
+            attachments::attachment_limits,
+            // System
+            system::open_external,
             // Models
             models::list_models,
             // Projects
@@ -100,6 +110,8 @@ pub fn run() -> anyhow::Result<()> {
     let builder = specta_builder();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

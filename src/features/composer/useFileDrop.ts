@@ -2,21 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import { inTauri } from "@/lib/platform";
 import { onNativeFileDrop } from "@/lib/window";
 
-function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
+export interface FileDropHandlers {
+  /** Real paths (Tauri: the webview intercepts drops and reports paths). */
+  onPaths: (paths: string[]) => void;
+  /** Browser files (plain browser preview, tests). */
+  onFiles: (files: File[]) => void;
 }
 
 /**
- * Window-wide file drag-and-drop. In Tauri the webview intercepts drops and reports real
- * paths (what Phase 4 needs to read files in Rust); in a plain browser HTML5 events are used.
- * Calls `onFiles` with file names and returns whether a drag is over the window.
+ * Window-wide file drag-and-drop. Returns whether files are being dragged over the window.
  */
-export function useFileDrop(onFiles: (names: string[]) => void): boolean {
+export function useFileDrop(handlers: FileDropHandlers): boolean {
   const [dragging, setDragging] = useState(false);
-  const cb = useRef(onFiles);
+  const cb = useRef(handlers);
   useEffect(() => {
-    cb.current = onFiles;
-  }, [onFiles]);
+    cb.current = handlers;
+  }, [handlers]);
 
   useEffect(() => {
     if (inTauri) {
@@ -27,7 +28,7 @@ export function useFileDrop(onFiles: (names: string[]) => void): boolean {
         else if (e.type === "leave") setDragging(false);
         else {
           setDragging(false);
-          if (e.paths.length) cb.current(e.paths.map(baseName));
+          if (e.paths.length) cb.current.onPaths(e.paths);
         }
       })
         .then((u) => {
@@ -62,8 +63,8 @@ export function useFileDrop(onFiles: (names: string[]) => void): boolean {
       e.preventDefault();
       depth = 0;
       setDragging(false);
-      const names = Array.from(e.dataTransfer?.files ?? []).map((f) => f.name);
-      if (names.length) cb.current(names);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length) cb.current.onFiles(files);
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);

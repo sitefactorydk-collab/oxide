@@ -53,6 +53,25 @@ pub struct Message {
     pub stop_reason: Option<StopReason>,
     /// Token counts of an assistant reply, when the provider reported them.
     pub usage: Option<Usage>,
+    /// The user's rating of an assistant reply. Stored locally; never sent anywhere.
+    pub feedback: Option<Feedback>,
+}
+
+/// Thumbs up or down on a reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum Rating {
+    Good,
+    Bad,
+}
+
+/// A rating with an optional note ("what went wrong").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Feedback {
+    pub rating: Rating,
+    pub note: Option<String>,
+    pub created_at: Timestamp,
 }
 
 /// Where the bytes of an image or document live.
@@ -61,7 +80,7 @@ pub struct Message {
 pub enum MediaSource {
     /// Inline base64 data.
     Base64 { data: String },
-    /// A file on disk (attachments are copied into app data in Phase 4).
+    /// A file on disk: an attachment's copy in the app's data folder.
     Path { path: String },
 }
 

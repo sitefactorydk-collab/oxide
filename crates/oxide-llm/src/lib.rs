@@ -14,7 +14,7 @@ pub mod anthropic;
 pub mod capabilities;
 mod error;
 mod http;
-mod media;
+pub mod media;
 pub mod openai;
 pub mod probe;
 mod provider;

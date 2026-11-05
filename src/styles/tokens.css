@@ -65,6 +65,19 @@
   --ox-bg-bubble: #f0eee9;
   --ox-bg-code: #f4f2ed;
 
+  /* Code syntax (Shiki CSS-variables theme) */
+  --ox-shiki-foreground: #2b2824;
+  --ox-shiki-background: transparent;
+  --ox-shiki-token-keyword: #a3342e;
+  --ox-shiki-token-constant: #9a4e16;
+  --ox-shiki-token-string: #3d7a3a;
+  --ox-shiki-token-string-expression: #3d7a3a;
+  --ox-shiki-token-comment: #8b867c;
+  --ox-shiki-token-function: #2f5f9e;
+  --ox-shiki-token-parameter: #7a5a20;
+  --ox-shiki-token-punctuation: #6b665d;
+  --ox-shiki-token-link: #2f5f9e;
+
   --ox-line: rgb(40 36 30 / 0.1);
   --ox-line-strong: rgb(40 36 30 / 0.18);
 
@@ -107,6 +120,19 @@
     --ox-bg-active: rgb(255 250 240 / 0.1);
     --ox-bg-bubble: #171614;
     --ox-bg-code: #1c1b19;
+
+    /* Code syntax (Shiki CSS-variables theme) */
+    --ox-shiki-foreground: #e6e1d8;
+    --ox-shiki-background: transparent;
+    --ox-shiki-token-keyword: #f08a74;
+    --ox-shiki-token-constant: #e3a26b;
+    --ox-shiki-token-string: #9cc98a;
+    --ox-shiki-token-string-expression: #9cc98a;
+    --ox-shiki-token-comment: #8a857b;
+    --ox-shiki-token-function: #86b3e8;
+    --ox-shiki-token-parameter: #e0c48a;
+    --ox-shiki-token-punctuation: #a9a399;
+    --ox-shiki-token-link: #86b3e8;
 
     --ox-line: rgb(255 250 240 / 0.1);
     --ox-line-strong: rgb(255 250 240 / 0.18);
@@ -151,6 +177,19 @@
   --ox-bg-active: rgb(255 250 240 / 0.1);
   --ox-bg-bubble: #171614;
   --ox-bg-code: #1c1b19;
+
+  /* Code syntax (Shiki CSS-variables theme) */
+  --ox-shiki-foreground: #e6e1d8;
+  --ox-shiki-background: transparent;
+  --ox-shiki-token-keyword: #f08a74;
+  --ox-shiki-token-constant: #e3a26b;
+  --ox-shiki-token-string: #9cc98a;
+  --ox-shiki-token-string-expression: #9cc98a;
+  --ox-shiki-token-comment: #8a857b;
+  --ox-shiki-token-function: #86b3e8;
+  --ox-shiki-token-parameter: #e0c48a;
+  --ox-shiki-token-punctuation: #a9a399;
+  --ox-shiki-token-link: #86b3e8;
 
   --ox-line: rgb(255 250 240 / 0.1);
   --ox-line-strong: rgb(255 250 240 / 0.18);

@@ -24,6 +24,8 @@ oxide-llm.workspace = true
 oxide-agent.workspace = true
 
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

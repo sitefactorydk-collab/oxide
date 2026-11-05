@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use oxide_agent::{ChatService, EventSink, ModelRegistry};
+use oxide_agent::{AttachmentStore, ChatService, EventSink, ModelRegistry};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
 pub struct AppState {
@@ -13,6 +13,8 @@ pub struct AppState {
     pub models: Arc<ModelRegistry>,
     /// Writes replies and streams them to `sink`.
     pub chat: Arc<ChatService>,
+    /// Attached files, stored under `<data dir>/attachments`.
+    pub attachments: AttachmentStore,
 }
 
 impl AppState {
@@ -30,11 +32,13 @@ impl AppState {
         let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecrets::new(service));
         let models = Arc::new(ModelRegistry::new(store.clone(), secrets.clone()));
         let chat = ChatService::new(store.clone(), models.clone(), sink);
+        let attachments = AttachmentStore::new(data_dir.join("attachments"));
         Ok(Self {
             store,
             secrets,
             models,
             chat,
+            attachments,
         })
     }
 }

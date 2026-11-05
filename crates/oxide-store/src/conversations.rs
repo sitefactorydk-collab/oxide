@@ -68,10 +68,25 @@ impl Store {
         if model.is_empty() {
             return Err(StoreError::Invalid("a model is required".into()));
         }
+        let text = input.text.trim();
+        let mut content: Vec<ContentBlock> =
+            input.attachments.iter().map(|a| a.to_block()).collect();
+        if !text.is_empty() {
+            content.push(ContentBlock::text(text));
+        }
+        if content.is_empty() {
+            return Err(StoreError::Invalid("the message is empty".into()));
+        }
+        // A message with only files is titled after the first file.
+        let title_source = if text.is_empty() {
+            input.attachments.first().map_or("", |a| a.name.as_str())
+        } else {
+            text
+        };
         let now = now_ms();
         let convo = Conversation {
             id: new_id(),
-            title: title_from_text(&input.text),
+            title: title_from_text(title_source),
             project_id: input.project_id.filter(|p| !p.is_empty()),
             model: model.to_owned(),
             starred: false,
@@ -83,11 +98,12 @@ impl Store {
             conversation_id: convo.id.clone(),
             parent_id: None,
             role: Role::User,
-            content: vec![ContentBlock::text(input.text.trim())],
+            content,
             model: None,
             created_at: now,
             stop_reason: None,
             usage: None,
+            feedback: None,
         };
 
         let mut tx = self.pool.begin().await?;
@@ -188,6 +204,7 @@ mod tests {
             text: text.into(),
             model: "anthropic/sonnet".into(),
             project_id: None,
+            attachments: Vec::new(),
         }
     }
 

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::{Conversation, Message, Timestamp};
+use crate::{Conversation, Effort, Message, Timestamp};
 
 /// Per-request options chosen in the composer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -11,6 +11,8 @@ use crate::{Conversation, Message, Timestamp};
 pub struct GenerateOptions {
     /// Extended thinking, for models that support it. Ignored by the others.
     pub thinking: bool,
+    /// Effort level. `None` (and levels the model doesn't accept) leave the model's default.
+    pub effort: Option<Effort>,
 }
 
 /// Why a reply ended.

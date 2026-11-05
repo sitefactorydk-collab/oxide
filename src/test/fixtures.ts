@@ -1,6 +1,7 @@
 import type {
   ContentBlock,
   Conversation,
+  Effort,
   Message,
   ModelInfo,
   Project,
@@ -91,6 +92,7 @@ function message(
     createdAt,
     stopReason: role === "assistant" ? "endTurn" : null,
     usage: null,
+    feedback: null,
   };
 }
 
@@ -158,6 +160,7 @@ function model(
   label: string,
   tools = true,
   thinking: ThinkingStyle = "none",
+  effort: Effort[] = [],
 ): ModelInfo {
   return {
     id: `${providerId}/${name}`,
@@ -169,7 +172,9 @@ function model(
       thinking,
       thinkingOff: false,
       images: providerId === "anthropic",
-      pdfs: false,
+      pdfs: providerId === "anthropic",
+      effort,
+      defaultEffort: effort.length ? (name.includes("opus-5-5") ? "medium" : "high") : null,
     },
     contextWindow: null,
     maxOutputTokens: null,
@@ -184,8 +189,19 @@ export function seedModels(): ProviderModels[] {
       providerName: "Anthropic",
       providerKind: "anthropic",
       models: [
-        model("anthropic", "claude-opus-5-5", "Claude Opus 5.5", true, "adaptive"),
-        model("anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", true, "budget"),
+        model("anthropic", "claude-opus-5-5", "Claude Opus 5.5", true, "adaptive", [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ]),
+        model("anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", true, "budget", [
+          "low",
+          "medium",
+          "high",
+          "max",
+        ]),
         model("anthropic", "claude-haiku-4-5", "Claude Haiku 4.5"),
       ],
       error: null,

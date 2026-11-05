@@ -1,6 +1,8 @@
 //! Errors from reply generation. Messages can be shown to the user as they are.
 
 use oxide_llm::LlmError;
+
+use crate::attachments::AttachmentError;
 use oxide_store::StoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,4 +17,6 @@ pub enum AgentError {
     NotFound(&'static str),
     #[error("{0}")]
     Invalid(String),
+    #[error(transparent)]
+    Attachment(#[from] AttachmentError),
 }

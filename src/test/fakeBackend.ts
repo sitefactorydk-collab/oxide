@@ -1,5 +1,8 @@
 import type {
   AppSettings,
+  Attachment,
+  AttachmentLimits,
+  ContentBlock,
   ChatStreamEvent,
   CommandError,
   Conversation,
@@ -53,6 +56,12 @@ interface FakeState {
   held: Map<string, HeldReply>;
   /** Options of every reply started, in order. */
   replyOptions: GenerateOptions[];
+  /** Attachments prepared so far, by path. */
+  attachments: Map<string, Attachment>;
+  /** Files "saved" by exports: path → content description. */
+  exports: Array<{ id: string; leafId: string | null; format: string }>;
+  /** Links opened outside the app. */
+  opened: string[];
 }
 
 export interface FakeSeed {
@@ -80,7 +89,59 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     replies: seed.replies ?? "auto",
     held: new Map(),
     replyOptions: [],
+    attachments: new Map(),
+    exports: [],
+    opened: [],
   };
+}
+
+export const FAKE_LIMITS: AttachmentLimits = {
+  maxFiles: 20,
+  maxImageBytes: 30 * 1024 * 1024,
+  maxImageSide: 1568,
+  maxPdfBytes: 32 * 1024 * 1024,
+  maxPdfPages: 100,
+  maxTextBytes: 1024 * 1024,
+};
+
+/** What the fake backend makes of a file name (only the extension matters). */
+function fakeAttachment(name: string, bytes: number): Attachment | string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const id = nextId("att");
+  const base = {
+    id,
+    name,
+    path: `/data/attachments/${id}.${ext || "txt"}`,
+    size: bytes,
+    originalSize: bytes,
+    width: null,
+    height: null,
+    pages: null,
+    thumbnail: null,
+    note: null,
+  };
+  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
+    return {
+      ...base,
+      kind: "image",
+      mediaType: ext === "png" ? "image/png" : "image/jpeg",
+      width: 640,
+      height: 400,
+      thumbnail: "data:image/png;base64,iVBORw0KGgo=",
+    };
+  }
+  if (ext === "pdf") return { ...base, kind: "pdf", mediaType: "application/pdf", pages: 3 };
+  if (["txt", "md", "rs", "ts", "py", "json", "csv"].includes(ext)) {
+    return { ...base, kind: "text", mediaType: "text/plain" };
+  }
+  return `${name} isn't a file type Oxide can read. Attach images, PDFs, text or code.`;
+}
+
+function blockOf(a: Attachment): ContentBlock {
+  const source = { kind: "path" as const, path: a.path };
+  return a.kind === "image"
+    ? { type: "image", mediaType: a.mediaType, source }
+    : { type: "document", mediaType: a.mediaType, name: a.name, source };
 }
 
 /** A tiny typed event bus with the shape of the generated `events` object. */
@@ -162,17 +223,25 @@ function mask(key: string): string {
   return key.length < 12 ? "••••" : `••••${key.slice(-4)}`;
 }
 
-function newMessage(conversationId: string, parentId: string | null, text: string): Message {
+function newMessage(
+  conversationId: string,
+  parentId: string | null,
+  text: string,
+  attachments: Attachment[] = [],
+): Message {
+  const content: ContentBlock[] = attachments.map(blockOf);
+  if (text) content.push({ type: "text", text });
   const m: Message = {
     id: nextId("m"),
     conversationId,
     parentId,
     role: "user",
-    content: [{ type: "text", text }],
+    content,
     model: null,
     createdAt: Date.now(),
     stopReason: null,
     usage: null,
+    feedback: null,
   };
   state.messages.push(m);
   const c = state.conversations.find((x) => x.id === conversationId);
@@ -191,6 +260,7 @@ function saveReply(r: HeldReply, text: string, stopReason: Message["stopReason"]
     createdAt: Date.now(),
     stopReason,
     usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    feedback: null,
   };
   state.messages.push(m);
   const c = state.conversations.find((x) => x.id === r.conversationId);
@@ -271,7 +341,7 @@ export const fakeCommands: typeof RealCommands = {
   getConversation: (id) => withConversation(id, (c) => c),
   startConversation: (input, options) => {
     const now = Date.now();
-    const firstLine = input.text.trim().split("\n")[0] ?? "";
+    const firstLine = input.text.trim().split("\n")[0] || (input.attachments[0]?.name ?? "");
     const c: Conversation = {
       id: nextId("c"),
       title: firstLine.length > 48 ? `${firstLine.slice(0, 47)}…` : firstLine || "New chat",
@@ -282,7 +352,7 @@ export const fakeCommands: typeof RealCommands = {
       updatedAt: now,
     };
     state.conversations.push(c);
-    const first = newMessage(c.id, null, input.text.trim());
+    const first = newMessage(c.id, null, input.text.trim(), input.attachments);
     const result = ok(c);
     startReply(c.id, first.id, options);
     return result;
@@ -314,14 +384,15 @@ export const fakeCommands: typeof RealCommands = {
   },
   listMessages: (conversationId) =>
     ok(state.messages.filter((m) => m.conversationId === conversationId)),
-  sendMessage: (conversationId, parentId, text, options) => {
+  sendMessage: (conversationId, parentId, text, attachments, options) => {
     if (!state.conversations.some((c) => c.id === conversationId)) {
       return fail("notFound", "conversation not found");
     }
     if (state.held.has(conversationId)) {
       return fail("invalid", "a reply is already being written in this chat");
     }
-    const m = newMessage(conversationId, parentId, text.trim());
+    if (!text.trim() && attachments.length === 0) return fail("invalid", "the message is empty");
+    const m = newMessage(conversationId, parentId, text.trim(), attachments);
     const result = ok(m);
     startReply(conversationId, m.id, options);
     return result;
@@ -329,7 +400,9 @@ export const fakeCommands: typeof RealCommands = {
   editAndResend: (messageId, text, options) => {
     const original = state.messages.find((m) => m.id === messageId);
     if (!original) return fail("notFound", "message not found");
+    const kept = original.content.filter((b) => b.type === "image" || b.type === "document");
     const m = newMessage(original.conversationId, original.parentId, text.trim());
+    m.content = [...kept, ...m.content];
     const result = ok(m);
     startReply(m.conversationId, m.id, options);
     return result;
@@ -350,6 +423,53 @@ export const fakeCommands: typeof RealCommands = {
     return ok(true);
   },
   listModels: () => ok(state.models),
+  setMessageFeedback: (messageId, feedback) => {
+    const m = state.messages.find((x) => x.id === messageId);
+    if (!m) return fail("notFound", "message not found");
+    if (m.role !== "assistant") return fail("invalid", "only replies can be rated");
+    m.feedback = feedback;
+    return ok(m);
+  },
+  exportConversation: (id, leafId, format) => {
+    if (!state.conversations.some((c) => c.id === id)) {
+      return fail("notFound", "conversation not found");
+    }
+    state.exports.push({ id, leafId, format });
+    return ok(`C:\\Users\\me\\Documents\\export.${format === "json" ? "json" : "md"}`);
+  },
+  createDemoConversation: (model) => {
+    const now = Date.now();
+    const c: Conversation = {
+      id: nextId("c"),
+      title: "Demo: Markdown, code, math and images",
+      projectId: null,
+      model,
+      starred: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.conversations.push(c);
+    return ok(c);
+  },
+  pickFiles: () => ok<string[]>([]),
+  prepareAttachment: (source) => {
+    const name =
+      source.kind === "path" ? (source.path.split(/[\\/]/).pop() ?? source.path) : source.name;
+    const bytes = source.kind === "bytes" ? Math.floor((source.data.length * 3) / 4) : 1234;
+    const a = fakeAttachment(name, bytes);
+    if (typeof a === "string") return fail("invalid", a);
+    state.attachments.set(a.path, a);
+    return ok(a);
+  },
+  attachmentPreview: (path) =>
+    state.attachments.has(path) || path.startsWith("/data/attachments/")
+      ? ok("data:image/png;base64,iVBORw0KGgo=")
+      : fail("invalid", "an attachment isn't in Oxide's attachments folder"),
+  attachmentLimits: () => Promise.resolve(FAKE_LIMITS),
+  openExternal: (url) => {
+    state.opened.push(url);
+    return ok(null);
+  },
   searchConversations: (query, limit) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return ok<SearchHit[]>([]);

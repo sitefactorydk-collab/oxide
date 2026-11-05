@@ -4,10 +4,10 @@ import { Link, useNavigate, useParams } from "react-router";
 import { IconButton } from "@/components/ui/IconButton";
 import { useConversations, useStartConversation } from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
+import { useGenerateOptions } from "@/features/composer/options";
 import { useNewChatModel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
 import { formatRelative } from "@/lib/time";
-import { useUi } from "@/stores/ui";
 import { useProject } from "./queries";
 
 export function ProjectPage() {
@@ -16,7 +16,7 @@ export function ProjectPage() {
   const { data: conversations } = useConversations();
   const start = useStartConversation();
   const [modelId, setModelId] = useNewChatModel();
-  const thinking = useUi((s) => s.thinking);
+  const options = useGenerateOptions();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
 
@@ -51,15 +51,16 @@ export function ProjectPage() {
             placeholder={`Start a chat in ${project.name}…`}
             modelId={modelId}
             onModelChange={setModelId}
-            onSubmit={(text) => {
+            onSubmit={(text, attachments) => {
               start.mutate(
                 {
                   input: {
-                    text: text.trim() || "Attached files",
+                    text: text.trim(),
                     model: modelId,
                     projectId: project.id,
+                    attachments,
                   },
-                  options: { thinking },
+                  options,
                 },
                 {
                   onSuccess: (c) => {

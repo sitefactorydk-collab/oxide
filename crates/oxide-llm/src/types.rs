@@ -1,7 +1,7 @@
 //! Provider-neutral request and event types.
 
 use futures_util::stream::BoxStream;
-use oxide_core::{ContentBlock, Role, StopReason, Usage};
+use oxide_core::{ContentBlock, Effort, Role, StopReason, Usage};
 use serde_json::Value;
 
 use crate::LlmError;
@@ -63,6 +63,13 @@ pub struct ChatRequest {
     pub thinking: Thinking,
     /// Mark prompt-cache breakpoints (Anthropic): system prompt, tools and the latest turns.
     pub cache: bool,
+    /// Effort level (Anthropic `output_config.effort`, OpenAI `reasoning_effort`). `None`
+    /// leaves the model's default.
+    pub effort: Option<Effort>,
+    /// The model can see images. When it can't, images are replaced by a short note.
+    pub images: bool,
+    /// The model reads PDFs natively (Anthropic). Otherwise their extracted text is sent.
+    pub native_pdfs: bool,
 }
 
 impl ChatRequest {
@@ -75,6 +82,9 @@ impl ChatRequest {
             max_tokens: None,
             thinking: Thinking::Default,
             cache: false,
+            effort: None,
+            images: true,
+            native_pdfs: true,
         }
     }
 }

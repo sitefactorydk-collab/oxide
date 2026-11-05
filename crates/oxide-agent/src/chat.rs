@@ -350,7 +350,7 @@ impl ChatService {
             config.kind,
             &caps,
             info.as_ref().and_then(|i| i.max_output_tokens),
-            options.thinking,
+            options,
             settings.models.thinking_budget,
         );
 
@@ -482,9 +482,10 @@ impl ChatService {
             // Reasoning models spend output tokens before the answer.
             _ => 1_024,
         });
-        if config.kind == ProviderKind::Anthropic
+        if (config.kind == ProviderKind::Anthropic
             && caps.thinking == ThinkingStyle::Adaptive
-            && caps.thinking_off
+            && caps.thinking_off)
+            || caps.thinking == ThinkingStyle::Switch
         {
             request.thinking = Thinking::Off;
         }
@@ -494,7 +495,7 @@ impl ChatService {
 }
 
 /// The path from the root to `id`, or `None` if `id` isn't among `messages`.
-fn path_to(messages: &[Message], id: &str) -> Option<Vec<Message>> {
+pub fn path_to(messages: &[Message], id: &str) -> Option<Vec<Message>> {
     let by_id: HashMap<&str, &Message> = messages.iter().map(|m| (m.id.as_str(), m)).collect();
     let mut path = Vec::new();
     let mut cur = by_id.get(id).copied();
@@ -862,6 +863,7 @@ pub(crate) mod tests {
                 text: "What is Rust?".into(),
                 model: "lmstudio/fake-model".into(),
                 project_id: None,
+                attachments: Vec::new(),
             })
             .await
             .expect("chat");
@@ -906,7 +908,14 @@ pub(crate) mod tests {
         .await;
         let id = f
             .service
-            .reply(&f.chat.id, &f.first.id, GenerateOptions { thinking: true })
+            .reply(
+                &f.chat.id,
+                &f.first.id,
+                GenerateOptions {
+                    thinking: true,
+                    effort: None,
+                },
+            )
             .await
             .expect("starts");
         f.sink
@@ -1210,6 +1219,7 @@ pub(crate) mod tests {
             created_at: 0,
             stop_reason: None,
             usage: None,
+            feedback: None,
         };
         let all = vec![
             m("a", None),

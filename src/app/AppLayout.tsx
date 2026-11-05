@@ -1,4 +1,5 @@
 import { matchPath, useLocation, useNavigate } from "react-router";
+import { Toaster } from "@/components/ui/Toaster";
 import { useChatEvents } from "@/features/chat/useChatEvents";
 import { SearchDialog } from "@/features/search/SearchDialog";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
@@ -51,6 +52,7 @@ export function AppLayout() {
       />
       <SearchDialog />
       <ShortcutsDialog />
+      <Toaster />
     </div>
   );
 }

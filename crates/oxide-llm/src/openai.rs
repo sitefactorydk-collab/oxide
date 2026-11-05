@@ -9,17 +9,19 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use oxide_core::{
-    ContentBlock, ModelCapabilities, ModelInfo, ProviderKind, Role, StopReason, Usage,
-    model::model_id,
+    ContentBlock, ModelCapabilities, ModelInfo, ProviderKind, Role, StopReason, ThinkingStyle,
+    Usage, model::model_id,
 };
 use serde_json::{Map, Value, json};
 
 use crate::capabilities::{OpenAiModel, lmstudio_from_native, openai_curated};
 use crate::http::{describe, send_with_retry, status_error, streaming_client};
-use crate::media::{base64_of, is_text, text_of};
+use crate::media::{IMAGE_OMITTED, base64_of, is_text, pdf_as_text, text_of};
 use crate::sse::SseEvent;
 use crate::stream::{Decoder, Out, sse_stream};
-use crate::{ChatEvent, ChatRequest, ChatStream, Endpoint, LlmError, ModelListing, Provider};
+use crate::{
+    ChatEvent, ChatRequest, ChatStream, Endpoint, LlmError, ModelListing, Provider, Thinking,
+};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// A probe may have to wait for a local server to load the model.
@@ -130,9 +132,16 @@ impl OpenAiCompatProvider {
                     .into_iter()
                     .filter(|id| !id.contains("embed"))
                     .collect();
+                // Strata honors `chat_template_kwargs.enable_thinking` (tested in Phase 4);
+                // models without a thinking mode ignore it.
+                let caps = ModelCapabilities {
+                    thinking: ThinkingStyle::Switch,
+                    thinking_off: true,
+                    ..ModelCapabilities::default()
+                };
                 let models = ids
                     .iter()
-                    .map(|id| self.info(id, ModelCapabilities::default(), None))
+                    .map(|id| self.info(id, caps.clone(), None))
                     .collect();
                 Ok(ModelListing {
                     models,
@@ -247,7 +256,7 @@ pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Resul
     }
     for m in &req.messages {
         match m.role {
-            Role::User => user_messages(&m.content, &mut messages).await?,
+            Role::User => user_messages(&m.content, req, &mut messages).await?,
             Role::Assistant => {
                 if let Some(msg) = assistant_message(&m.content) {
                     messages.push(msg);
@@ -271,6 +280,23 @@ pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Resul
         };
         body.insert(key.into(), json!(max));
     }
+    if let Some(effort) = req.effort
+        && kind == ProviderKind::OpenAi
+    {
+        // OpenAI reasoning models take low / medium / high.
+        let level = match effort {
+            oxide_core::Effort::Low => "low",
+            oxide_core::Effort::Medium => "medium",
+            _ => "high",
+        };
+        body.insert("reasoning_effort".into(), json!(level));
+    }
+    if req.thinking == Thinking::Off && kind != ProviderKind::OpenAi {
+        body.insert(
+            "chat_template_kwargs".into(),
+            json!({ "enable_thinking": false }),
+        );
+    }
     if !req.tools.is_empty() {
         let tools: Vec<Value> = req
             .tools
@@ -292,7 +318,11 @@ pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Resul
 }
 
 /// A user turn: tool results become `tool` messages first, then the rest as one user message.
-async fn user_messages(content: &[ContentBlock], out: &mut Vec<Value>) -> Result<(), LlmError> {
+async fn user_messages(
+    content: &[ContentBlock],
+    req: &ChatRequest,
+    out: &mut Vec<Value>,
+) -> Result<(), LlmError> {
     let mut parts: Vec<Value> = Vec::new();
     let mut has_media = false;
     for block in content {
@@ -312,9 +342,13 @@ async fn user_messages(content: &[ContentBlock], out: &mut Vec<Value>) -> Result
                 parts.push(json!({ "type": "text", "text": text }));
             }
             ContentBlock::Image { media_type, source } => {
-                has_media = true;
-                let url = format!("data:{media_type};base64,{}", base64_of(source).await?);
-                parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                if req.images {
+                    has_media = true;
+                    let url = format!("data:{media_type};base64,{}", base64_of(source).await?);
+                    parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                } else {
+                    parts.push(json!({ "type": "text", "text": IMAGE_OMITTED }));
+                }
             }
             ContentBlock::Document {
                 media_type,
@@ -326,6 +360,8 @@ async fn user_messages(content: &[ContentBlock], out: &mut Vec<Value>) -> Result
                         "<file name=\"{name}\">\n{}\n</file>",
                         text_of(source).await?
                     )
+                } else if media_type == "application/pdf" {
+                    pdf_as_text(name, source).await
                 } else {
                     format!("[Attached file {name} ({media_type}) can't be read by this model.]")
                 };
@@ -772,6 +808,54 @@ mod tests {
         assert_eq!(m[3]["content"], "<file name=\"n.txt\">\nhi\n</file>");
         assert!(body.get("max_tokens").is_none());
         assert!(body.get("tools").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[tokio::test]
+    async fn thinking_switch_effort_and_media_fallbacks() {
+        let mut req = ChatRequest::new(
+            "m",
+            vec![ChatMessage {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::Image {
+                        media_type: "image/png".into(),
+                        source: MediaSource::Base64 { data: "AAA".into() },
+                    },
+                    ContentBlock::Document {
+                        media_type: "application/pdf".into(),
+                        name: "scan.pdf".into(),
+                        source: MediaSource::Base64 {
+                            data: "JVBERi0=".into(),
+                        },
+                    },
+                    ContentBlock::text("what's this?"),
+                ],
+            }],
+        );
+        req.thinking = Thinking::Off;
+        req.effort = Some(oxide_core::Effort::Xhigh);
+        req.images = false;
+        // Local servers: thinking off through the chat template; no reasoning_effort.
+        let body = request_body(ProviderKind::Strata, &req)
+            .await
+            .expect("builds");
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+        assert!(body.get("reasoning_effort").is_none());
+        let content = body["messages"][0]["content"].as_str().expect("text only");
+        assert!(content.contains("can't see images"), "{content}");
+        assert!(content.contains("scan.pdf"), "{content}");
+        assert!(content.ends_with("what's this?"));
+        // OpenAI: effort maps to the nearest reasoning_effort, no template switch.
+        let body = request_body(ProviderKind::OpenAi, &req)
+            .await
+            .expect("builds");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("chat_template_kwargs").is_none());
     }
 
     #[tokio::test]

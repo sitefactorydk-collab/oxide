@@ -1,7 +1,7 @@
 //! Message repository. Messages form a tree per conversation (`parent_id`).
 
 use oxide_core::message::plain_text;
-use oxide_core::{ContentBlock, Message, Role, StopReason, Usage};
+use oxide_core::{ContentBlock, Feedback, Message, Role, StopReason, Usage};
 use sqlx::SqliteConnection;
 
 use crate::conversations::map_fk;
@@ -18,10 +18,11 @@ struct MessageRow {
     created_at: i64,
     stop_reason: Option<String>,
     usage: Option<String>,
+    feedback: Option<String>,
 }
 
-const MESSAGE_COLUMNS: &str =
-    "id, conversation_id, parent_id, role, content, model, created_at, stop_reason, usage";
+const MESSAGE_COLUMNS: &str = "id, conversation_id, parent_id, role, content, model, created_at, \
+     stop_reason, usage, feedback";
 
 /// A finished (or stopped) assistant reply to save.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +51,10 @@ impl TryFrom<MessageRow> for Message {
             .usage
             .as_deref()
             .and_then(|u| serde_json::from_str::<Usage>(u).ok());
+        let feedback = r
+            .feedback
+            .as_deref()
+            .and_then(|f| serde_json::from_str::<Feedback>(f).ok());
         Ok(Message {
             id: r.id,
             conversation_id: r.conversation_id,
@@ -60,6 +65,7 @@ impl TryFrom<MessageRow> for Message {
             created_at: r.created_at,
             stop_reason: r.stop_reason.as_deref().map(StopReason::parse),
             usage,
+            feedback,
         })
     }
 }
@@ -140,6 +146,7 @@ impl Store {
             created_at: now_ms(),
             stop_reason: None,
             usage: None,
+            feedback: None,
         })
         .await
     }
@@ -162,6 +169,7 @@ impl Store {
             created_at: now_ms(),
             stop_reason: Some(reply.stop_reason),
             usage: reply.usage,
+            feedback: None,
         })
         .await
     }
@@ -200,26 +208,71 @@ impl Store {
     }
 
     /// Edits a user message the way chat apps do: adds a sibling with the new text under the
-    /// same parent, leaving the original branch in place.
+    /// same parent, leaving the original branch in place. Attachments of the original are
+    /// kept (before the text, as when it was sent).
     pub async fn edit_user_message(&self, message_id: &str, text: &str) -> Result<Message> {
         let text = text.trim();
-        if text.is_empty() {
-            return Err(StoreError::Invalid("message is empty".into()));
-        }
         let original = self.get_message(message_id).await?;
         if original.role != Role::User {
             return Err(StoreError::Invalid(
                 "only your own messages can be edited".into(),
             ));
         }
+        let mut content: Vec<ContentBlock> = original
+            .content
+            .into_iter()
+            .filter(|b| {
+                matches!(
+                    b,
+                    ContentBlock::Image { .. } | ContentBlock::Document { .. }
+                )
+            })
+            .collect();
+        if !text.is_empty() {
+            content.push(ContentBlock::text(text));
+        }
+        if content.is_empty() {
+            return Err(StoreError::Invalid("message is empty".into()));
+        }
         self.add_message(
             &original.conversation_id,
             original.parent_id.as_deref(),
             Role::User,
-            vec![ContentBlock::text(text)],
+            content,
             None,
         )
         .await
+    }
+
+    /// Sets or clears the user's rating of an assistant reply.
+    pub async fn set_feedback(
+        &self,
+        message_id: &str,
+        feedback: Option<Feedback>,
+    ) -> Result<Message> {
+        let mut message = self.get_message(message_id).await?;
+        if message.role != Role::Assistant {
+            return Err(StoreError::Invalid("only replies can be rated".into()));
+        }
+        let feedback = feedback.map(|mut f| {
+            f.note = f
+                .note
+                .map(|n| n.trim().chars().take(2_000).collect::<String>())
+                .filter(|n| !n.is_empty());
+            f
+        });
+        let json = feedback
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StoreError::Invalid(format!("feedback can't be serialized: {e}")))?;
+        sqlx::query("UPDATE messages SET feedback = ? WHERE id = ?")
+            .bind(json)
+            .bind(message_id)
+            .execute(&self.pool)
+            .await?;
+        message.feedback = feedback;
+        Ok(message)
     }
 }
 
@@ -235,6 +288,7 @@ mod tests {
                 text: "root".into(),
                 model: "m".into(),
                 project_id: None,
+                attachments: Vec::new(),
             })
             .await
             .expect("ok");
@@ -350,6 +404,81 @@ mod tests {
             .expect("adds");
         assert!(matches!(
             s.edit_user_message(&reply.id, "x").await,
+            Err(StoreError::Invalid(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn edits_keep_attachments_and_feedback_round_trips() {
+        let s = store().await;
+        let image = ContentBlock::Image {
+            media_type: "image/png".into(),
+            source: oxide_core::MediaSource::Path {
+                path: "/a/b.png".into(),
+            },
+        };
+        let (c, root) = s
+            .start_conversation(StartConversation {
+                text: String::new(),
+                model: "m".into(),
+                project_id: None,
+                attachments: vec![oxide_core::Attachment {
+                    id: "a".into(),
+                    name: "shot.png".into(),
+                    kind: oxide_core::AttachmentKind::Image,
+                    media_type: "image/png".into(),
+                    path: "/a/b.png".into(),
+                    size: 1,
+                    original_size: 1,
+                    width: None,
+                    height: None,
+                    pages: None,
+                    thumbnail: None,
+                    note: None,
+                }],
+            })
+            .await
+            .expect("starts with only a file");
+        assert_eq!(c.title, "shot.png");
+        assert_eq!(root.content, vec![image.clone()]);
+
+        let edited = s
+            .edit_user_message(&root.id, "what is this?")
+            .await
+            .expect("edits");
+        assert_eq!(
+            edited.content,
+            vec![image.clone(), ContentBlock::text("what is this?")]
+        );
+        // Text can be removed as long as a file is left.
+        let bare = s.edit_user_message(&edited.id, "  ").await.expect("edits");
+        assert_eq!(bare.content, vec![image]);
+
+        let reply = s
+            .add_message(&c.id, Some(&root.id), Role::Assistant, vec![], None)
+            .await
+            .expect("adds");
+        let rated = s
+            .set_feedback(
+                &reply.id,
+                Some(Feedback {
+                    rating: oxide_core::Rating::Bad,
+                    note: Some("  wrong year  ".into()),
+                    created_at: 5,
+                }),
+            )
+            .await
+            .expect("rates");
+        assert_eq!(
+            rated.feedback.as_ref().and_then(|f| f.note.as_deref()),
+            Some("wrong year")
+        );
+        assert_eq!(s.get_message(&reply.id).await.expect("ok"), rated);
+        let cleared = s.set_feedback(&reply.id, None).await.expect("clears");
+        assert_eq!(cleared.feedback, None);
+        assert_eq!(s.get_message(&reply.id).await.expect("ok").feedback, None);
+        assert!(matches!(
+            s.set_feedback(&root.id, None).await,
             Err(StoreError::Invalid(_))
         ));
     }
