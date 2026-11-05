@@ -1,19 +1,27 @@
-import { FileText, Lightbulb, Plug, X } from "lucide-react";
+import { AlertCircle, FileText, Lightbulb, Plug, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
+import type { GenerateOptions } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
 import {
-  useAddUserMessage,
   useConversation,
-  useEditUserMessage,
+  useEditAndResend,
   useMessages,
+  useRegenerate,
+  useSendMessage,
+  useSetConversationModel,
+  useStopGeneration,
 } from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
-import { modelLabel } from "@/features/models/catalog";
+import { useModelLabel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
 import { useUi } from "@/stores/ui";
-import { AssistantMessage, UserMessage } from "./Messages";
+import { AssistantMessage, LiveReplyView, UserMessage } from "./Messages";
+import { useStreams } from "./streams";
 import { activeThread } from "./thread";
+
+/** Distance from the bottom (px) within which the view follows a streaming reply. */
+const STICK_DISTANCE = 120;
 
 export function ChatPage() {
   const { id = "" } = useParams();
@@ -24,19 +32,31 @@ export function ChatPage() {
 function ChatView({ id }: { id: string }) {
   const { conversation: convo, isPending: listPending } = useConversation(id);
   const messagesQuery = useMessages(convo ? id : "");
-  const addMessage = useAddUserMessage();
-  const editMessage = useEditUserMessage();
+  const live = useStreams((s) => s.live[id]);
+  const failure = useStreams((s) => s.failures[id]);
+  const clearFailure = useStreams((s) => s.clearFailure);
+  const send = useSendMessage();
+  const edit = useEditAndResend();
+  const regenerate = useRegenerate();
+  const stop = useStopGeneration();
+  const setModel = useSetConversationModel();
+  const thinking = useUi((s) => s.thinking);
   const rightPanelOpen = useUi((s) => s.rightPanelOpen);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
 
-  const thread = useMemo(() => activeThread(messagesQuery.data ?? []), [messagesQuery.data]);
+  const options: GenerateOptions = { thinking };
+  const messages = messagesQuery.data;
+  const liveParent = live?.parentId;
+  const thread = useMemo(() => activeThread(messages ?? [], liveParent), [messages, liveParent]);
   const leaf = thread[thread.length - 1];
 
+  // Follow the bottom while new content arrives, unless the user scrolled up to read.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [thread.length, id]);
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [thread.length, live?.text, live?.thinking, failure, id]);
 
   if (listPending) return <div className="flex-1" />;
 
@@ -56,12 +76,26 @@ function ChatView({ id }: { id: string }) {
   thread.forEach((m, i) => {
     if (m.role === "assistant") lastAssistantIdx = i;
   });
-  const sendError = addMessage.error ?? editMessage.error;
+  const actionError = send.error ?? edit.error ?? regenerate.error ?? setModel.error;
+  const retry = (messageId: string) => {
+    clearFailure(id);
+    stick.current = true;
+    regenerate.mutate({ messageId, options });
+  };
+  const unanswered =
+    !live && !failure && leaf?.role === "user" && !send.isPending && !regenerate.isPending;
 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_DISTANCE;
+          }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
           <div className="mx-auto flex w-full max-w-thread flex-col gap-6 px-6 pb-10 pt-8">
             {messagesQuery.error && (
               <p role="alert" className="text-danger">
@@ -73,16 +107,30 @@ function ChatView({ id }: { id: string }) {
                 <UserMessage
                   key={m.id}
                   message={m}
-                  onEdit={(text) => editMessage.mutate({ messageId: m.id, text })}
+                  onEdit={(text) => {
+                    stick.current = true;
+                    edit.mutate({ messageId: m.id, text, options });
+                  }}
                 />
               ) : (
-                <AssistantMessage key={m.id} message={m} isLast={i === lastAssistantIdx} />
+                <AssistantMessage
+                  key={m.id}
+                  message={m}
+                  isLast={!live && i === lastAssistantIdx}
+                  onRetry={live ? undefined : () => retry(m.id)}
+                />
               ),
             )}
-            {leaf?.role === "user" && <NoReplyYet />}
-            {sendError && (
+            {live && <LiveReplyView live={live} />}
+            {!live && failure && leaf && (
+              <ReplyFailed error={failure.error} onRetry={() => retry(leaf.id)} />
+            )}
+            {unanswered && leaf && (
+              <Unanswered since={leaf.createdAt} onAnswer={() => retry(leaf.id)} />
+            )}
+            {actionError && (
               <p role="alert" className="text-danger">
-                Couldn’t send: {errorMessage(sendError)}
+                {errorMessage(actionError)}
               </p>
             )}
           </div>
@@ -93,10 +141,15 @@ function ChatView({ id }: { id: string }) {
             value={draft}
             onChange={setDraft}
             autoFocus
+            streaming={!!live}
+            onStop={() => stop.mutate(id)}
+            modelId={convo.model}
+            onModelChange={(model) => setModel.mutate({ id, model })}
             onSubmit={(text) => {
               const body = text.trim() || "(attachment)";
-              addMessage.mutate(
-                { conversationId: id, parentId: leaf?.id ?? null, text: body },
+              stick.current = true;
+              send.mutate(
+                { conversationId: id, parentId: leaf?.id ?? null, text: body, options },
                 { onSuccess: () => setDraft("") },
               );
             }}
@@ -108,11 +161,45 @@ function ChatView({ id }: { id: string }) {
   );
 }
 
-/** Shown under an unanswered message until model connections land in Phase 3. */
-function NoReplyYet() {
+function ReplyFailed({ error, onRetry }: { error: string; onRetry: () => void }) {
   return (
-    <p role="note" className="text-md text-fg-subtle">
-      Saved. Oxide can’t reply yet: model connections arrive in Phase 3.
+    <div
+      role="alert"
+      className="flex items-start gap-3 rounded-xl border border-line bg-raised px-4 py-3 text-base"
+    >
+      <AlertCircle className="mt-0.5 size-4 shrink-0 text-danger" />
+      <p className="min-w-0 flex-1 text-fg">{error}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm text-fg-muted hover:bg-hover hover:text-fg"
+      >
+        <RotateCcw className="size-3.5" />
+        Retry
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A user message without a reply that isn't being written (the app closed mid-reply, or the
+ * reply was stopped before any output). Shown after a moment, so it doesn't flash while a
+ * reply is starting.
+ */
+function Unanswered({ since, onAnswer }: { since: number; onAnswer: () => void }) {
+  const [visible, setVisible] = useState(() => Date.now() - since > 1500);
+  useEffect(() => {
+    if (visible) return;
+    const t = setTimeout(() => setVisible(true), 1500);
+    return () => clearTimeout(t);
+  }, [visible]);
+  if (!visible) return null;
+  return (
+    <p role="note" className="flex items-center gap-2 text-md text-fg-subtle">
+      No reply yet.
+      <button type="button" onClick={onAnswer} className="text-accent hover:underline">
+        Answer this message
+      </button>
     </p>
   );
 }
@@ -121,6 +208,7 @@ function NoReplyYet() {
 function ChatDetailsPanel({ modelId }: { modelId: string }) {
   const toggle = useUi((s) => s.toggleRightPanel);
   const thinking = useUi((s) => s.thinking);
+  const modelLabel = useModelLabel(modelId);
   return (
     <aside aria-label="Chat details" className="w-72 shrink-0 p-3">
       <div className="rounded-xl border border-line bg-raised p-4 shadow-sm">
@@ -132,11 +220,11 @@ function ChatDetailsPanel({ modelId }: { modelId: string }) {
         </div>
         <dl className="flex flex-col gap-3 text-base">
           <Row icon={<Lightbulb className="size-4" />} label="Model">
-            {modelLabel(modelId)}
+            {modelLabel}
             {thinking ? " · thinking" : ""}
           </Row>
           <Row icon={<Plug className="size-4" />} label="Tools">
-            filesystem, web search
+            None connected
           </Row>
           <Row icon={<FileText className="size-4" />} label="Files">
             None yet

@@ -2,6 +2,7 @@
 //! `oxide-llm`; register new ones in `specta_builder` (lib.rs) and regenerate the bindings.
 
 pub mod chats;
+pub mod models;
 pub mod projects;
 pub mod providers;
 pub mod settings;

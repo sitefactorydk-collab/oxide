@@ -4,7 +4,8 @@ import { Link, useNavigate } from "react-router";
 import { PageHeader, PrimaryButton, SearchField } from "@/components/PageHeader";
 import type { Conversation } from "@/bindings";
 import { useConversations, useSearch } from "@/features/chats/queries";
-import { modelLabel } from "@/features/models/catalog";
+import { findModel, modelNameFromId } from "@/features/models/models";
+import { useModels } from "@/features/models/queries";
 import { useProjects } from "@/features/projects/queries";
 import { formatRelative } from "@/lib/time";
 import { useDebounced } from "@/lib/useDebounced";
@@ -12,6 +13,7 @@ import { useDebounced } from "@/lib/useDebounced";
 export function ChatsPage() {
   const { data: conversations } = useConversations();
   const { data: projects } = useProjects();
+  const { data: models } = useModels();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const query = useDebounced(q.trim(), 150);
@@ -58,7 +60,8 @@ export function ChatsPage() {
                     {c.title}
                   </span>
                   <span className="text-sm text-fg-subtle">
-                    {formatRelative(c.updatedAt)} · {modelLabel(c.model)}
+                    {formatRelative(c.updatedAt)} ·{" "}
+                    {findModel(models, c.model)?.label ?? modelNameFromId(c.model)}
                     {project ? ` · ${project.name}` : ""}
                   </span>
                 </Link>

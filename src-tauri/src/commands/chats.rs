@@ -1,6 +1,8 @@
 //! Conversations, messages and search.
 
-use oxide_core::{ContentBlock, Conversation, Message, Role, SearchHit, StartConversation};
+use oxide_core::{
+    ContentBlock, Conversation, GenerateOptions, Message, SearchHit, StartConversation,
+};
 use tauri::State;
 
 use crate::error::{CmdResult, CommandError};
@@ -19,18 +21,24 @@ pub async fn get_conversation(state: State<'_, AppState>, id: String) -> CmdResu
     Ok(state.store.get_conversation(&id).await?)
 }
 
-/// Creates a chat with its first user message; the title comes from the message.
+/// Creates a chat with its first user message (the title comes from the message) and starts
+/// the reply. Progress arrives as `chatStream` events.
 #[tauri::command]
 #[specta::specta]
 pub async fn start_conversation(
     state: State<'_, AppState>,
     input: StartConversation,
+    options: GenerateOptions,
 ) -> CmdResult<Conversation> {
     if input.text.trim().is_empty() {
         return Err(CommandError::Invalid("the message is empty".into()));
     }
-    let (conversation, _) = state.store.start_conversation(input).await?;
+    let (conversation, first) = state.store.start_conversation(input).await?;
     tracing::debug!(id = %conversation.id, "conversation started");
+    // The chat exists either way; a reply that can't start shows up as a retry in the UI.
+    if let Err(e) = state.chat.reply(&conversation.id, &first.id, options).await {
+        tracing::warn!(id = %conversation.id, "couldn't start the first reply: {e}");
+    }
     Ok(conversation)
 }
 
@@ -82,40 +90,68 @@ pub async fn list_messages(
     Ok(state.store.list_messages(&conversation_id).await?)
 }
 
-/// Appends a user message under `parent_id` (the current leaf of the visible thread).
+/// Sends a user message under `parent_id` (the leaf of the visible thread) and starts the
+/// reply. Returns the saved message; the reply streams as `chatStream` events.
 #[tauri::command]
 #[specta::specta]
-pub async fn add_user_message(
+pub async fn send_message(
     state: State<'_, AppState>,
     conversation_id: String,
     parent_id: Option<String>,
     text: String,
+    options: GenerateOptions,
 ) -> CmdResult<Message> {
     let text = text.trim();
     if text.is_empty() {
         return Err(CommandError::Invalid("the message is empty".into()));
     }
     Ok(state
-        .store
-        .add_message(
+        .chat
+        .send(
             &conversation_id,
             parent_id.as_deref(),
-            Role::User,
             vec![ContentBlock::text(text)],
-            None,
+            options,
         )
         .await?)
 }
 
-/// Edits a user message by adding a sibling branch with the new text.
+/// Edits a user message as a new branch (a sibling with the new text) and answers it.
 #[tauri::command]
 #[specta::specta]
-pub async fn edit_user_message(
+pub async fn edit_and_resend(
     state: State<'_, AppState>,
     message_id: String,
     text: String,
+    options: GenerateOptions,
 ) -> CmdResult<Message> {
-    Ok(state.store.edit_user_message(&message_id, &text).await?)
+    Ok(state
+        .chat
+        .edit_and_resend(&message_id, &text, options)
+        .await?)
+}
+
+/// Writes a new reply: for an assistant message, a sibling of it; for a user message, an
+/// answer to it (retry after a failure). Returns the id the reply will be saved under.
+#[tauri::command]
+#[specta::specta]
+pub async fn regenerate(
+    state: State<'_, AppState>,
+    message_id: String,
+    options: GenerateOptions,
+) -> CmdResult<String> {
+    Ok(state.chat.regenerate(&message_id, options).await?)
+}
+
+/// Stops the reply being written in a chat, keeping what was written. Returns whether a reply
+/// was running.
+#[tauri::command]
+#[specta::specta]
+pub async fn stop_generation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CmdResult<bool> {
+    Ok(state.chat.stop(&conversation_id))
 }
 
 /// Full-text search over chat titles and message text.

@@ -1,12 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetStreams } from "@/features/chat/streams";
 import { createMemoryStorage, isUsableStorage } from "@/lib/storage";
 
 // Every test talks to the in-memory fake backend instead of Tauri IPC.
 vi.mock("@/bindings", async () => {
-  const { fakeCommands } = await import("./fakeBackend");
-  return { commands: fakeCommands };
+  const { fakeCommands, fakeEvents } = await import("./fakeBackend");
+  return { commands: fakeCommands, events: fakeEvents };
 });
 
 // Node 25+ ships its own `localStorage` global (undefined without --localstorage-file) that
@@ -57,4 +58,5 @@ Element.prototype.releasePointerCapture ??= () => {};
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  resetStreams();
 });

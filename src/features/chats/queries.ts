@@ -5,7 +5,13 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { commands, type Conversation, type Message, type StartConversation } from "@/bindings";
+import {
+  commands,
+  type Conversation,
+  type GenerateOptions,
+  type Message,
+  type StartConversation,
+} from "@/bindings";
 import { unwrap } from "@/lib/api";
 
 /** Query keys for chat data. */
@@ -61,8 +67,23 @@ function patchList(qc: QueryClient, fn: (list: Conversation[]) => Conversation[]
   qc.setQueryData<Conversation[]>(chatKeys.list(), (old) => (old ? fn(old) : old));
 }
 
-function replaceOne(qc: QueryClient, c: Conversation) {
+/** Replaces a chat in the cached list (e.g. after it got an automatic title). */
+export function replaceConversation(qc: QueryClient, c: Conversation) {
   patchList(qc, (list) => sortByUpdated(list.map((x) => (x.id === c.id ? c : x))));
+}
+
+/** Adds a saved message to its chat's cached thread and bumps the chat in Recents. */
+export function addMessageToCache(qc: QueryClient, m: Message) {
+  qc.setQueryData<Message[]>(chatKeys.messages(m.conversationId), (old) =>
+    old ? (old.some((x) => x.id === m.id) ? old : [...old, m]) : old,
+  );
+  patchList(qc, (list) =>
+    sortByUpdated(
+      list.map((c) =>
+        c.id === m.conversationId ? { ...c, updatedAt: Math.max(c.updatedAt, m.createdAt) } : c,
+      ),
+    ),
+  );
 }
 
 /**
@@ -85,7 +106,7 @@ function useConversationEdit<V extends { id: string }>(
     onError: (_e, _vars, ctx) => {
       if (ctx?.previous) qc.setQueryData(chatKeys.list(), ctx.previous);
     },
-    onSuccess: (c) => replaceOne(qc, c),
+    onSuccess: (c) => replaceConversation(qc, c),
     onSettled: () => qc.invalidateQueries({ queryKey: [...chatKeys.all, "search"] }),
   });
 }
@@ -122,10 +143,19 @@ export function useDeleteConversation() {
   });
 }
 
+export function useSetConversationModel() {
+  return useConversationEdit<{ id: string; model: string }>(
+    (c, { model }) => ({ ...c, model }),
+    ({ id, model }) => unwrap(commands.setConversationModel(id, model)),
+  );
+}
+
+/** Creates a chat with its first message and starts the reply. */
 export function useStartConversation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: StartConversation) => unwrap(commands.startConversation(input)),
+    mutationFn: (v: { input: StartConversation; options: GenerateOptions }) =>
+      unwrap(commands.startConversation(v.input, v.options)),
     onSuccess: (c) => {
       patchList(qc, (list) => sortByUpdated([c, ...list.filter((x) => x.id !== c.id)]));
       return qc.invalidateQueries({ queryKey: chatKeys.all });
@@ -139,28 +169,41 @@ function useMessageMutation<V>(run: (vars: V) => Promise<Message>) {
   return useMutation({
     mutationFn: run,
     onSuccess: (m) => {
-      qc.setQueryData<Message[]>(chatKeys.messages(m.conversationId), (old) =>
-        old ? [...old, m] : [m],
-      );
-      patchList(qc, (list) =>
-        sortByUpdated(
-          list.map((c) => (c.id === m.conversationId ? { ...c, updatedAt: m.createdAt } : c)),
-        ),
-      );
+      addMessageToCache(qc, m);
       return qc.invalidateQueries({ queryKey: [...chatKeys.all, "search"] });
     },
   });
 }
 
-export function useAddUserMessage() {
+/** Sends a message and starts the reply (which streams as events). */
+export function useSendMessage() {
   return useMessageMutation(
-    (v: { conversationId: string; parentId: string | null; text: string }) =>
-      unwrap(commands.addUserMessage(v.conversationId, v.parentId, v.text)),
+    (v: {
+      conversationId: string;
+      parentId: string | null;
+      text: string;
+      options: GenerateOptions;
+    }) => unwrap(commands.sendMessage(v.conversationId, v.parentId, v.text, v.options)),
   );
 }
 
-export function useEditUserMessage() {
-  return useMessageMutation((v: { messageId: string; text: string }) =>
-    unwrap(commands.editUserMessage(v.messageId, v.text)),
+/** Edits a message as a new branch and answers the edited version. */
+export function useEditAndResend() {
+  return useMessageMutation((v: { messageId: string; text: string; options: GenerateOptions }) =>
+    unwrap(commands.editAndResend(v.messageId, v.text, v.options)),
   );
+}
+
+/** A new reply next to an assistant message, or an answer to a user message. */
+export function useRegenerate() {
+  return useMutation({
+    mutationFn: (v: { messageId: string; options: GenerateOptions }) =>
+      unwrap(commands.regenerate(v.messageId, v.options)),
+  });
+}
+
+export function useStopGeneration() {
+  return useMutation({
+    mutationFn: (conversationId: string) => unwrap(commands.stopGeneration(conversationId)),
+  });
 }

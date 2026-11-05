@@ -22,7 +22,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 |---|---|
 | Desktop shell | Tauri v2. Rust backend, React 18 + TypeScript + Vite frontend |
 | Async | `tokio` |
-| Providers | Anthropic (hand-written client on `reqwest`, so thinking, tool use, images, PDFs and prompt caching are first-class). OpenAI, LM Studio and Strata via `async-openai` against OpenAI-compatible endpoints |
+| Providers | Hand-written clients on `reqwest` with one shared SSE parser. Anthropic Messages API (thinking, tool use, images, PDFs and prompt caching are first-class). OpenAI, LM Studio and Strata through one OpenAI-compatible Chat Completions client (changed from `async-openai` in Phase 3; see PROGRESS.md) |
 | Strata default | `http://127.0.0.1:47831/v1` |
 | LM Studio default | `http://127.0.0.1:1234/v1` |
 | Models | **Only models with native function calling.** Capability is detected per provider; models without it are hidden, with a toggle to show them greyed out |
@@ -61,7 +61,7 @@ Oxide/
 │  ├─ oxide-store/          SQLite repo layer + migrations
 │  ├─ oxide-llm/            Provider trait + anthropic / openai_compat impls, streaming
 │  ├─ oxide-mcp/            MCP client: transports, protocol, server manager, mcpb
-│  ├─ oxide-agent/          agent loop, tool registry, approvals, built-in tools
+│  ├─ oxide-agent/          reply generation, agent loop, tool registry, approvals, built-in tools
 │  ├─ oxide-bridge/         Chrome WebSocket bridge server
 │  ├─ oxide-pyenv/          uv bootstrap, venv management, python sidecar processes
 │  └─ oxide-computer/       screenshots + input (xcap, enigo) for computer use
@@ -194,7 +194,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
   - `trait Provider { list_models(), stream(ChatRequest) -> Stream<ChatEvent> }`.
   - Unified `ChatEvent`: TextDelta, ThinkingDelta, ToolUseStart/Delta/End, Usage, Stop(reason), Error.
 - **Anthropic client:** Messages API with SSE, tool use, extended thinking, images, PDFs, prompt-caching breakpoints, `anthropic-version` header, retry with backoff on 429/529.
-- **OpenAI-compatible client** (`async-openai`, with custom base URL per provider): streaming, tool calls including parallel calls, images.
+- **OpenAI-compatible client** (hand-written on `reqwest`, sharing the SSE parser; custom base URL per provider): streaming, tool calls including parallel calls, images.
 - **Capability detection:**
   - Anthropic and OpenAI: curated capability table, refreshed from the model list.
   - LM Studio: query its native models endpoint for the `tool_use` capability.

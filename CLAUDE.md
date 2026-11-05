@@ -14,7 +14,7 @@ Never copy Anthropic code, assets, icons, fonts or UI copy. Use Oxide's own logo
 | `crates/oxide-store` | SQLite (sqlx) repositories and migrations. |
 | `crates/oxide-llm` | `Provider` trait, Anthropic + OpenAI-compatible clients, streaming events. |
 | `crates/oxide-mcp` | MCP client: transports, protocol, server manager, `.mcpb`. |
-| `crates/oxide-agent` | Agent loop, tool registry, approvals, built-in tools. |
+| `crates/oxide-agent` | Reply generation (`ChatService`, `ModelRegistry`), agent loop, tool registry, approvals, built-in tools. Emits through the `EventSink` trait; no Tauri. |
 | `crates/oxide-bridge` | Chrome extension WebSocket bridge. |
 | `crates/oxide-pyenv` | uv bootstrap, venv, Python sidecars. |
 | `crates/oxide-computer` | Screen capture + input. |
@@ -44,6 +44,8 @@ Library crates must not depend on `tauri`. Only `src-tauri` does.
 - Colours, radii, shadows and fonts come from `--ox-*` tokens (`styles/tokens.css`), used through Tailwind names like `bg-app`, `text-fg-muted` and `border-line`.
 - Tests render the app with `renderApp()` (`src/test/renderApp.tsx`), which uses `MemoryRouter`. Data routers break under jsdom on Node 26 (AbortSignal mismatch).
 - State: Zustand for UI state, TanStack Query for backend data (from Phase 2).
+- Streaming replies arrive as typed events (`events.chatStream`). One app-wide listener (`features/chat/useChatEvents.ts`) feeds the Zustand store in `features/chat/streams.ts`; saved replies go into the query cache.
+- The test fake (`src/test/fakeBackend.ts`) streams replies through `fakeEvents`. Use `renderApp(path, { backend: { replies: "hold" } })` with `finishReply()` to test a reply mid-stream.
 
 ## Checks (must pass before a phase is done)
 ```

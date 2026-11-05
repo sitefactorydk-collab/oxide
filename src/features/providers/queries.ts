@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { commands, type ProviderConfig, type ProviderInput, type TestProvider } from "@/bindings";
+import { modelKeys } from "@/features/models/queries";
 import { unwrap } from "@/lib/api";
 
 export const providerKeys = { list: ["providers", "list"] as const };
@@ -18,7 +19,12 @@ function useProviderMutation<V, R>(run: (v: V) => Promise<R>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: run,
-    onSettled: () => qc.invalidateQueries({ queryKey: providerKeys.list }),
+    // The backend forgets its model listings when endpoints change; so does the picker.
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: providerKeys.list }),
+        qc.invalidateQueries({ queryKey: modelKeys.all }),
+      ]),
   });
 }
 

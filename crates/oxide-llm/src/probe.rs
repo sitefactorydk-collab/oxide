@@ -5,8 +5,8 @@ use std::time::Duration;
 use oxide_core::ProviderKind;
 use serde::Deserialize;
 
-/// `anthropic-version` header sent to the Anthropic API.
-pub const ANTHROPIC_VERSION: &str = "2023-06-01";
+pub use crate::anthropic::ANTHROPIC_VERSION;
+use crate::http::{USER_AGENT, describe};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,8 +45,8 @@ struct ErrorDetail {
     message: String,
 }
 
-/// Lists the model ids an endpoint offers. Anthropic uses `x-api-key` + `anthropic-version`;
-/// the OpenAI-compatible kinds use a bearer token (optional for local servers).
+/// Lists the model ids an endpoint offers. Every kind sends the key as a bearer token
+/// (optional for local servers); Anthropic also gets its `anthropic-version` header.
 pub async fn list_models(
     kind: ProviderKind,
     base_url: &str,
@@ -67,18 +67,14 @@ pub async fn list_models(
     let client = reqwest::Client::builder()
         .timeout(TIMEOUT)
         .connect_timeout(CONNECT_TIMEOUT)
-        .user_agent(concat!("Oxide/", env!("CARGO_PKG_VERSION")))
+        .user_agent(USER_AGENT)
         .build()
         .map_err(|e| ProbeError::Invalid(e.to_string()))?;
 
-    let mut req = client.get(&url);
-    req = match (kind, key) {
-        (ProviderKind::Anthropic, Some(k)) => req
-            .header("x-api-key", k)
-            .header("anthropic-version", ANTHROPIC_VERSION),
-        (ProviderKind::Anthropic, None) => req.header("anthropic-version", ANTHROPIC_VERSION),
-        (_, Some(k)) => req.bearer_auth(k),
-        (_, None) => req,
+    let req = match (kind, key) {
+        (ProviderKind::Anthropic, k) => crate::anthropic::with_auth(client.get(&url), k),
+        (_, Some(k)) => client.get(&url).bearer_auth(k),
+        (_, None) => client.get(&url),
     };
 
     let res = req.send().await.map_err(|e| ProbeError::Unreachable {
@@ -109,23 +105,6 @@ pub async fn list_models(
     Ok(list.data.into_iter().map(|m| m.id).collect())
 }
 
-/// A short reason without the URL (the caller adds it) and without request headers.
-fn describe(e: &reqwest::Error) -> String {
-    if e.is_timeout() {
-        "timed out".into()
-    } else if e.is_connect() {
-        "connection refused or no route (is the server running?)".into()
-    } else {
-        let text = e.to_string();
-        match e.url() {
-            Some(url) => text
-                .replace(&format!(" ({url})"), "")
-                .replace(url.as_str(), "<url>"),
-            None => text,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,7 +131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn anthropic_sends_key_and_version_headers() {
+    async fn anthropic_sends_bearer_key_and_version_headers() {
         let (base, req) = serve_once(
             "200 OK",
             r#"{"data":[{"id":"model-a"},{"id":"model-b"}],"has_more":false}"#,
@@ -164,8 +143,8 @@ mod tests {
         assert_eq!(models, vec!["model-a", "model-b"]);
         let raw = req.await.expect("joins").to_lowercase();
         assert!(raw.starts_with("get /v1/models?limit=1000 "), "{raw}");
-        assert!(raw.contains("x-api-key: sk-test"));
-        assert!(raw.contains("anthropic-version: 2023-06-01"));
+        assert!(raw.contains("authorization: bearer sk-test"));
+        assert!(raw.contains(&format!("anthropic-version: {ANTHROPIC_VERSION}")));
     }
 
     #[tokio::test]

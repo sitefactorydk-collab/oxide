@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::Timestamp;
+use crate::chat::{StopReason, Usage};
 
 /// Who wrote a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -48,6 +49,10 @@ pub struct Message {
     /// Model that wrote an assistant message.
     pub model: Option<String>,
     pub created_at: Timestamp,
+    /// Why an assistant reply ended. `None` for user messages.
+    pub stop_reason: Option<StopReason>,
+    /// Token counts of an assistant reply, when the provider reported them.
+    pub usage: Option<Usage>,
 }
 
 /// Where the bytes of an image or document live.

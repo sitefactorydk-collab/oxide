@@ -1,21 +1,46 @@
 import type {
   AppSettings,
+  ChatStreamEvent,
   CommandError,
   Conversation,
+  ConversationChanged,
+  GenerateOptions,
   Message,
   PingResponse,
   Project,
   ProviderConfig,
+  ProviderModels,
   Result,
   SearchHit,
+  StreamEvent,
 } from "@/bindings";
-import type { commands as RealCommands } from "@/bindings";
-import { seedConversations, seedMessages, seedProjects, seedProviders } from "./fixtures";
+import type { commands as RealCommands, events as RealEvents } from "@/bindings";
+import {
+  seedConversations,
+  seedMessages,
+  seedModels,
+  seedProjects,
+  seedProviders,
+} from "./fixtures";
 
 /**
  * In-memory stand-in for the Rust backend, shaped exactly like the generated `commands`
- * object. `src/test/setup.ts` mocks `@/bindings` with it for every test.
+ * and `events` objects. `src/test/setup.ts` mocks `@/bindings` with them for every test.
+ *
+ * Replies: every send answers with "Reply to: <text>" through `chatStream` events, like the
+ * real backend. `replies: "hold"` keeps a reply streaming until `finishReply()` or Stop;
+ * `replies: "fail"` makes them fail.
  */
+export type ReplyMode = "auto" | "hold" | "fail";
+
+interface HeldReply {
+  conversationId: string;
+  messageId: string;
+  parentId: string;
+  model: string;
+  text: string;
+}
+
 interface FakeState {
   conversations: Conversation[];
   messages: Message[];
@@ -23,11 +48,17 @@ interface FakeState {
   providers: ProviderConfig[];
   keys: Map<string, string>;
   settings: AppSettings;
+  models: ProviderModels[];
+  replies: ReplyMode;
+  held: Map<string, HeldReply>;
+  /** Options of every reply started, in order. */
+  replyOptions: GenerateOptions[];
 }
 
 export interface FakeSeed {
   settings?: Partial<{ name: string; theme: AppSettings["appearance"]["theme"] }>;
   empty?: boolean;
+  replies?: ReplyMode;
 }
 
 let state: FakeState;
@@ -43,9 +74,57 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     settings: {
       profile: { name: seed.settings?.name ?? "" },
       appearance: { theme: seed.settings?.theme ?? "system", chatFont: "serif" },
+      models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
+    },
+    models: seedModels(),
+    replies: seed.replies ?? "auto",
+    held: new Map(),
+    replyOptions: [],
+  };
+}
+
+/** A tiny typed event bus with the shape of the generated `events` object. */
+function fakeEvent<T>(name: string) {
+  const listeners = new Set<(e: { event: string; id: number; payload: T }) => void>();
+  return {
+    listen: (cb: (e: { event: string; id: number; payload: T }) => void) => {
+      listeners.add(cb);
+      return Promise.resolve(() => {
+        listeners.delete(cb);
+      });
+    },
+    once: (cb: (e: { event: string; id: number; payload: T }) => void) => {
+      const wrapped = (e: { event: string; id: number; payload: T }) => {
+        listeners.delete(wrapped);
+        cb(e);
+      };
+      listeners.add(wrapped);
+      return Promise.resolve(() => {
+        listeners.delete(wrapped);
+      });
+    },
+    emit: (payload: T) => {
+      for (const cb of [...listeners]) cb({ event: name, id: 0, payload });
+      return Promise.resolve();
     },
   };
 }
+
+const chatStream = fakeEvent<ChatStreamEvent>("chat-stream");
+const conversationUpdated = fakeEvent<ConversationChanged>("conversation-updated");
+
+export const fakeEvents = { chatStream, conversationUpdated } as unknown as typeof RealEvents;
+
+/** Sends a stream event as the backend would. */
+export function emitStream(conversationId: string, event: StreamEvent): void {
+  void chatStream.emit({ conversationId, event });
+}
+
+/** Sends a conversation update as the backend would (e.g. an automatic title). */
+export function emitConversationUpdated(conversation: Conversation): void {
+  void conversationUpdated.emit({ conversation });
+}
+
 resetFakeBackend();
 
 /** Read access for assertions. */
@@ -92,11 +171,91 @@ function newMessage(conversationId: string, parentId: string | null, text: strin
     content: [{ type: "text", text }],
     model: null,
     createdAt: Date.now(),
+    stopReason: null,
+    usage: null,
   };
   state.messages.push(m);
   const c = state.conversations.find((x) => x.id === conversationId);
   if (c) c.updatedAt = m.createdAt;
   return m;
+}
+
+function saveReply(r: HeldReply, text: string, stopReason: Message["stopReason"]): Message {
+  const m: Message = {
+    id: r.messageId,
+    conversationId: r.conversationId,
+    parentId: r.parentId,
+    role: "assistant",
+    content: text ? [{ type: "text", text }] : [],
+    model: r.model,
+    createdAt: Date.now(),
+    stopReason,
+    usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  };
+  state.messages.push(m);
+  const c = state.conversations.find((x) => x.id === r.conversationId);
+  if (c) c.updatedAt = m.createdAt;
+  return m;
+}
+
+/**
+ * Starts a reply to `parentId` the way the backend does: `started` at once, then deltas and
+ * `done` (or `failed`) shortly after.
+ */
+function startReply(conversationId: string, parentId: string, options: GenerateOptions): string {
+  const c = state.conversations.find((x) => x.id === conversationId);
+  const question = state.messages.find((m) => m.id === parentId);
+  const r: HeldReply = {
+    conversationId,
+    messageId: nextId("r"),
+    parentId,
+    model: c?.model ?? "",
+    text: `Reply to: ${question ? textOf(question) : ""}`,
+  };
+  state.replyOptions.push(options);
+  emitStream(conversationId, {
+    type: "started",
+    messageId: r.messageId,
+    parentId,
+    model: r.model,
+    startedAt: Date.now(),
+  });
+  const mode = state.replies;
+  setTimeout(() => {
+    if (mode === "fail") {
+      emitStream(conversationId, {
+        type: "failed",
+        error: "LM Studio: couldn't reach http://127.0.0.1:1234/v1",
+        message: null,
+      });
+      return;
+    }
+    if (mode === "hold") {
+      state.held.set(conversationId, r);
+      emitStream(conversationId, { type: "textDelta", text: "Partial " });
+      return;
+    }
+    emitStream(conversationId, { type: "textDelta", text: r.text });
+    emitStream(conversationId, { type: "done", message: saveReply(r, r.text, "endTurn") });
+  }, 0);
+  return r.messageId;
+}
+
+/** Ends a held reply normally. */
+export function finishReply(conversationId: string): void {
+  const r = state.held.get(conversationId);
+  if (!r) throw new Error(`no held reply in ${conversationId}`);
+  state.held.delete(conversationId);
+  emitStream(conversationId, { type: "textDelta", text: r.text });
+  emitStream(conversationId, {
+    type: "done",
+    message: saveReply(r, `Partial ${r.text}`, "endTurn"),
+  });
+}
+
+/** Switches how later replies behave. */
+export function setReplyMode(mode: ReplyMode): void {
+  state.replies = mode;
 }
 
 export const fakeCommands: typeof RealCommands = {
@@ -110,7 +269,7 @@ export const fakeCommands: typeof RealCommands = {
 
   listConversations: () => ok(sorted(state.conversations)),
   getConversation: (id) => withConversation(id, (c) => c),
-  startConversation: (input) => {
+  startConversation: (input, options) => {
     const now = Date.now();
     const firstLine = input.text.trim().split("\n")[0] ?? "";
     const c: Conversation = {
@@ -123,8 +282,10 @@ export const fakeCommands: typeof RealCommands = {
       updatedAt: now,
     };
     state.conversations.push(c);
-    newMessage(c.id, null, input.text.trim());
-    return ok(c);
+    const first = newMessage(c.id, null, input.text.trim());
+    const result = ok(c);
+    startReply(c.id, first.id, options);
+    return result;
   },
   renameConversation: (id, title) =>
     title.trim()
@@ -153,15 +314,42 @@ export const fakeCommands: typeof RealCommands = {
   },
   listMessages: (conversationId) =>
     ok(state.messages.filter((m) => m.conversationId === conversationId)),
-  addUserMessage: (conversationId, parentId, text) =>
-    state.conversations.some((c) => c.id === conversationId)
-      ? ok(newMessage(conversationId, parentId, text.trim()))
-      : fail("notFound", "conversation not found"),
-  editUserMessage: (messageId, text) => {
+  sendMessage: (conversationId, parentId, text, options) => {
+    if (!state.conversations.some((c) => c.id === conversationId)) {
+      return fail("notFound", "conversation not found");
+    }
+    if (state.held.has(conversationId)) {
+      return fail("invalid", "a reply is already being written in this chat");
+    }
+    const m = newMessage(conversationId, parentId, text.trim());
+    const result = ok(m);
+    startReply(conversationId, m.id, options);
+    return result;
+  },
+  editAndResend: (messageId, text, options) => {
     const original = state.messages.find((m) => m.id === messageId);
     if (!original) return fail("notFound", "message not found");
-    return ok(newMessage(original.conversationId, original.parentId, text.trim()));
+    const m = newMessage(original.conversationId, original.parentId, text.trim());
+    const result = ok(m);
+    startReply(m.conversationId, m.id, options);
+    return result;
   },
+  regenerate: (messageId, options) => {
+    const m = state.messages.find((x) => x.id === messageId);
+    if (!m) return fail("notFound", "message not found");
+    const userId = m.role === "user" ? m.id : m.parentId;
+    if (!userId) return fail("invalid", "this reply has no question");
+    return ok(startReply(m.conversationId, userId, options));
+  },
+  stopGeneration: (conversationId) => {
+    const r = state.held.get(conversationId);
+    if (!r) return ok(false);
+    state.held.delete(conversationId);
+    const message = saveReply(r, "Partial", "stopped");
+    setTimeout(() => emitStream(conversationId, { type: "done", message }), 0);
+    return ok(true);
+  },
+  listModels: () => ok(state.models),
   searchConversations: (query, limit) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return ok<SearchHit[]>([]);
@@ -224,6 +412,10 @@ export const fakeCommands: typeof RealCommands = {
     state.settings = {
       ...settings,
       profile: { name: settings.profile.name.trim() },
+      models: {
+        ...settings.models,
+        thinkingBudget: Math.min(64000, Math.max(1024, settings.models.thinkingBudget)),
+      },
     };
     return ok(state.settings);
   },

@@ -6,6 +6,7 @@
 
 mod conversations;
 mod messages;
+mod probes;
 mod projects;
 mod providers;
 mod search;
@@ -19,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
+pub use messages::NewReply;
 pub use search::fts_query;
 pub use secrets::{KeyringSecrets, MemorySecrets, Secret, SecretError, SecretStore};
 
@@ -96,15 +98,15 @@ impl Store {
 }
 
 /// Current Unix time in milliseconds.
-pub(crate) fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
 }
 
-/// A new time-ordered id.
-pub(crate) fn new_id() -> String {
+/// A new time-ordered id (UUIDv7), the form every stored id takes.
+pub fn new_id() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 

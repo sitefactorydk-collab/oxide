@@ -1,14 +1,18 @@
 import type { ContentBlock, Message } from "@/bindings";
 
 /**
- * The visible thread: the path from the root to the newest message.
+ * The visible thread: the path from the root to the newest message, or to `leafId`.
  *
- * Messages form a tree (edits add siblings). The backend returns every message in insertion
- * order, so the last one is the newest leaf, and it is always on the branch the user last
- * worked on. Branch navigation (‹ 1/2 ›) arrives in Phase 4.
+ * Messages form a tree (edits and regenerated replies add siblings). The backend returns every
+ * message in insertion order, so the last one is the newest leaf, and it is always on the
+ * branch the user last worked on. While a reply is written, the thread ends at the message it
+ * answers (`leafId`), so a reply being regenerated replaces the old one on screen. Branch
+ * navigation (‹ 1/2 ›) arrives in Phase 4.
  */
-export function activeThread(messages: Message[]): Message[] {
-  const leaf = messages[messages.length - 1];
+export function activeThread(messages: Message[], leafId?: string): Message[] {
+  const leaf =
+    (leafId !== undefined ? messages.find((m) => m.id === leafId) : undefined) ??
+    messages[messages.length - 1];
   if (!leaf) return [];
   const byId = new Map(messages.map((m) => [m.id, m]));
   const path: Message[] = [];

@@ -86,6 +86,8 @@ impl Store {
             content: vec![ContentBlock::text(input.text.trim())],
             model: None,
             created_at: now,
+            stop_reason: None,
+            usage: None,
         };
 
         let mut tx = self.pool.begin().await?;

@@ -6,11 +6,14 @@
 
 mod commands;
 mod error;
+mod events;
 mod state;
+
+use std::sync::Arc;
 
 use specta_typescript::BigIntExportBehavior;
 use tauri::Manager;
-use tauri_specta::{Builder, collect_commands};
+use tauri_specta::{Builder, collect_commands, collect_events};
 use tracing_subscriber::EnvFilter;
 
 /// Where generated TypeScript bindings are written, relative to `src-tauri/`.
@@ -22,38 +25,47 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{chats, projects, providers, settings};
-    Builder::<tauri::Wry>::new().commands(collect_commands![
-        commands::ping,
-        // Chats
-        chats::list_conversations,
-        chats::get_conversation,
-        chats::start_conversation,
-        chats::rename_conversation,
-        chats::set_conversation_starred,
-        chats::set_conversation_model,
-        chats::delete_conversation,
-        chats::list_messages,
-        chats::add_user_message,
-        chats::edit_user_message,
-        chats::search_conversations,
-        // Projects
-        projects::list_projects,
-        projects::get_project,
-        projects::create_project,
-        projects::update_project,
-        projects::delete_project,
-        // Settings
-        settings::get_settings,
-        settings::save_settings,
-        // Providers
-        providers::list_providers,
-        providers::save_provider,
-        providers::delete_provider,
-        providers::set_provider_key,
-        providers::clear_provider_key,
-        providers::test_provider,
-    ])
+    use commands::{chats, models, projects, providers, settings};
+    Builder::<tauri::Wry>::new()
+        .events(collect_events![
+            events::ChatStream,
+            events::ConversationUpdated
+        ])
+        .commands(collect_commands![
+            commands::ping,
+            // Chats
+            chats::list_conversations,
+            chats::get_conversation,
+            chats::start_conversation,
+            chats::rename_conversation,
+            chats::set_conversation_starred,
+            chats::set_conversation_model,
+            chats::delete_conversation,
+            chats::list_messages,
+            chats::send_message,
+            chats::edit_and_resend,
+            chats::regenerate,
+            chats::stop_generation,
+            chats::search_conversations,
+            // Models
+            models::list_models,
+            // Projects
+            projects::list_projects,
+            projects::get_project,
+            projects::create_project,
+            projects::update_project,
+            projects::delete_project,
+            // Settings
+            settings::get_settings,
+            settings::save_settings,
+            // Providers
+            providers::list_providers,
+            providers::save_provider,
+            providers::delete_provider,
+            providers::set_provider_key,
+            providers::clear_provider_key,
+            providers::test_provider,
+        ])
 }
 
 /// Writes the TypeScript bindings for all registered commands and events.
@@ -93,7 +105,9 @@ pub fn run() -> anyhow::Result<()> {
             builder.mount_events(app);
             let data_dir = app.path().app_data_dir()?;
             let service = app.config().identifier.clone();
-            let state = tauri::async_runtime::block_on(state::AppState::open(&data_dir, &service))?;
+            let sink = Arc::new(events::TauriSink::new(app.handle().clone()));
+            let state =
+                tauri::async_runtime::block_on(state::AppState::open(&data_dir, &service, sink))?;
             app.manage(state);
             tracing::info!("{} {} started", oxide_core::APP_NAME, oxide_core::version());
             Ok(())

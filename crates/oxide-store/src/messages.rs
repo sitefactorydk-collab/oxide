@@ -1,7 +1,7 @@
 //! Message repository. Messages form a tree per conversation (`parent_id`).
 
 use oxide_core::message::plain_text;
-use oxide_core::{ContentBlock, Message, Role};
+use oxide_core::{ContentBlock, Message, Role, StopReason, Usage};
 use sqlx::SqliteConnection;
 
 use crate::conversations::map_fk;
@@ -16,6 +16,25 @@ struct MessageRow {
     content: String,
     model: Option<String>,
     created_at: i64,
+    stop_reason: Option<String>,
+    usage: Option<String>,
+}
+
+const MESSAGE_COLUMNS: &str =
+    "id, conversation_id, parent_id, role, content, model, created_at, stop_reason, usage";
+
+/// A finished (or stopped) assistant reply to save.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewReply {
+    /// Id chosen when the reply started, so the UI can key the live message by it.
+    pub id: String,
+    pub conversation_id: String,
+    /// The user message being answered.
+    pub parent_id: String,
+    pub content: Vec<ContentBlock>,
+    pub model: String,
+    pub stop_reason: StopReason,
+    pub usage: Option<Usage>,
 }
 
 impl TryFrom<MessageRow> for Message {
@@ -26,6 +45,11 @@ impl TryFrom<MessageRow> for Message {
             .ok_or_else(|| StoreError::Corrupt(format!("unknown role in message {}", r.id)))?;
         let content: Vec<ContentBlock> = serde_json::from_str(&r.content)
             .map_err(|e| StoreError::Corrupt(format!("content of message {}: {e}", r.id)))?;
+        // Usage is informational: unreadable usage is dropped rather than failing the load.
+        let usage = r
+            .usage
+            .as_deref()
+            .and_then(|u| serde_json::from_str::<Usage>(u).ok());
         Ok(Message {
             id: r.id,
             conversation_id: r.conversation_id,
@@ -34,6 +58,8 @@ impl TryFrom<MessageRow> for Message {
             content,
             model: r.model,
             created_at: r.created_at,
+            stop_reason: r.stop_reason.as_deref().map(StopReason::parse),
+            usage,
         })
     }
 }
@@ -42,9 +68,16 @@ impl TryFrom<MessageRow> for Message {
 pub(crate) async fn insert_message(conn: &mut SqliteConnection, m: &Message) -> Result<()> {
     let content = serde_json::to_string(&m.content)
         .map_err(|e| StoreError::Invalid(format!("content can't be serialized: {e}")))?;
+    let usage = m
+        .usage
+        .map(|u| serde_json::to_string(&u))
+        .transpose()
+        .map_err(|e| StoreError::Invalid(format!("usage can't be serialized: {e}")))?;
     sqlx::query(
-        "INSERT INTO messages (id, conversation_id, parent_id, role, content, search_text, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages
+            (id, conversation_id, parent_id, role, content, search_text, model, created_at,
+             stop_reason, usage)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&m.id)
     .bind(&m.conversation_id)
@@ -54,6 +87,8 @@ pub(crate) async fn insert_message(conn: &mut SqliteConnection, m: &Message) -> 
     .bind(plain_text(&m.content))
     .bind(&m.model)
     .bind(m.created_at)
+    .bind(m.stop_reason.map(StopReason::as_str))
+    .bind(usage)
     .execute(&mut *conn)
     .await
     .map_err(|e| map_fk(e, "conversation or parent message"))?;
@@ -64,10 +99,9 @@ impl Store {
     /// Every message of a chat (all branches), in insertion order. A parent always comes
     /// before its children.
     pub async fn list_messages(&self, conversation_id: &str) -> Result<Vec<Message>> {
-        let rows: Vec<MessageRow> = sqlx::query_as(
-            "SELECT id, conversation_id, parent_id, role, content, model, created_at
-             FROM messages WHERE conversation_id = ? ORDER BY seq",
-        )
+        let rows: Vec<MessageRow> = sqlx::query_as(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? ORDER BY seq"
+        ))
         .bind(conversation_id)
         .fetch_all(&self.pool)
         .await?;
@@ -75,10 +109,9 @@ impl Store {
     }
 
     pub async fn get_message(&self, id: &str) -> Result<Message> {
-        let row: Option<MessageRow> = sqlx::query_as(
-            "SELECT id, conversation_id, parent_id, role, content, model, created_at
-             FROM messages WHERE id = ?",
-        )
+        let row: Option<MessageRow> = sqlx::query_as(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?"
+        ))
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
@@ -97,8 +130,46 @@ impl Store {
         content: Vec<ContentBlock>,
         model: Option<String>,
     ) -> Result<Message> {
+        self.insert_child(Message {
+            id: new_id(),
+            conversation_id: conversation_id.to_owned(),
+            parent_id: parent_id.map(str::to_owned),
+            role,
+            content,
+            model,
+            created_at: now_ms(),
+            stop_reason: None,
+            usage: None,
+        })
+        .await
+    }
+
+    /// Saves an assistant reply under the user message it answers.
+    pub async fn add_reply(&self, reply: NewReply) -> Result<Message> {
+        let parent = self.get_message(&reply.parent_id).await?;
+        if parent.role != Role::User {
+            return Err(StoreError::Invalid(
+                "a reply must answer a user message".into(),
+            ));
+        }
+        self.insert_child(Message {
+            id: reply.id,
+            conversation_id: reply.conversation_id,
+            parent_id: Some(reply.parent_id),
+            role: Role::Assistant,
+            content: reply.content,
+            model: Some(reply.model),
+            created_at: now_ms(),
+            stop_reason: Some(reply.stop_reason),
+            usage: reply.usage,
+        })
+        .await
+    }
+
+    /// Inserts `message` after checking its parent is in the same chat, and bumps the chat.
+    async fn insert_child(&self, message: Message) -> Result<Message> {
         let mut tx = self.pool.begin().await?;
-        if let Some(parent) = parent_id {
+        if let Some(parent) = message.parent_id.as_deref() {
             let owner: Option<String> =
                 sqlx::query_scalar("SELECT conversation_id FROM messages WHERE id = ?")
                     .bind(parent)
@@ -110,7 +181,7 @@ impl Store {
                         what: "parent message",
                     });
                 }
-                Some(c) if c != conversation_id => {
+                Some(c) if c != message.conversation_id => {
                     return Err(StoreError::Invalid(
                         "parent message belongs to another chat".into(),
                     ));
@@ -118,19 +189,10 @@ impl Store {
                 Some(_) => {}
             }
         }
-        let message = Message {
-            id: new_id(),
-            conversation_id: conversation_id.to_owned(),
-            parent_id: parent_id.map(str::to_owned),
-            role,
-            content,
-            model,
-            created_at: now_ms(),
-        };
         insert_message(&mut tx, &message).await?;
         sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
             .bind(message.created_at)
-            .bind(conversation_id)
+            .bind(&message.conversation_id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -235,6 +297,47 @@ mod tests {
             s.get_message(&root.id).await.expect("ok").content,
             vec![ContentBlock::text("root")]
         );
+    }
+
+    #[tokio::test]
+    async fn replies_keep_their_id_stop_reason_and_usage() {
+        let s = store().await;
+        let (cid, root) = chat(&s).await;
+        let usage = Usage {
+            input_tokens: 12,
+            output_tokens: 34,
+            ..Usage::default()
+        };
+        let reply = s
+            .add_reply(NewReply {
+                id: "reply-1".into(),
+                conversation_id: cid.clone(),
+                parent_id: root.id.clone(),
+                content: vec![ContentBlock::text("partial")],
+                model: "anthropic/x".into(),
+                stop_reason: StopReason::Stopped,
+                usage: Some(usage),
+            })
+            .await
+            .expect("saves");
+        let loaded = s.get_message("reply-1").await.expect("loads");
+        assert_eq!(loaded, reply);
+        assert_eq!(loaded.stop_reason, Some(StopReason::Stopped));
+        assert_eq!(loaded.usage, Some(usage));
+        assert_eq!(loaded.role, Role::Assistant);
+        // A reply can't answer another reply.
+        let err = s
+            .add_reply(NewReply {
+                id: "reply-2".into(),
+                conversation_id: cid,
+                parent_id: "reply-1".into(),
+                content: vec![],
+                model: "anthropic/x".into(),
+                stop_reason: StopReason::EndTurn,
+                usage: None,
+            })
+            .await;
+        assert!(matches!(err, Err(StoreError::Invalid(_))));
     }
 
     #[tokio::test]

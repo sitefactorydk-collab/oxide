@@ -43,8 +43,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "models",
     label: "Models",
     icon: SlidersHorizontal,
-    phase: 3,
-    blurb: "Which models appear in the picker. Only models with native tool calling are listed.",
+    blurb:
+      "The models each provider offers, and how Oxide uses them. Only models with native tool calling can be picked.",
   },
   {
     id: "connectors",

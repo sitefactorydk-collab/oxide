@@ -31,7 +31,10 @@ interface UiData {
   rightPanelOpen: boolean;
   starredOpen: boolean;
   recentsOpen: boolean;
-  /** Selected model id for new chats (static catalog until Phase 3). */
+  /**
+   * Model last picked for new chats (`<providerId>/<model>`). When it isn't available,
+   * `useNewChatModel` falls back to a listed default.
+   */
   modelId: string;
   thinking: boolean;
   /** Transient overlays: not persisted. */
@@ -62,7 +65,7 @@ export const defaultUiData: UiData = {
   rightPanelOpen: false,
   starredOpen: true,
   recentsOpen: true,
-  modelId: "anthropic/sonnet",
+  modelId: "anthropic/claude-sonnet-4-5",
   thinking: false,
   searchOpen: false,
   shortcutsOpen: false,

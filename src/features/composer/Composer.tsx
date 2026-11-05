@@ -17,6 +17,8 @@ import {
 import { createPortal } from "react-dom";
 import { IconButton } from "@/components/ui/IconButton";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { findModel } from "@/features/models/models";
+import { useModels } from "@/features/models/queries";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/stores/ui";
 import { ModelPicker } from "./ModelPicker";
@@ -49,6 +51,8 @@ export function Composer({
   onChange,
   onSubmit,
   variant,
+  modelId,
+  onModelChange,
   streaming = false,
   onStop,
   placeholder,
@@ -58,6 +62,9 @@ export function Composer({
   onChange: (v: string) => void;
   onSubmit: (text: string, attachments: Attachment[]) => void;
   variant: "home" | "reply";
+  /** Model the message goes to (`<providerId>/<model>`). */
+  modelId: string;
+  onModelChange: (id: string) => void;
   streaming?: boolean;
   onStop?: () => void;
   placeholder?: string;
@@ -66,6 +73,10 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const { data: models } = useModels();
+  const model = findModel(models, modelId);
+  // Unknown (unlisted) models may think; let the provider decide.
+  const canThink = !model || model.capabilities.thinking !== "none";
 
   const addNames = useCallback((names: string[], kind?: Attachment["kind"]) => {
     setAttachments((prev) => [
@@ -144,7 +155,7 @@ export function Composer({
         onPickFiles={() => fileInputRef.current?.click()}
         onAddProjectContext={(label) => addNames([label], "context")}
       />
-      <ThinkingToggle />
+      <ThinkingToggle supported={canThink} />
     </>
   );
 
@@ -168,7 +179,7 @@ export function Composer({
             <div className="mt-2 flex items-center gap-1">
               {tools}
               <div className="flex-1" />
-              <ModelPicker />
+              <ModelPicker value={modelId} onChange={onModelChange} />
               {sendButton}
             </div>
           </>
@@ -186,7 +197,7 @@ export function Composer({
           <p className="flex-1 truncate px-2 text-center text-xs text-fg-subtle">
             AI can be wrong. Check anything important.
           </p>
-          <ModelPicker />
+          <ModelPicker value={modelId} onChange={onModelChange} />
         </div>
       )}
 
@@ -207,24 +218,34 @@ export function Composer({
   );
 }
 
-function ThinkingToggle() {
+function ThinkingToggle({ supported }: { supported: boolean }) {
   const thinking = useUi((s) => s.thinking);
   const toggle = useUi((s) => s.toggleThinking);
+  const on = thinking && supported;
+  const label = !supported
+    ? "This model can’t think before answering"
+    : on
+      ? "Extended thinking on"
+      : "Extended thinking off";
   return (
-    <Tooltip label={thinking ? "Extended thinking on" : "Extended thinking off"}>
-      <button
-        type="button"
-        aria-pressed={thinking}
-        aria-label="Extended thinking"
-        onClick={toggle}
-        className={cn(
-          "inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm transition-colors",
-          thinking ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-hover hover:text-fg",
-        )}
-      >
-        <Lightbulb className="size-[18px]" />
-        {thinking && <span className="font-medium">Thinking</span>}
-      </button>
+    <Tooltip label={label}>
+      {/* A span keeps the tooltip working while the button is disabled. */}
+      <span className="inline-flex">
+        <button
+          type="button"
+          aria-pressed={on}
+          aria-label="Extended thinking"
+          disabled={!supported}
+          onClick={toggle}
+          className={cn(
+            "inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm transition-colors disabled:opacity-40",
+            on ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-hover hover:text-fg",
+          )}
+        >
+          <Lightbulb className="size-[18px]" />
+          {on && <span className="font-medium">Thinking</span>}
+        </button>
+      </span>
     </Tooltip>
   );
 }

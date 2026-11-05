@@ -65,16 +65,22 @@ describe("app shell", () => {
     );
   });
 
-  it("starts a chat from the home composer and saves the message", async () => {
+  it("starts a chat from the home composer and streams the reply", async () => {
     const { location } = renderApp("/new");
+    await screen.findByRole("button", { name: "Model: Claude Sonnet 5.5" });
     const box = screen.getByRole("textbox", { name: "Message" });
     fireEvent.change(box, { target: { value: "Hello Oxide" } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(location.pathname).toMatch(/^\/chat\/c-/));
     expect(await within(sidebar()).findByRole("link", { name: "Hello Oxide" })).toBeInTheDocument();
-    expect(await screen.findByRole("note")).toHaveTextContent(/can’t reply yet/);
+    expect(await screen.findByText("Reply to: Hello Oxide")).toBeInTheDocument();
     const id = location.pathname.split("/")[2];
-    expect(fakeState().messages.filter((m) => m.conversationId === id)).toHaveLength(1);
+    const saved = fakeState().messages.filter((m) => m.conversationId === id);
+    expect(saved.map((m) => m.role)).toEqual(["user", "assistant"]);
+    // New chats use the default model: the listed Sonnet, not the stale stored id.
+    expect(fakeState().conversations.find((c) => c.id === id)?.model).toBe(
+      "anthropic/claude-sonnet-5-5",
+    );
   });
 
   it("replies continue the visible thread", async () => {
@@ -84,8 +90,9 @@ describe("app shell", () => {
     fireEvent.change(box, { target: { value: "Make it darker" } });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(await screen.findByText("Make it darker")).toBeInTheDocument();
-    const added = fakeState().messages.at(-1);
-    expect(added?.parentId).toBe("m6");
+    expect(await screen.findByText("Reply to: Make it darker")).toBeInTheDocument();
+    const added = fakeState().messages.find((m) => m.role === "user" && m.parentId === "m6");
+    expect(added?.content).toEqual([{ type: "text", text: "Make it darker" }]);
   });
 
   it("editing a message adds a branch and shows it", async () => {
@@ -97,6 +104,7 @@ describe("app shell", () => {
     fireEvent.change(editor, { target: { value: "Suggest a cool palette." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Suggest a cool palette.")).toBeInTheDocument();
+    expect(await screen.findByText("Reply to: Suggest a cool palette.")).toBeInTheDocument();
     // The old branch (and its reply) is hidden, but kept.
     expect(screen.queryByText(/warm neutral palette/)).not.toBeInTheDocument();
     expect(fakeState().messages.some((m) => m.id === "m5")).toBe(true);

@@ -10,6 +10,8 @@ function msg(id: string, parentId: string | null, text = id): Message {
     role: "user",
     content: [{ type: "text", text }],
     model: null,
+    stopReason: null,
+    usage: null,
     createdAt: 0,
   };
 }
@@ -47,5 +49,24 @@ describe("message helpers", () => {
       { kind: "code", lang: "json", code: "{ }" },
       { kind: "p", text: "After" },
     ]);
+  });
+});
+
+describe("activeThread with a leaf", () => {
+  it("ends at the given message, hiding replies being replaced", () => {
+    const m = (id: string, parentId: string | null): Message => ({
+      id,
+      conversationId: "c",
+      parentId,
+      role: "user",
+      content: [],
+      model: null,
+      createdAt: 0,
+      stopReason: null,
+      usage: null,
+    });
+    const all = [m("a", null), m("b", "a"), m("c", "b")];
+    expect(activeThread(all, "b").map((x) => x.id)).toEqual(["a", "b"]);
+    expect(activeThread(all, "missing").map((x) => x.id)).toEqual(["a", "b", "c"]);
   });
 });

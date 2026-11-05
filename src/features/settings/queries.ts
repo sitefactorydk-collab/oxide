@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { commands, type AppSettings, type ChatFont, type ThemePref } from "@/bindings";
+import {
+  commands,
+  type AppSettings,
+  type ChatFont,
+  type ModelSettings,
+  type ThemePref,
+} from "@/bindings";
 import { unwrap } from "@/lib/api";
 import { useUi } from "@/stores/ui";
 
@@ -9,6 +15,7 @@ export const settingsKeys = { app: ["settings", "app"] as const };
 export const DEFAULT_SETTINGS: AppSettings = {
   profile: { name: "" },
   appearance: { theme: "system", chatFont: "serif" },
+  models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
 };
 
 export function useSettings() {
@@ -64,6 +71,7 @@ export function useSettingsSync(): void {
     if (!ui.settingsMigrated) {
       useUi.setState({ settingsMigrated: true });
       const legacy: AppSettings = {
+        ...data,
         profile: { name: ui.userName },
         appearance: { theme: ui.theme, chatFont: ui.chatFont },
       };
@@ -92,4 +100,10 @@ export function useSetChatFont() {
 export function useSetProfileName() {
   const update = useUpdateSettings();
   return (name: string) => update((s) => ({ ...s, profile: { ...s.profile, name } }));
+}
+
+export function useSetModelSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ModelSettings>) =>
+    update((s) => ({ ...s, models: { ...s.models, ...patch } }));
 }

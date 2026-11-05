@@ -6,6 +6,7 @@ import { OxideMark } from "@/components/OxideMark";
 import { IconButton } from "@/components/ui/IconButton";
 import { cn } from "@/lib/cn";
 import { type ChatFont, type ThemePref, useUi } from "@/stores/ui";
+import { ModelsSection } from "@/features/models/ModelsSection";
 import { ProvidersSection } from "@/features/providers/ProvidersSection";
 import { useSetChatFont, useSetProfileName, useSetTheme } from "./queries";
 import { findSection, SETTINGS_SECTIONS, type SettingsSection } from "./sections";
@@ -86,6 +87,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <AppearanceSection />;
     case "providers":
       return <ProvidersSection />;
+    case "models":
+      return <ModelsSection />;
     case "about":
       return <AboutSection />;
     default:

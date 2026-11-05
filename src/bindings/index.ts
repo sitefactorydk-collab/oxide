@@ -33,11 +33,12 @@ async getConversation(id: string) : Promise<Result<Conversation, CommandError>> 
 }
 },
 /**
- * Creates a chat with its first user message; the title comes from the message.
+ * Creates a chat with its first user message (the title comes from the message) and starts
+ * the reply. Progress arrives as `chatStream` events.
  */
-async startConversation(input: StartConversation) : Promise<Result<Conversation, CommandError>> {
+async startConversation(input: StartConversation, options: GenerateOptions) : Promise<Result<Conversation, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_conversation", { input }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_conversation", { input, options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -87,22 +88,47 @@ async listMessages(conversationId: string) : Promise<Result<Message[], CommandEr
 }
 },
 /**
- * Appends a user message under `parent_id` (the current leaf of the visible thread).
+ * Sends a user message under `parent_id` (the leaf of the visible thread) and starts the
+ * reply. Returns the saved message; the reply streams as `chatStream` events.
  */
-async addUserMessage(conversationId: string, parentId: string | null, text: string) : Promise<Result<Message, CommandError>> {
+async sendMessage(conversationId: string, parentId: string | null, text: string, options: GenerateOptions) : Promise<Result<Message, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_user_message", { conversationId, parentId, text }) };
+    return { status: "ok", data: await TAURI_INVOKE("send_message", { conversationId, parentId, text, options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Edits a user message by adding a sibling branch with the new text.
+ * Edits a user message as a new branch (a sibling with the new text) and answers it.
  */
-async editUserMessage(messageId: string, text: string) : Promise<Result<Message, CommandError>> {
+async editAndResend(messageId: string, text: string, options: GenerateOptions) : Promise<Result<Message, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("edit_user_message", { messageId, text }) };
+    return { status: "ok", data: await TAURI_INVOKE("edit_and_resend", { messageId, text, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes a new reply: for an assistant message, a sibling of it; for a user message, an
+ * answer to it (retry after a failure). Returns the id the reply will be saved under.
+ */
+async regenerate(messageId: string, options: GenerateOptions) : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("regenerate", { messageId, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stops the reply being written in a chat, keeping what was written. Returns whether a reply
+ * was running.
+ */
+async stopGeneration(conversationId: string) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_generation", { conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -114,6 +140,19 @@ async editUserMessage(messageId: string, text: string) : Promise<Result<Message,
 async searchConversations(query: string, limit: number) : Promise<Result<SearchHit[], CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("search_conversations", { query, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Models of every enabled endpoint, with capabilities. Endpoints that can't be reached come
+ * back with `error` set. `refresh` skips the cache and re-checks tool support where it had
+ * to be probed (Strata).
+ */
+async listModels(refresh: boolean) : Promise<Result<ProviderModels[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_models", { refresh }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -247,6 +286,13 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 /** user-defined events **/
 
 
+export const events = __makeEvents__<{
+chatStream: ChatStream,
+conversationUpdated: ConversationUpdated
+}>({
+chatStream: "chat-stream",
+conversationUpdated: "conversation-updated"
+})
 
 /** user-defined constants **/
 
@@ -254,9 +300,17 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 export type ChatFont = "serif" | "sans" | "system"
+/**
+ * A step of a reply being written (`events.chatStream` in TypeScript).
+ */
+export type ChatStream = ChatStreamEvent
+/**
+ * A [`StreamEvent`] for one conversation.
+ */
+export type ChatStreamEvent = { conversationId: string; event: StreamEvent }
 export type CommandError = 
 /**
  * The thing asked for doesn't exist (any more).
@@ -295,6 +349,23 @@ export type Conversation = { id: string; title: string; projectId: string | null
  */
 model: string; starred: boolean; createdAt: number; updatedAt: number }
 /**
+ * A chat changed in the background (for example, it got an automatic title).
+ */
+export type ConversationChanged = { conversation: Conversation }
+/**
+ * A chat changed in the background, e.g. it got an automatic title
+ * (`events.conversationUpdated`).
+ */
+export type ConversationUpdated = ConversationChanged
+/**
+ * Per-request options chosen in the composer.
+ */
+export type GenerateOptions = { 
+/**
+ * Extended thinking, for models that support it. Ignored by the others.
+ */
+thinking: boolean }
+/**
  * Where the bytes of an image or document live.
  */
 export type MediaSource = 
@@ -317,7 +388,58 @@ export type Message = { id: string; conversationId: string; parentId: string | n
 /**
  * Model that wrote an assistant message.
  */
-model: string | null; createdAt: number }
+model: string | null; createdAt: number; 
+/**
+ * Why an assistant reply ended. `None` for user messages.
+ */
+stopReason: StopReason | null; 
+/**
+ * Token counts of an assistant reply, when the provider reported them.
+ */
+usage: Usage | null }
+/**
+ * What a model supports. Filled from the provider's own metadata where it has any, and from
+ * Oxide's curated tables or a probe otherwise.
+ */
+export type ModelCapabilities = { 
+/**
+ * Native function / tool calling. Models without it are hidden by default.
+ */
+tools: boolean; thinking: ThinkingStyle; images: boolean; pdfs: boolean }
+/**
+ * A model the picker can offer.
+ */
+export type ModelInfo = { 
+/**
+ * `<providerId>/<model>`, the form stored on conversations.
+ */
+id: string; providerId: string; 
+/**
+ * The model's id at the provider.
+ */
+model: string; 
+/**
+ * Display name.
+ */
+label: string; capabilities: ModelCapabilities; contextWindow: number | null; maxOutputTokens: number | null }
+export type ModelSettings = { 
+/**
+ * List models without native tool calling (greyed out, not selectable).
+ */
+showUnsupported: boolean; 
+/**
+ * Name new chats after their first exchange.
+ */
+autoTitle: boolean; 
+/**
+ * Model used for automatic titles (`<providerId>/<model>`). `None` picks a small model
+ * from the same endpoint as the chat.
+ */
+titleModel: string | null; 
+/**
+ * Extended-thinking budget in tokens, for models that take one.
+ */
+thinkingBudget: number }
 export type NewProject = { name: string; description: string }
 /**
  * Response of [`ping`]: proves the IPC round trip and the generated bindings work.
@@ -349,6 +471,14 @@ export type ProviderInput = { id: string | null; kind: ProviderKind; name: strin
  * The API family an endpoint speaks.
  */
 export type ProviderKind = "anthropic" | "openai" | "lmstudio" | "strata"
+/**
+ * The models of one endpoint, or why they couldn't be listed.
+ */
+export type ProviderModels = { providerId: string; providerName: string; providerKind: ProviderKind; models: ModelInfo[]; 
+/**
+ * Set when the endpoint couldn't be reached or rejected the key. Never contains the key.
+ */
+error: string | null }
 export type ProviderTestResult = { ok: boolean; 
 /**
  * Human-readable outcome. Never contains the key.
@@ -373,11 +503,95 @@ export type SearchHit = { conversation: Conversation; messageId: string | null; 
  */
 export type StartConversation = { text: string; model: string; projectId: string | null }
 /**
+ * Why a reply ended.
+ */
+export type StopReason = 
+/**
+ * The model finished its answer.
+ */
+"endTurn" | 
+/**
+ * The output token limit was reached.
+ */
+"maxTokens" | "stopSequence" | 
+/**
+ * The model wants to call a tool (the tool loop arrives in Phase 6).
+ */
+"toolUse" | 
+/**
+ * The model declined to answer.
+ */
+"refusal" | 
+/**
+ * The context window is full.
+ */
+"contextFull" | 
+/**
+ * The user pressed Stop.
+ */
+"stopped" | 
+/**
+ * The request failed part-way; the content is what arrived before the error.
+ */
+"error" | 
+/**
+ * A reason Oxide doesn't know.
+ */
+"other"
+/**
+ * One step of a reply being written. Sent to the UI as it happens.
+ */
+export type StreamEvent = 
+/**
+ * A reply to `parent_id` has started. `message_id` is the id it will be saved under.
+ */
+{ type: "started"; messageId: string; parentId: string; model: string; startedAt: number } | { type: "textDelta"; text: string } | { type: "thinkingDelta"; text: string } | 
+/**
+ * The model started a tool call (shown, not run, until Phase 6).
+ */
+{ type: "toolUse"; id: string; name: string } | { type: "usage"; usage: Usage } | 
+/**
+ * The reply is saved. `message` is `None` when it was stopped before any output.
+ */
+{ type: "done"; message: Message | null } | 
+/**
+ * The reply failed. `message` is the partial reply if any of it was saved.
+ */
+{ type: "failed"; error: string; message: Message | null }
+/**
  * Connection test request. Uses `api_key` if given, otherwise the key stored for
  * `provider_id`, so the form can be tested before or after saving.
  */
 export type TestProvider = { kind: ProviderKind; baseUrl: string; apiKey: string | null; providerId: string | null }
 export type ThemePref = "system" | "light" | "dark"
+/**
+ * How a model is asked to think before answering.
+ */
+export type ThinkingStyle = 
+/**
+ * No extended thinking.
+ */
+"none" | 
+/**
+ * Thinking with an explicit token budget.
+ */
+"budget" | 
+/**
+ * The model decides how long to think. It can also be switched off explicitly.
+ */
+"adaptive"
+/**
+ * Token counts for one reply.
+ */
+export type Usage = { inputTokens: number; outputTokens: number; 
+/**
+ * Prompt tokens served from the provider's cache.
+ */
+cacheReadTokens: number; 
+/**
+ * Prompt tokens written to the provider's cache.
+ */
+cacheWriteTokens: number }
 
 /** tauri-specta globals **/
 

@@ -29,14 +29,18 @@ pub async fn save_provider(
     state: State<'_, AppState>,
     input: ProviderInput,
 ) -> CmdResult<ProviderConfig> {
-    Ok(state.store.save_provider(input).await?)
+    let saved = state.store.save_provider(input).await?;
+    state.models.invalidate();
+    Ok(saved)
 }
 
 /// Deletes an endpoint and its key.
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_provider(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    Ok(state.store.delete_provider(&state.secrets, &id).await?)
+    state.store.delete_provider(&state.secrets, &id).await?;
+    state.models.invalidate();
+    Ok(())
 }
 
 /// Stores an API key in the OS keychain. Returns the endpoint with the key's masked hint.
@@ -51,6 +55,7 @@ pub async fn set_provider_key(
         .store
         .set_provider_key(&state.secrets, &id, Secret::new(key))
         .await?;
+    state.models.invalidate();
     tracing::info!(provider = %id, "API key stored in the keychain");
     Ok(config)
 }
@@ -62,6 +67,7 @@ pub async fn clear_provider_key(
     id: String,
 ) -> CmdResult<ProviderConfig> {
     let config = state.store.clear_provider_key(&state.secrets, &id).await?;
+    state.models.invalidate();
     tracing::info!(provider = %id, "API key removed from the keychain");
     Ok(config)
 }

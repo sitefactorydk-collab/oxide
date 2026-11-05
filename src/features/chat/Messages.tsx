@@ -1,8 +1,9 @@
-import { Check, ChevronRight, Copy, Pencil, RotateCcw } from "lucide-react";
+import { Check, ChevronRight, Copy, Pencil, RotateCcw, Wrench } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Message } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
 import { cn } from "@/lib/cn";
+import type { LiveReply } from "./streams";
 import { messageText, segments, thinkingOf, type ThinkingInfo } from "./thread";
 
 /** Text → paragraphs and code blocks. Phase 4 replaces this with react-markdown + Shiki + KaTeX. */
@@ -144,12 +145,20 @@ export function AssistantMessage({
 }) {
   const [copied, copy] = useCopy();
   const thinking = thinkingOf(message);
+  const note = stopNote(message);
+  const tools = message.content.flatMap((b) => (b.type === "toolUse" ? [b] : []));
   return (
     <div className="group flex flex-col gap-2">
       {thinking && <ThinkingBlock thinking={thinking} />}
       <div className="ox-prose select-text">
         <Prose text={messageText(message)} />
       </div>
+      {tools.length > 0 && <ToolCalls names={tools.map((t) => t.name)} />}
+      {note && (
+        <p role="note" className="text-sm text-fg-subtle">
+          {note}
+        </p>
+      )}
       <Actions visible={isLast}>
         <IconButton
           size="sm"
@@ -177,9 +186,105 @@ function WorkingDots() {
   );
 }
 
-/** Collapsed "Thought for Ns" line; expands to show the reasoning text. */
-export function ThinkingBlock({ thinking }: { thinking: ThinkingInfo }) {
+/** A short note under a reply that didn't end normally. */
+function stopNote(m: Message): string | null {
+  switch (m.stopReason) {
+    case "stopped":
+      return "Stopped.";
+    case "error":
+      return "This reply was cut off by an error.";
+    case "maxTokens":
+      return "The reply reached the output limit.";
+    case "refusal":
+      return "The model declined to answer.";
+    case "contextFull":
+      return "The conversation is too long for this model.";
+    case "toolUse":
+      return "The model asked to use a tool. Oxide doesn’t run tools yet.";
+    default:
+      return messageText(m).trim() === "" && !thinkingOf(m) ? "No response." : null;
+  }
+}
+
+function ToolCalls({ names }: { names: string[] }) {
+  return (
+    <ul aria-label="Tool calls" className="flex flex-wrap gap-2">
+      {names.map((name, i) => (
+        <li
+          key={`${name}-${i}`}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-sunken px-2 font-mono text-xs text-fg-muted"
+        >
+          <Wrench className="size-3.5" />
+          {name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A reply as it streams in: live thinking, the text so far, tool calls, a status line. */
+export function LiveReplyView({ live }: { live: LiveReply }) {
+  const thinkingDone = live.thinkingEndedAt !== null;
+  const thinkingSecs =
+    live.thinkingStartedAt !== null && live.thinkingEndedAt !== null
+      ? Math.max(1, Math.round((live.thinkingEndedAt - live.thinkingStartedAt) / 1000))
+      : 0;
+  return (
+    <div aria-busy="true" aria-label="Reply in progress" className="flex flex-col gap-2">
+      {live.thinking &&
+        (thinkingDone ? (
+          <ThinkingBlock thinking={{ seconds: thinkingSecs, text: live.thinking }} />
+        ) : (
+          <ThinkingBlock
+            thinking={{ seconds: 0, text: live.thinking }}
+            liveSince={live.thinkingStartedAt ?? live.startedAt}
+          />
+        ))}
+      {live.text && (
+        <div className="ox-prose select-text">
+          <Prose text={live.text} />
+        </div>
+      )}
+      {live.tools.length > 0 && <ToolCalls names={live.tools.map((t) => t.name)} />}
+      {!live.text && !live.thinking && <WorkingLine startedAt={live.startedAt} />}
+    </div>
+  );
+}
+
+/**
+ * Collapsed "Thought for Ns" line; expands to show the reasoning text. With `liveSince`, the
+ * model is still thinking: the line counts up and the text grows.
+ */
+export function ThinkingBlock({
+  thinking,
+  liveSince,
+}: {
+  thinking: ThinkingInfo;
+  liveSince?: number;
+}) {
   const [open, setOpen] = useState(false);
+  if (liveSince !== undefined) {
+    return (
+      <div>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="inline-flex items-center gap-2 rounded-md py-1 text-md text-fg-muted hover:text-fg"
+        >
+          <WorkingDots />
+          Thinking
+          <Elapsed since={liveSince} />
+          <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
+        </button>
+        {open && (
+          <div className="ml-[5px] mt-1 select-text whitespace-pre-wrap border-l-2 border-line pl-4 text-base leading-6 text-fg-muted">
+            {thinking.text}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div>
       <button
@@ -196,7 +301,7 @@ export function ThinkingBlock({ thinking }: { thinking: ThinkingInfo }) {
         <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
       </button>
       {open && (
-        <div className="ml-[5px] mt-1 select-text border-l-2 border-line pl-4 text-base leading-6 text-fg-muted">
+        <div className="ml-[5px] mt-1 select-text whitespace-pre-wrap border-l-2 border-line pl-4 text-base leading-6 text-fg-muted">
           {thinking.text}
         </div>
       )}
@@ -204,19 +309,23 @@ export function ThinkingBlock({ thinking }: { thinking: ThinkingInfo }) {
   );
 }
 
-/** Live status line while a reply is being generated. */
-export function WorkingLine({ startedAt }: { startedAt: number }) {
+function Elapsed({ since }: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
-  const secs = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const secs = Math.max(0, Math.floor((now - since) / 1000));
+  return <span className="text-fg-subtle tabular-nums">{secs}s</span>;
+}
+
+/** Live status line while a reply is being generated, before any text arrives. */
+export function WorkingLine({ startedAt }: { startedAt: number }) {
   return (
     <div role="status" className="inline-flex items-center gap-2 py-1 text-md text-fg-muted">
       <WorkingDots />
-      Thinking
-      <span className="text-fg-subtle tabular-nums">{secs}s</span>
+      Working
+      <Elapsed since={startedAt} />
     </div>
   );
 }

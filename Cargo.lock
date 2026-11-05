@@ -2523,6 +2523,7 @@ name = "oxide"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "oxide-agent",
  "oxide-core",
  "oxide-llm",
  "oxide-store",
@@ -2541,6 +2542,15 @@ dependencies = [
 [[package]]
 name = "oxide-agent"
 version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "oxide-core",
+ "oxide-llm",
+ "oxide-store",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "oxide-bridge"
@@ -2563,12 +2573,15 @@ dependencies = [
 name = "oxide-llm"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "futures-util",
  "oxide-core",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

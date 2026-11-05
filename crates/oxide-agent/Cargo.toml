@@ -1,6 +1,6 @@
 [package]
 name = "oxide-agent"
-description = "Agent loop, tool registry, approvals and built-in tools"
+description = "Reply generation, agent loop, tool registry, approvals and built-in tools"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,13 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+oxide-core.workspace = true
+oxide-store.workspace = true
+oxide-llm.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

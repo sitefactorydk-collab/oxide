@@ -1,4 +1,13 @@
-import type { ContentBlock, Conversation, Message, Project, ProviderConfig } from "@/bindings";
+import type {
+  ContentBlock,
+  Conversation,
+  Message,
+  ModelInfo,
+  Project,
+  ProviderConfig,
+  ProviderModels,
+  ThinkingStyle,
+} from "@/bindings";
 
 /** Seed data for tests (ported from Phase 1's mock store). */
 
@@ -50,17 +59,17 @@ function convo(
 
 export function seedConversations(now: number): Conversation[] {
   return [
-    convo("c1", "Tauri custom title bar on Windows", "anthropic/sonnet", 8 * MIN, now, {
+    convo("c1", "Tauri custom title bar on Windows", "anthropic/claude-sonnet-5-5", 8 * MIN, now, {
       projectId: "p1",
       starred: true,
     }),
-    convo("c2", "Design tokens for light and dark", "anthropic/opus", 2 * HOUR, now, {
+    convo("c2", "Design tokens for light and dark", "anthropic/claude-opus-5-5", 2 * HOUR, now, {
       projectId: "p1",
       starred: true,
     }),
     convo("c3", "When to sow broad beans", "openai/gpt", 5 * HOUR, now, { projectId: "p2" }),
-    convo("c4", "Explain Rust lifetimes simply", "anthropic/sonnet", 26 * HOUR, now),
-    convo("c5", "SQLite FTS5 vs tantivy", "lmstudio/qwen3-14b", 3 * DAY, now),
+    convo("c4", "Explain Rust lifetimes simply", "anthropic/claude-sonnet-5-5", 26 * HOUR, now),
+    convo("c5", "SQLite FTS5 vs tantivy", "lmstudio/qwen/qwen3-14b", 3 * DAY, now),
   ];
 }
 
@@ -72,7 +81,17 @@ function message(
   createdAt: number,
   content: ContentBlock[],
 ): Message {
-  return { id, conversationId, parentId, role, content, model: null, createdAt };
+  return {
+    id,
+    conversationId,
+    parentId,
+    role,
+    content,
+    model: role === "assistant" ? "anthropic/claude-sonnet-5-5" : null,
+    createdAt,
+    stopReason: role === "assistant" ? "endTurn" : null,
+    usage: null,
+  };
 }
 
 const text = (t: string): ContentBlock => ({ type: "text", text: t });
@@ -130,5 +149,65 @@ export function seedProviders(now: number): ProviderConfig[] {
     p("openai", "OpenAI", "https://api.openai.com/v1"),
     p("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1"),
     p("strata", "Strata", "http://127.0.0.1:47831/v1"),
+  ];
+}
+
+function model(
+  providerId: string,
+  name: string,
+  label: string,
+  tools = true,
+  thinking: ThinkingStyle = "none",
+): ModelInfo {
+  return {
+    id: `${providerId}/${name}`,
+    providerId,
+    model: name,
+    label,
+    capabilities: { tools, thinking, images: providerId === "anthropic", pdfs: false },
+    contextWindow: null,
+    maxOutputTokens: null,
+  };
+}
+
+/** What `listModels` answers: two endpoints with models, two with errors. */
+export function seedModels(): ProviderModels[] {
+  return [
+    {
+      providerId: "anthropic",
+      providerName: "Anthropic",
+      providerKind: "anthropic",
+      models: [
+        model("anthropic", "claude-opus-5-5", "Claude Opus 5.5", true, "adaptive"),
+        model("anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", true, "budget"),
+        model("anthropic", "claude-haiku-4-5", "Claude Haiku 4.5"),
+      ],
+      error: null,
+    },
+    {
+      providerId: "openai",
+      providerName: "OpenAI",
+      providerKind: "openai",
+      models: [],
+      error: "No API key yet. Add one in Settings → Providers.",
+    },
+    {
+      providerId: "lmstudio",
+      providerName: "LM Studio",
+      providerKind: "lmstudio",
+      models: [
+        model("lmstudio", "qwen/qwen3-14b", "qwen/qwen3-14b"),
+        model("lmstudio", "gemma-3", "gemma-3", false),
+      ],
+      error: null,
+    },
+    {
+      providerId: "strata",
+      providerName: "Strata",
+      providerKind: "strata",
+      models: [],
+      error:
+        "couldn't reach http://127.0.0.1:47831/v1: connection refused or no route (is the server running?)",
+    },
   ];
 }

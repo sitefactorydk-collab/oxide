@@ -1,6 +1,7 @@
 //! The error type every fallible command returns. Serialized to the frontend as
 //! `{ kind, message }`; messages never contain API keys or message content.
 
+use oxide_agent::AgentError;
 use oxide_store::{SecretError, StoreError};
 use serde::Serialize;
 use specta::Type;
@@ -50,6 +51,18 @@ impl From<SecretError> for CommandError {
     }
 }
 
+impl From<AgentError> for CommandError {
+    fn from(e: AgentError) -> Self {
+        match e {
+            AgentError::Store(s) => s.into(),
+            AgentError::NotFound(what) => CommandError::NotFound(format!("{what} not found")),
+            // Provider errors are written for users and never contain keys.
+            AgentError::Llm(l) => CommandError::Invalid(l.to_string()),
+            AgentError::Busy | AgentError::Invalid(_) => CommandError::Invalid(e.to_string()),
+        }
+    }
+}
+
 pub type CmdResult<T> = Result<T, CommandError>;
 
 #[cfg(test)]
@@ -72,5 +85,21 @@ mod tests {
         assert_eq!(e, CommandError::NotFound("project not found".into()));
         let e: CommandError = StoreError::Corrupt("x".into()).into();
         assert!(matches!(e, CommandError::Internal(_)));
+    }
+
+    #[test]
+    fn agent_errors_map_to_kinds() {
+        let e: CommandError = AgentError::Busy.into();
+        assert_eq!(
+            e,
+            CommandError::Invalid("a reply is already being written in this chat".into())
+        );
+        let e: CommandError = AgentError::NotFound("message").into();
+        assert_eq!(e, CommandError::NotFound("message not found".into()));
+        let e: CommandError = AgentError::Store(StoreError::NotFound {
+            what: "conversation",
+        })
+        .into();
+        assert_eq!(e, CommandError::NotFound("conversation not found".into()));
     }
 }
