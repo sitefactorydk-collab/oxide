@@ -7,6 +7,7 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `dev.cmd` | Runs the app with hot reload (`cargo tauri dev`) | `dev.log` |
 | `check.cmd` | All checks: fmt, prettier, clippy, cargo test, typecheck, lint, vitest | `check.log`, `check-summary.log` |
 | `check-toolchain.cmd` | Records tool versions | `toolchain.log` |
+| `commit.cmd` | Double-click wrapper for `commit.ps1` | `commit*` |
 | `commit.ps1` | Commits everything with the message in `logs\commit-msg.txt` (used by phase scripts) | `commit.log` |
 | `phase0.cmd` | First-time setup for Phase 0 (already run) | `phase0*.log` |
 | `phase1.cmd` | Phase 1: stops a running dev app, `npm install`, regenerates icons, vite build, checks, then starts the app | `phase1*`, `check*`, `dev.log` |

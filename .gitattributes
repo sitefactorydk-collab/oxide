@@ -1,4 +1,7 @@
 * text=auto eol=lf
+# cmd.exe misparses labels/goto in LF-only batch files; keep Windows scripts CRLF on checkout.
+*.cmd text eol=crlf
+*.bat text eol=crlf
 *.png binary
 *.ico binary
 *.icns binary
