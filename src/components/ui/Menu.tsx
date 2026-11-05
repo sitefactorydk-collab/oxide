@@ -13,7 +13,7 @@ export const MenuRadioGroup = M.RadioGroup;
 const panel =
   "ox-pop z-50 min-w-[220px] rounded-xl border border-line bg-raised p-1 text-base text-fg shadow-lg outline-none";
 const item =
-  "relative flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 outline-none select-none " +
+  "relative flex min-h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 outline-none select-none " +
   "data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-45 " +
   "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-muted";
 

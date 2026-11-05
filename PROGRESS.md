@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 3 — LLM layer & streaming chat (manual exit checks against all four providers: see Phase 3 below)
-- **In progress:** Phase 4 — Chat UX completeness (code done and checked on Windows; manual exit check pending, see Phase 4 below)
+- **Last completed:** Phase 4 — Chat UX completeness (committed `ffa1146`; follow-up fixes in `phase4-fix.cmd`, see Phase 4 below)
 - **Next phase:** Phase 5 — MCP client
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -29,13 +28,13 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 4 — Chat UX completeness — 2026-11-05
-Status: code done and checked on Windows. The first `scripts\win\phase4.cmd` run passed fmt, prettier, clippy, cargo test (including `src-tauri` with both new plugins) and typecheck; lint and 90 of 93 Vitest tests also passed. The 3 failures were test setup only: `Markdown.test.tsx` rendered code blocks (which have tooltip buttons) without `Tooltip.Provider`. The test now wraps them, and the second `phase4.cmd` run commits when green. The manual exit check below is still open.
+Status: code done and checked on Windows. The first `scripts\win\phase4.cmd` run passed fmt, prettier, clippy, cargo test (including `src-tauri` with both new plugins) and typecheck; lint and 90 of 93 Vitest tests also passed. The 3 failures were test setup only: `Markdown.test.tsx` rendered code blocks (which have tooltip buttons) without `Tooltip.Provider`. The test now wraps them; the second run passed everything (Vitest 93/93) and committed `ffa1146 phase 4: chat UX completeness`. The user tested the app the same evening (results below).
 
-Exit criteria, to check by hand in `cargo tauri dev`:
-- [ ] Settings → About → **Create demo chat** (development builds only) makes a 50-message chat with code in several languages, inline and display math, tables, task lists, generated images and a PDF. It must render correctly and scroll smoothly; "Jump to latest" appears when scrolled up.
-- [ ] Attach a screenshot (paste), a large photo (resized, note on the chip), a PDF and a code file (drag and drop and the "+" menu). Send to Strata and to Anthropic.
-- [ ] Effort menu on an Anthropic model; thinking switch on Strata (off should stop Qwen's long thinking).
-- [ ] Branch navigator after an edit and after Retry; thumbs up/down; usage tooltip; export as Markdown and JSON from the title-bar menu; links open in the browser.
+Exit criteria, checked by hand in `cargo tauri dev` on 2026-11-05 (the user: "everything worked well and looks nice", apart from the two issues under "Fixes after the manual check"):
+- [x] Settings → About → **Create demo chat** (development builds only) makes a 50-message chat with code in several languages, inline and display math, tables, task lists, generated images and a PDF. It must render correctly and scroll smoothly; "Jump to latest" appears when scrolled up.
+- [x] Attach a screenshot (paste), a large photo (resized, note on the chip), a PDF and a code file (drag and drop and the "+" menu). Send to Strata and to Anthropic.
+- [x] Effort menu on an Anthropic model; thinking switch on Strata (off should stop Qwen's long thinking).
+- [x] Branch navigator after an edit and after Retry; thumbs up/down; usage tooltip; export as Markdown and JSON from the title-bar menu; links open in the browser.
 - [x] Vitest covers Markdown edge cases (`prepare.test.ts`, `Markdown.test.tsx`).
 
 Done:
@@ -86,6 +85,10 @@ Done:
   - Rust library crates (Linux): core 28, store 31, llm 43, agent 33. New: effort parsing and fallback, request bodies (effort, switch, media fallbacks), real PDF extraction, attachments (resize, transparency, text, limits, PDFs, ownership), feedback and edits with files, export, demo.
   - Vitest: `prepare.test.ts` (dollars, math delimiters, code, streaming), `Markdown.test.tsx` (GFM, KaTeX, errors, code blocks, links, raw HTML, streaming), `ChatPhase4.test.tsx` (branches, feedback, usage, export, attachments, effort, jump to latest), plus updated thread/model tests. The fake backend implements every new command.
 
+Fixes after the manual check (`scripts\win\phase4-fix.cmd`, commits when green):
+- **"+" menu:** the two-line limits text overlapped the divider because menu rows had a fixed 32 px height. Rows now grow to fit (`min-h-8 py-1.5` in `components/ui/Menu.tsx`; also helps the Effort menu's two-line items).
+- **"I can't translate the whole PDF in one reply":** a 2-page PDF to Qwen on Strata (128k context) got a "sample" translation. That's the model's choice, not a limit: Oxide sends no output cap to local servers. The system prompt now says attached files are read in full and translate/rewrite/convert/summarize requests are done completely unless the user asks for less. `scripts\win\pdf-check.ps1` (run by `phase4-fix.cmd`) logs the extracted text's size and shape for the latest PDFs and Strata's `/props` to `logs\pdf-check.log`, to rule out garbled extraction or a small server-side output default. If it still happens: check that log, and consider sending an explicit `max_tokens` to local servers.
+
 Deviations from PLAN.md (and why):
 - **Local servers get on/off only**, and only Strata (tested); see the table above.
 - **Release builds unwind on panic** (`panic = "abort"` removed from `[profile.release]`): pdf-extract can panic on malformed PDFs, and the panic is caught instead of closing the app.
@@ -108,7 +111,7 @@ Notes for Phase 5:
 - `open_external` exists for OAuth's system-browser step.
 - Agent-side workflow this phase: edit in the container mirror, `tar` changed sources to `/mnt/user-data/outputs/sync-N.tgz`, commit it to `logs\`, and unpack on the device with `tar xzf … --overwrite` (plain `tar` can't replace files without delete permission). Run prettier on the device, then copy `src` back. Don't include `package.json`, `PLAN.md`, `PROGRESS.md` or `scripts` in the tarball unless the mirror's copy is current.
 
-Verified: clippy ✅ cargo test ✅ typecheck ✅ lint ✅ (Windows, phase4.cmd). Vitest: 90/93 on the first run, test-setup fix applied (see Status). tauri dev manual exit check: pending.
+Verified: clippy ✅ tests ✅ (cargo + Vitest 93/93) typecheck ✅ lint ✅ (Windows, phase4.cmd) tauri dev on Windows ✅ (manual check by the user; two fixes above).
 
 ## Phase 3 — LLM layer & streaming chat — 2026-11-05
 Status: done. `scripts\win\phase3.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test 119/119, typecheck, lint, vitest 57/57) and committed `phase 3: LLM layer & streaming chat`. Before that, the first run showed one flaky Vitest test, which checked the thinking toggle before the model list had loaded; the test now waits for it. The manual exit checks below are still open.

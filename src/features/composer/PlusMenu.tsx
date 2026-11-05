@@ -46,11 +46,11 @@ export function PlusMenu({
       <MenuContent align="start" side="top" className="w-80">
         <MenuItem onSelect={onPickFiles}>
           <Paperclip />
-          <span className="flex min-w-0 flex-col">
+          <span className="flex min-w-0 flex-col gap-0.5">
             <span>Add files or photos</span>
-            <span className="text-xs text-fg-subtle">
-              Up to {limits.maxFiles} · images {formatBytes(limits.maxImageBytes)} · PDFs{" "}
-              {formatBytes(limits.maxPdfBytes)}, {limits.maxPdfPages} pages · text{" "}
+            <span className="text-xs leading-4 text-fg-subtle">
+              Up to {limits.maxFiles} files · images {formatBytes(limits.maxImageBytes)} · PDFs{" "}
+              {formatBytes(limits.maxPdfBytes)} / {limits.maxPdfPages} pages · text{" "}
               {formatBytes(limits.maxTextBytes)}
             </span>
           </span>

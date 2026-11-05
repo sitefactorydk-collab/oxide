@@ -61,7 +61,11 @@ pub fn system_prompt(user_name: &str, now_ms: i64) -> String {
     let (y, m, d) = civil_date(now_ms);
     let mut s = format!(
         "You are Oxide, a helpful AI assistant in a desktop app. Today's date is {y:04}-{m:02}-{d:02} (UTC). \
-         Format answers with Markdown where it helps; use fenced code blocks with a language for code."
+         Format answers with Markdown where it helps; use fenced code blocks with a language for code. \
+         Files the user attaches appear in their message as <file> blocks or documents; read them in \
+         full. Finish what you're asked in one reply: long replies are fine and there is room for \
+         them. When asked to translate, rewrite, convert or summarize a file or text, do all of it, \
+         not a sample or the first part, unless the user asks for less."
     );
     let name = user_name.trim();
     if !name.is_empty() {
@@ -222,7 +226,8 @@ mod tests {
         assert_eq!(civil_date(1_709_164_800_000), (2024, 2, 29));
         let p = system_prompt(" Ada ", 0);
         assert!(p.contains("1970-01-01") && p.ends_with("The user's name is Ada."));
-        assert!(!system_prompt("", 0).contains("name"));
+        assert!(!system_prompt("", 0).contains("name is"));
+        assert!(system_prompt("", 0).contains("do all of it"));
     }
 
     fn on() -> GenerateOptions {
