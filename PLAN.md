@@ -214,6 +214,10 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
   - Text and code files are inlined with filename headers.
   - Size limits shown in the UI.
 - Message actions: copy (Markdown), retry, edit, feedback (stored locally). Token and usage tooltip.
+- **Thinking effort control** (requested after Phase 3; same idea as Claude desktop's Low / Medium / High / Extra / Max). Per model in the composer:
+  - Anthropic: `output_config.effort`, with the levels from the Models API `capabilities.effort`.
+  - OpenAI reasoning models: `reasoning_effort`.
+  - LM Studio / Strata: whatever the server honors (tested first). At least thinking on/off.
 - Search modal (Ctrl+K) across titles and content.
 - Export a conversation as Markdown or JSON.
 - Scroll anchoring and a "jump to latest" button. Accessibility pass (focus rings, ARIA on composer and menus).

@@ -7,7 +7,7 @@ const model = (providerId: string, name: string, tools = true): ModelInfo => ({
   providerId,
   model: name,
   label: name,
-  capabilities: { tools, thinking: "none", images: false, pdfs: false },
+  capabilities: { tools, thinking: "none", thinkingOff: false, images: false, pdfs: false },
   contextWindow: null,
   maxOutputTokens: null,
 });

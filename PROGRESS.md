@@ -28,14 +28,20 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 3 — LLM layer & streaming chat — 2026-11-05
-Status: code complete. The library crates (core, store, llm, agent: 111 tests) build, test and pass clippy on the Linux side; frontend typecheck, lint and prettier pass on the device. `scripts\win\phase3.cmd` runs every check on Windows, commits when green and starts the app.
+Status: done. `scripts\win\phase3.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test 119/119, typecheck, lint, vitest 57/57) and committed `phase 3: LLM layer & streaming chat`. Before that, the first run showed one flaky Vitest test, which checked the thinking toggle before the model list had loaded; the test now waits for it. The manual exit checks below are still open.
 
-Exit criteria, to check by hand in `cargo tauri dev` (needs a key or a running server for each):
-- [ ] Anthropic: streaming, Stop, Retry (regenerate) and edit-and-resend; with extended thinking on, a "Thinking" line streams and becomes "Thought for Ns".
-- [ ] OpenAI: same, with a model such as gpt-4.1-mini.
-- [ ] LM Studio: same, with a tool-capable model loaded (e.g. qwen3).
-- [ ] Strata: models appear after the one-time tool probe; streaming and Stop work.
-- [ ] A new chat gets an automatic title after the first reply.
+Exit criteria, checked by hand in `cargo tauri dev` on 2026-11-05:
+- [x] **Strata** with Qwen 3.8 Flash Next (`swift-iq2_xs`, 128k context):
+  - It passed the tool probe and appears in the picker.
+  - Streaming, Stop (partial text kept), Retry and edit-and-resend all work.
+  - Its own reasoning stream shows as "Thought for Ns".
+- [x] **Automatic titles:** "Hello there!" became "Hello Greeting" after the first reply.
+- [~] **Anthropic** (partly checked):
+  - Bearer auth, API version 2026-10-21 and the model list work, and the request reaches the Messages API.
+  - Replies are blocked by billing: the API answered 400 "credit balance is too low". The user's claude.ai Pro plan doesn't include API usage; Console credits are separate.
+  - Oxide showed this as a failed reply with Retry. Retrying the same message on Strata worked.
+  - Streaming and thinking on Anthropic are still to check once there are credits.
+- [ ] **OpenAI and LM Studio:** not run (no key / server this session). They use the same OpenAI-compatible client that Strata verified, and its tests cover their differences: `max_completion_tokens`, `stream_options` and LM Studio's `/api/v0/models`.
 
 Done:
 - **`oxide-core`:**
@@ -94,6 +100,15 @@ Deviations from PLAN.md (and why):
 - **LM Studio without `/api/v0`** (older versions) lists its models as "no tools" rather than probing, because probing would load every model.
 - **The system prompt is a minimal placeholder** (Phase 6 builds the real one). Its date is UTC, because there's no time zone crate yet.
 
+Fix after the first Windows run:
+- **Claude Opus 5.5 always thinks:** it answers 400 to `thinking: {"type": "disabled"}`. Oxide sent that whenever the thinking toggle was off, so every Opus 5.5 chat would have failed.
+  - `ModelCapabilities.thinkingOff` now comes from the Models API (`thinking.types.disabled.supported`). `disabled` is only sent when the model accepts it; otherwise the model's default applies.
+  - The title request follows the same rule.
+  - Source: the effort docs, https://platform.claude.com/docs/en/build-with-claude/effort.
+
+User request (for Phase 4):
+- **A thinking-effort control** like Claude desktop's (Low / Medium / High / Extra / Max). Qwen on Strata thinks for a long time on simple prompts. Added to PLAN.md Phase 4.
+
 Known issues / TODO carried forward:
 - **Tool calls aren't run (Phase 6).** They stream and are saved, and the UI says Oxide doesn't run tools yet. Tool blocks are dropped from the history sent to models until Phase 6.
 - **Phase 4 work still open:**
@@ -109,6 +124,11 @@ Known issues / TODO carried forward:
 - **Vitest output:** the fake backend emits events from timers, so React may log "not wrapped in act(...)" warnings in test output. They're harmless.
 
 Notes for Phase 4:
+- **Effort control** (see PLAN.md Phase 4):
+  - Anthropic: `output_config.effort` (`low|medium|high|xhigh|max`). Supported levels per model are in the Models API `capabilities.effort`. Defaults are `high`, or `medium` on Opus 5.5 and Haiku 5.5. Some combinations return 400: thinking `disabled` at `xhigh`/`max` (Opus 5, Haiku 5.5), and Sonnet 5.5's `between_tools` above `high`.
+  - OpenAI reasoning models: `reasoning_effort`.
+  - Local servers: first test what Strata and LM Studio honor (`reasoning_effort`, Qwen's `chat_template_kwargs.enable_thinking`, or a `/no_think` prompt switch). Offer only what works; at least on/off.
+  - The thinking toggle's tooltip should also say when a model always thinks (`thinking: adaptive` without `thinkingOff`).
 - **Markdown:** the live reply re-renders `Prose` about 25 times a second (the backend batches deltas every 40 ms). The Markdown renderer must handle partial input (an open code fence, half a table) without layout jumps.
 - **Branch navigator:** `activeThread(messages, leafId)` already takes a leaf. Keep the chosen leaf per chat in the UI, and pass it when sending (`parentId`).
 - **Attachments:**
@@ -125,7 +145,7 @@ Notes for Phase 6:
   - `ChatEvent::ToolUse*` streams the arguments.
 - Approvals can pause inside `ChatService` and resume through a new command. The `cancelled` watch channel already gives clean cancellation.
 
-Verified: clippy ✅ tests ✅ (library crates on Linux; full workspace pending on Windows) typecheck ✅ lint ✅ prettier ✅ — Windows run and manual exit checks pending
+Verified: clippy ✅ tests ✅ typecheck ✅ lint ✅ (Windows, phase3.cmd). tauri dev on Windows ✅ (Strata end to end; Anthropic up to billing).
 
 ## Phase 2 — Persistence, settings & secrets — 2026-11-05
 Status: done. All checks pass on Windows via `scripts\win\phase2.cmd` (fmt, prettier, clippy, cargo test 58/58 including the Credential Manager round trip, typecheck, lint, vitest 39/39). Committed as `phase 2: persistence, settings & secrets`.
@@ -203,6 +223,15 @@ Deviations from PLAN.md (and why):
   - `scripts\win\phase2-fetch.cmd` runs `cargo vendor` on a scratch manifest and writes `logs\linux-vendor.tgz`.
   - The agent unpacks it in its cloud container and builds/tests core/store/llm offline (`CARGO_TARGET_DIR=$HOME/oxide-target-linux`). `src-tauri` still only builds on Windows.
   - specta-macros isn't in that bundle, so the Linux side patches in a no-op stub; type export only runs on Windows.
+
+Fix after the first Windows run:
+- **Claude Opus 5.5 always thinks:** it answers 400 to `thinking: {"type": "disabled"}`. Oxide sent that whenever the thinking toggle was off, so every Opus 5.5 chat would have failed.
+  - `ModelCapabilities.thinkingOff` now comes from the Models API (`thinking.types.disabled.supported`). `disabled` is only sent when the model accepts it; otherwise the model's default applies.
+  - The title request follows the same rule.
+  - Source: the effort docs, https://platform.claude.com/docs/en/build-with-claude/effort.
+
+User request (for Phase 4):
+- **A thinking-effort control** like Claude desktop's (Low / Medium / High / Extra / Max). Qwen on Strata thinks for a long time on simple prompts. Added to PLAN.md Phase 4.
 
 Known issues / TODO carried forward:
 - **No replies yet:** sending saves the message only. Phase 3 adds streaming and assistant messages via `Store::add_message`.
@@ -282,6 +311,15 @@ Deviations from PLAN.md (and why):
 - **Window/webview APIs** are used directly from `@tauri-apps/api`, through `src/lib/window.ts` only. CLAUDE.md updated.
 - **Versions:** react-router 7.18, zustand 5.0, radix-ui 1.8 (unified package), lucide-react 1.69 (ISC).
 
+Fix after the first Windows run:
+- **Claude Opus 5.5 always thinks:** it answers 400 to `thinking: {"type": "disabled"}`. Oxide sent that whenever the thinking toggle was off, so every Opus 5.5 chat would have failed.
+  - `ModelCapabilities.thinkingOff` now comes from the Models API (`thinking.types.disabled.supported`). `disabled` is only sent when the model accepts it; otherwise the model's default applies.
+  - The title request follows the same rule.
+  - Source: the effort docs, https://platform.claude.com/docs/en/build-with-claude/effort.
+
+User request (for Phase 4):
+- **A thinking-effort control** like Claude desktop's (Low / Medium / High / Extra / Max). Qwen on Strata thinks for a long time on simple prompts. Added to PLAN.md Phase 4.
+
 Known issues / TODO carried forward:
 - **Mock data.** Chats, projects, artifacts and models are mock data (`features/mock/*`). Phase 2 replaces the store; components read through it, so the swap stays local.
 - **Placeholder controls.** The model list, connectors and web search toggles are UI only. Attachments show chips but aren't read.
@@ -356,6 +394,15 @@ Deviations from PLAN.md:
 - `rust-version` is 1.90, not 1.85. Cargo's MSRV-aware resolver had held Tauri at 2.11 to match 1.85, which mismatched `@tauri-apps/api` 2.12. Tauri 2.12 needs Rust 1.90.
 - tauri-specta stays pinned at `=2.0.0-rc.21` with `specta =2.0.0-rc.22` and `specta-typescript 0.0.9`. Newer RCs exist (tauri-specta rc.26, specta rc.28, specta-typescript 0.0.15), but rc.21 works and its export API is the one in use. Upgrade deliberately in a later phase if something needs it.
 - Windows dev scripts were added (not in the plan) because builds can't run from the agent side.
+
+Fix after the first Windows run:
+- **Claude Opus 5.5 always thinks:** it answers 400 to `thinking: {"type": "disabled"}`. Oxide sent that whenever the thinking toggle was off, so every Opus 5.5 chat would have failed.
+  - `ModelCapabilities.thinkingOff` now comes from the Models API (`thinking.types.disabled.supported`). `disabled` is only sent when the model accepts it; otherwise the model's default applies.
+  - The title request follows the same rule.
+  - Source: the effort docs, https://platform.claude.com/docs/en/build-with-claude/effort.
+
+User request (for Phase 4):
+- **A thinking-effort control** like Claude desktop's (Low / Medium / High / Extra / Max). Qwen on Strata thinks for a long time on simple prompts. Added to PLAN.md Phase 4.
 
 Known issues / TODO carried forward:
 - npm 12 blocked esbuild's postinstall script (`allowScripts`). Vite works because esbuild ships its binary as an optional package. Revisit if esbuild ever fails to start.

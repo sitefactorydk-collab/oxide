@@ -112,7 +112,9 @@ pub fn plan_request(
     let normal = model_max.min(REPLY_MAX_OUTPUT);
     let (thinking, max) = match (caps.thinking, thinking_on) {
         (ThinkingStyle::Adaptive, true) => (Thinking::Adaptive, normal),
-        (ThinkingStyle::Adaptive, false) => (Thinking::Off, normal),
+        // Only models that accept it are told not to think; the others use their default.
+        (ThinkingStyle::Adaptive, false) if caps.thinking_off => (Thinking::Off, normal),
+        (ThinkingStyle::Adaptive, false) => (Thinking::Default, normal),
         (ThinkingStyle::Budget, true) => {
             let max = model_max.min(normal.max(budget.saturating_add(ANSWER_ROOM)));
             let budget = budget.min(max.saturating_sub(ANSWER_ROOM.min(max / 2)));
@@ -251,8 +253,27 @@ mod tests {
         );
         assert_eq!(req.thinking, Thinking::Default);
 
+        let always_thinks = ModelCapabilities {
+            thinking: ThinkingStyle::Adaptive,
+            ..ModelCapabilities::default()
+        };
+        plan_request(
+            &mut req,
+            ProviderKind::Anthropic,
+            &always_thinks,
+            Some(128_000),
+            false,
+            8_000,
+        );
+        assert_eq!(
+            req.thinking,
+            Thinking::Default,
+            "no `disabled` for always-on thinking"
+        );
+
         let adaptive = ModelCapabilities {
             thinking: ThinkingStyle::Adaptive,
+            thinking_off: true,
             ..ModelCapabilities::default()
         };
         plan_request(

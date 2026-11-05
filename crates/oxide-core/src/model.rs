@@ -26,6 +26,10 @@ pub struct ModelCapabilities {
     /// Native function / tool calling. Models without it are hidden by default.
     pub tools: bool,
     pub thinking: ThinkingStyle,
+    /// Thinking can be switched off with an explicit `disabled` request. Some models that
+    /// always think reject that (Claude Opus 5.5 answers 400), so it's only sent when the
+    /// provider says it's supported.
+    pub thinking_off: bool,
     pub images: bool,
     pub pdfs: bool,
 }

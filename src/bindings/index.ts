@@ -405,7 +405,13 @@ export type ModelCapabilities = {
 /**
  * Native function / tool calling. Models without it are hidden by default.
  */
-tools: boolean; thinking: ThinkingStyle; images: boolean; pdfs: boolean }
+tools: boolean; thinking: ThinkingStyle; 
+/**
+ * Thinking can be switched off with an explicit `disabled` request. Some models that
+ * always think reject that (Claude Opus 5.5 answers 400), so it's only sent when the
+ * provider says it's supported.
+ */
+thinkingOff: boolean; images: boolean; pdfs: boolean }
 /**
  * A model the picker can offer.
  */

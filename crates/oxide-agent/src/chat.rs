@@ -482,7 +482,10 @@ impl ChatService {
             // Reasoning models spend output tokens before the answer.
             _ => 1_024,
         });
-        if config.kind == ProviderKind::Anthropic && caps.thinking == ThinkingStyle::Adaptive {
+        if config.kind == ProviderKind::Anthropic
+            && caps.thinking == ThinkingStyle::Adaptive
+            && caps.thinking_off
+        {
             request.thinking = Thinking::Off;
         }
         let text = complete_text(provider.as_ref(), request).await?;

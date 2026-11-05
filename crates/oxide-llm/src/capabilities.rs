@@ -29,6 +29,7 @@ pub fn anthropic_curated(id: &str) -> ModelCapabilities {
         } else {
             ThinkingStyle::None
         },
+        thinking_off: false,
         images: modern,
         pdfs: modern && point_five_plus,
     }
@@ -57,6 +58,7 @@ pub fn anthropic_from_api(id: &str, capabilities: Option<&Value>) -> ModelCapabi
             Some(true) => {
                 let types = thinking.get("types");
                 let adaptive = supported(types.and_then(|t| t.get("adaptive")));
+                caps.thinking_off = supported(types.and_then(|t| t.get("disabled"))) == Some(true);
                 let enabled = supported(types.and_then(|t| t.get("enabled")));
                 match (adaptive, enabled) {
                     (Some(true), _) => ThinkingStyle::Adaptive,
@@ -132,6 +134,7 @@ pub fn openai_curated(id: &str) -> OpenAiModel {
     OpenAiModel::Chat(ModelCapabilities {
         tools: !no_tools,
         thinking: ThinkingStyle::None,
+        thinking_off: false,
         images,
         pdfs: false,
     })
@@ -152,6 +155,7 @@ pub fn lmstudio_from_native(entry: &Value) -> Option<ModelCapabilities> {
     Some(ModelCapabilities {
         tools: has("tool_use") || has("trained_for_tool_use"),
         thinking: ThinkingStyle::None,
+        thinking_off: false,
         images: kind == "vlm" || has("vision"),
         pdfs: false,
     })
@@ -196,6 +200,12 @@ mod tests {
         });
         let c = anthropic_from_api("claude-opus-5-5", Some(&caps));
         assert_eq!(c.thinking, ThinkingStyle::Adaptive);
+        // `disabled` not reported as supported: never send it.
+        assert!(!c.thinking_off);
+        let switchable = json!({"thinking": {"supported": true, "types": {
+            "adaptive": {"supported": true}, "disabled": {"supported": true}
+        }}});
+        assert!(anthropic_from_api("claude-haiku-5-5", Some(&switchable)).thinking_off);
         assert!(!c.pdfs);
         assert!(c.tools);
 

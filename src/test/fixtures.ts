@@ -164,7 +164,13 @@ function model(
     providerId,
     model: name,
     label,
-    capabilities: { tools, thinking, images: providerId === "anthropic", pdfs: false },
+    capabilities: {
+      tools,
+      thinking,
+      thinkingOff: false,
+      images: providerId === "anthropic",
+      pdfs: false,
+    },
     contextWindow: null,
     maxOutputTokens: null,
   };
