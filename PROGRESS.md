@@ -3,7 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 4 — Chat UX completeness (committed `ffa1146`; follow-up fixes in `phase4-fix.cmd`, see Phase 4 below)
+- **Last completed:** Phase 4 — Chat UX completeness (`ffa1146`, follow-up fixes `fb6276d`; both confirmed by the user)
 - **Next phase:** Phase 5 — MCP client
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -87,7 +87,7 @@ Done:
 
 Fixes after the manual check (`scripts\win\phase4-fix.cmd`, commits when green):
 - **"+" menu:** the two-line limits text overlapped the divider because menu rows had a fixed 32 px height. Rows now grow to fit (`min-h-8 py-1.5` in `components/ui/Menu.tsx`; also helps the Effort menu's two-line items).
-- **"I can't translate the whole PDF in one reply":** a 2-page PDF to Qwen on Strata (128k context) got a "sample" translation. That's the model's choice, not a limit: Oxide sends no output cap to local servers. The system prompt now says attached files are read in full and translate/rewrite/convert/summarize requests are done completely unless the user asks for less. `scripts\win\pdf-check.ps1` (run by `phase4-fix.cmd`) logs the extracted text's size and shape for the latest PDFs and Strata's `/props` to `logs\pdf-check.log`, to rule out garbled extraction or a small server-side output default. If it still happens: check that log, and consider sending an explicit `max_tokens` to local servers.
+- **"I can't translate the whole PDF in one reply":** a 2-page PDF to Qwen on Strata (128k context) got a "sample" translation. That's the model's choice, not a limit: Oxide sends no output cap to local servers. The system prompt now says attached files are read in full and translate/rewrite/convert/summarize requests are done completely unless the user asks for less. `scripts\win\pdf-check.ps1` (run by `phase4-fix.cmd`) logs the extracted text's size and shape for the latest PDFs and Strata's `/props` to `logs\pdf-check.log`, to rule out garbled extraction or a small server-side output default. Result (`fb6276d`, retested by the user in a new chat): the whole PDF was translated, and the menu fix works. `logs\pdf-check.log` showed the extraction was clean (2 pages, 3,605 characters, about 900 tokens of readable text), so the system prompt was the fix. Strata has no llama.cpp-style `/props` (it serves its web UI there), so its default output length is unknown; if a reply ever stops short, consider sending an explicit `max_tokens` to local servers.
 
 Deviations from PLAN.md (and why):
 - **Local servers get on/off only**, and only Strata (tested); see the table above.
