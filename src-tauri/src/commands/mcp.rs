@@ -78,7 +78,7 @@ pub async fn mcp_set_enabled(
 
 #[tauri::command]
 #[specta::specta]
-pub fn mcp_restart(state: State<'_, AppState>, name: String) -> CmdResult<()> {
+pub async fn mcp_restart(state: State<'_, AppState>, name: String) -> CmdResult<()> {
     Ok(state.mcp.restart(&name)?)
 }
 

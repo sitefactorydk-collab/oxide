@@ -149,6 +149,12 @@ function ToolRunner({ server, tool }: { server: string; tool: McpTool }) {
   const clearProgress = useMcpUi((s) => s.clearProgress);
 
   const run = async () => {
+    const problem = argumentsProblem(args);
+    if (problem) {
+      setResult(null);
+      setError(problem);
+      return;
+    }
     callSeq += 1;
     const t = `debug-${callSeq}`;
     setToken(t);
@@ -218,6 +224,26 @@ function ToolRunner({ server, tool }: { server: string; tool: McpTool }) {
       )}
     </div>
   );
+}
+
+/** Why `text` can't be sent as tool arguments, or `null` if it can. */
+function argumentsProblem(text: string): string | null {
+  if (!text.trim()) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // A Windows path pasted as is ("C:\Users") is the usual cause.
+    const hint = /\\[^"\\/bfnrtu]/.test(text)
+      ? ' In JSON a backslash must be doubled ("C:\\\\Users"), or use forward slashes ("C:/Users").'
+      : "";
+    return `The arguments aren't valid JSON: ${msg}.${hint}`;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return 'The arguments must be a JSON object, like { "name": "value" }.';
+  }
+  return null;
 }
 
 /** Renders tool results, resources and prompt messages. */

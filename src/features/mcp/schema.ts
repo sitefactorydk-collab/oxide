@@ -27,7 +27,18 @@ function skeleton(schema: Schema, depth: number): Json {
   if ("default" in schema) return schema.default as Json;
   const en = schema.enum;
   if (Array.isArray(en) && en.length > 0) return en[0] as Json;
-  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  // "Either/or" schemas: use the first choice that isn't null.
+  for (const key of ["anyOf", "oneOf"] as const) {
+    const choices = schema[key];
+    if (Array.isArray(choices)) {
+      const first = choices.map(asSchema).find((c) => c !== undefined && c.type !== "null");
+      if (first) return skeleton({ ...first, ...withoutChoices(schema) }, depth);
+    }
+  }
+  const types = Array.isArray(schema.type)
+    ? (schema.type as unknown[]).filter((t) => t !== "null")
+    : [schema.type];
+  const type = types[0];
   switch (type) {
     case "string":
       return "";
@@ -52,6 +63,14 @@ function skeleton(schema: Schema, depth: number): Json {
     default:
       return null;
   }
+}
+
+/** A schema's own keywords without its `anyOf` / `oneOf` choices. */
+function withoutChoices(schema: Schema): Schema {
+  const rest = { ...schema };
+  delete rest.anyOf;
+  delete rest.oneOf;
+  return rest;
 }
 
 /** One field of an elicitation form (MCP limits these to flat primitive properties). */

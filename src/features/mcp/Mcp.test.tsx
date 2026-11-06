@@ -76,6 +76,23 @@ describe("Settings → Connectors", () => {
     expect(fakeMcpState().calls[0]?.token).toMatch(/^debug-/);
   });
 
+  it("explains Windows paths when the arguments aren't valid JSON", async () => {
+    renderApp("/settings/connectors");
+    const everything = await card("everything");
+    fireEvent.click(within(everything).getByRole("button", { name: "Show everything details" }));
+    fireEvent.click(
+      await within(everything).findByRole("button", { name: "Open the runner for echo" }),
+    );
+    fireEvent.change(within(everything).getByLabelText("Arguments (JSON)"), {
+      target: { value: '{"message": "C:\\AI Apps\\Oxide"}' },
+    });
+    fireEvent.click(within(everything).getByRole("button", { name: "Run echo" }));
+    expect(await within(everything).findByRole("alert")).toHaveTextContent(
+      "a backslash must be doubled",
+    );
+    expect(fakeMcpState().calls).toEqual([]);
+  });
+
   it("imports servers from Claude desktop", async () => {
     renderApp("/settings/connectors");
     await card("everything");

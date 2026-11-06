@@ -112,6 +112,9 @@ struct Inner {
     watcher: Mutex<Option<JoinHandle<()>>>,
     shutting_down: AtomicBool,
     next_gen: AtomicU64,
+    /// The runtime servers run on, so they can be started from any thread (a synchronous
+    /// Tauri command runs on the main thread, outside the runtime).
+    runtime: Mutex<Option<tokio::runtime::Handle>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -149,12 +152,14 @@ impl McpManager {
                 watcher: Mutex::new(None),
                 shutting_down: AtomicBool::new(false),
                 next_gen: AtomicU64::new(1),
+                runtime: Mutex::new(tokio::runtime::Handle::try_current().ok()),
             }),
         }
     }
 
     /// Loads the config, starts the enabled servers and watches the file for edits.
     pub async fn start(&self) -> Result<(), McpError> {
+        *lock(&self.inner.runtime) = Some(tokio::runtime::Handle::current());
         let loaded = self.inner.file.load().await;
         let result = match loaded {
             Ok(cfg) => {
@@ -653,7 +658,14 @@ impl Inner {
         let inner = self.clone();
         let task_name = name.to_owned();
         let task_config = config.clone();
-        let task = tokio::spawn(async move {
+        let runtime = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(|| lock(&self.runtime).clone());
+        let Some(runtime) = runtime else {
+            tracing::error!("MCP server {name} can't start: no async runtime");
+            return;
+        };
+        let task = runtime.spawn(async move {
             supervise(inner, task_name, generation, task_config, stop_rx).await;
         });
         self.update(name, generation, move |s| {

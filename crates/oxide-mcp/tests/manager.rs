@@ -315,3 +315,32 @@ async fn failing_servers_report_and_stop_retrying() {
     assert!(bad.error.expect("why").contains("command"));
     m.shutdown().await;
 }
+
+/// Tauri runs synchronous commands on the main thread, outside the runtime: restarting from
+/// there must not panic ("no reactor running").
+#[tokio::test]
+async fn restart_works_from_a_thread_outside_the_runtime() {
+    let s = setup(json!({"mcpServers": {"modern": mock_entry("modern")}})).await;
+    let m = s.manager.clone();
+    assert!(wait_status(&m, "modern", McpStatus::Running).await);
+    let from_thread = m.clone();
+    std::thread::spawn(move || from_thread.restart("modern"))
+        .join()
+        .expect("the thread doesn't panic")
+        .expect("restarts");
+    assert!(
+        wait_status(&m, "modern", McpStatus::Running).await,
+        "{:?}",
+        m.logs("modern")
+    );
+    assert!(
+        m.logs("modern")
+            .iter()
+            .filter(|l| l.text.starts_with("connected"))
+            .count()
+            >= 2,
+        "{:?}",
+        m.logs("modern")
+    );
+    m.shutdown().await;
+}
