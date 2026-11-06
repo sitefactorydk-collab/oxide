@@ -15,6 +15,8 @@ export type ToolStatus =
   | "ready"
   /** Waiting for the user to allow or deny it. */
   | "awaitingApproval"
+  /** Allowed; runs once the other calls of the step are answered. */
+  | "approved"
   | "running"
   | "done"
   | "error";
@@ -68,6 +70,8 @@ interface StreamsState {
   failures: Record<string, ReplyFailure>;
   apply: (e: ChatStreamEvent, now?: number) => void;
   clearFailure: (conversationId: string) => void;
+  /** Closes an approval card as soon as the user answers it. */
+  markAnswered: (conversationId: string, toolUseId: string, allowed: boolean) => void;
 }
 
 type Maps = Pick<StreamsState, "live" | "failures">;
@@ -155,7 +159,8 @@ export function reduceStream(
         id: event.id,
         name: event.name,
         server: null,
-        tool: event.name,
+        // `server__tool` until the backend says which server it is.
+        tool: event.name.includes("__") ? event.name.split("__").slice(1).join("__") : event.name,
         title: null,
         inputJson: "",
         status: "streaming",
@@ -232,6 +237,17 @@ export const useStreams = create<StreamsState>()((set) => ({
   failures: {},
   apply: (e, now = Date.now()) => set((s) => reduceStream(s, e, now)),
   clearFailure: (id) => set((s) => ({ failures: without(s.failures, id) })),
+  markAnswered: (id, toolUseId, allowed) =>
+    set((s) => {
+      const live = s.live[id];
+      if (!live) return s;
+      const blocks = updateTool(live.blocks, toolUseId, (c) =>
+        c.status === "awaitingApproval"
+          ? { ...c, approval: null, status: allowed ? "approved" : "ready" }
+          : c,
+      );
+      return { live: { ...s.live, [id]: { ...live, blocks } } };
+    }),
 }));
 
 /** Resets the store (tests). */

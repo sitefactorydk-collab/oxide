@@ -3,7 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 6 — Agent loop, approvals & built-in tools (code and checks; manual exit check pending, see the Phase 6 section)
+- **Last completed:** Phase 6 — Agent loop, approvals & built-in tools (`144a11d`; main exit check passed on Strata on 2026-11-06, see the Phase 6 section for what's still open)
 - **Next phase:** Phase 7 — Projects & memory
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -28,11 +28,19 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 6 — Agent loop, approvals & built-in tools — 2026-11-06
-Status: code done; Linux-side Rust checks pass (fmt, clippy `-D warnings`, cargo test for core/store/llm/agent/mcp), typecheck and lint pass. `scripts\win\phase6.cmd` runs every check on Windows and commits `phase 6: agent loop, approvals & built-in tools` when green, then starts the app.
+Status: done. `scripts\win\phase6.cmd` passed every check on Windows on the second run and committed `144a11d phase 6: agent loop, approvals & built-in tools`. The first run failed typecheck only: the generated bindings mark `ToolUse.server`/`tool` optional (`server?: string | null`, from `#[serde(default)]`), unlike the hand-edited copy; `toolView.ts` now uses `b.server ?? null`.
+
+Manual check by the user on 2026-11-06 (screen recording), Strata `swift-iq2_xs`, prompt “please get me the current Copenhagen time and show me the files in C:/AI Apps/Oxide/docs, and finally give me a summary of this web page https://maxroll.gg/d4”:
+- The model called `time` → `get_current_time`, `filesystem` → `list_directory` and `web_fetch` in one step. Two approval cards appeared (arguments, descriptions, three buttons); `web_fetch` ran without asking. After approval the calls ran.
+- It chained two more steps on its own: listed the `ui-parity` subfolder (the “Allow always” choice let that run without a second card) and fetched maxroll.gg again, noticing the page is mostly JavaScript-rendered. Six tool calls over three steps, then a full answer: 21:16 Copenhagen time (UTC+01:00), the docs listing with the four PNGs, and a summary of the page.
+- The chat was titled automatically (“Copenhagen Time Files and D4 Summary”), tool lines collapsed to one row each (“Read maxroll.gg”, “List Directory C:/AI Apps/Oxide/docs · filesystem”).
+- Before the first output the reply showed “Working” for about 30 s (Qwen thinking on a local model; not a tool-loop delay).
+- Cosmetic fix after the check: while a call's arguments stream, its line showed the raw `filesystem__list_directory`; it now shows the tool part until the server is known.
+- **Bug found in the check:** clicking “Allow always for this chat” on the first card seemed to do nothing. The answer was received, but the loop collects every approval of a step before running the calls, and a card only closed when its call started (`toolRunning`), i.e. after the *last* card of the step was answered. Cards now close as soon as they're answered (`useStreams.markAnswered`, status `approved`, shown as “Allowed” until the call runs). Fixed by `scripts\win\phase6-fix.cmd`.
 
 Exit criteria (check by hand in `cargo tauri dev`):
-- [ ] A model chains several MCP and web tools with approvals in one turn. Suggested prompt with the `docs\mcp-test-servers.json` servers: “What time is it in Copenhagen, which files are in C:/AI Apps/Oxide/docs, and what does https://modelcontextprotocol.io say MCP is? Use your tools.” Expect approval cards for `time` and `filesystem`, a web fetch without asking, and a final answer.
-  - On **Strata** (works today) and on an **LM Studio** model (start its server first).
+- [x] A model chains several MCP and web tools with approvals in one turn (Strata; see above). Suggested prompt with the `docs\mcp-test-servers.json` servers: “What time is it in Copenhagen, which files are in C:/AI Apps/Oxide/docs, and what does https://modelcontextprotocol.io say MCP is? Use your tools.” Expect approval cards for `time` and `filesystem`, a web fetch without asking, and a final answer.
+  - [x] On **Strata**. [ ] On an **LM Studio** model (not run: its server wasn't started).
   - On **Anthropic** once the account has API credits (the Anthropic path is covered by tests, incl. server-side web search and `pause_turn`).
 - [ ] **Stop mid-loop** while an approval card waits, and while a tool runs: the reply is saved as “Stopped.”, the call shows “Didn’t run”, and the next message works.
 - [ ] Settings → Permissions: “Run read-only connector tools without asking” skips the card for `readOnlyHint` tools; the step limit stops a reply with a note.
@@ -84,7 +92,9 @@ Notes for Phase 7:
 - The system prompt already has slots: `PromptContext.project_instructions` (filled from the chat’s project) and `memory` (`None` today). Knowledge search can be a built-in tool next to `web_search` in `tools/mod.rs` (`Builtin` enum + `builtin_entry`).
 - Tool calls are logged per chat in `tool_usage`; Phase 11’s session panel reads `tool_usage` and can extend `usageRows`.
 
-Verified: clippy ✅ tests ✅ (Linux: library crates) typecheck ✅ lint ✅ (agent side) — Windows run of `phase6.cmd` and the manual exit check pending.
+Still to check by hand (not in the recording): Stop mid-loop, the read-only auto-allow switch and step limit, Settings → Web search with a real key/SearXNG, the “+” menu switch, LM Studio, and Anthropic once there are API credits.
+
+Verified: clippy ✅ tests ✅ typecheck ✅ lint ✅ (Windows, phase6.cmd) tauri dev on Windows ✅ (Strata tool chain with approvals, by the user).
 
 ## Phase 5 — MCP client — 2026-11-05/06
 Status: done. `scripts\win\phase5.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test, typecheck, lint, Vitest) and committed `phase 5: MCP client` (`42328f1`, then `bf6cb29` with the fixes below). The user ran the exit check by hand the same evening.

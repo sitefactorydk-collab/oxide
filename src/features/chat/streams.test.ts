@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatStreamEvent, Message, StreamEvent, ToolApprovalRequest } from "@/bindings";
-import { liveText, liveThinking, reduceStream } from "./streams";
+import { liveText, liveThinking, reduceStream, resetStreams, useStreams } from "./streams";
 
 const ev = (event: StreamEvent, conversationId = "c1"): ChatStreamEvent => ({
   conversationId,
@@ -99,5 +99,18 @@ describe("reduceStream", () => {
     s = reduceStream(s, ev({ type: "textDelta", text: "other" }, "c2"), 2);
     expect(s.live["c1"]?.blocks).toEqual([]);
     expect(s.live["c2"]).toBeUndefined();
+  });
+
+  it("closes an approval card as soon as it is answered", () => {
+    resetStreams();
+    const { apply, markAnswered } = useStreams.getState();
+    apply(started, 1);
+    apply(ev({ type: "toolUse", id: "t", name: "time__now" }), 2);
+    const request = { toolUseId: "t", conversationId: "c1" } as ToolApprovalRequest;
+    apply(ev({ type: "toolApproval", request }), 3);
+    markAnswered("c1", "t", true);
+    const b = useStreams.getState().live["c1"]?.blocks[0];
+    expect(b?.kind === "tool" && b.call.status).toBe("approved");
+    expect(b?.kind === "tool" && b.call.approval).toBe(null);
   });
 });

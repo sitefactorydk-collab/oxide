@@ -178,7 +178,11 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
 /** The line shown for a call: a verb phrase and a detail. */
 export function callHeadline(call: ToolCallView): { action: string; detail: string } {
   const detail = callDetail(call);
-  const busy = call.status === "streaming" || call.status === "ready" || call.status === "running";
+  const busy =
+    call.status === "streaming" ||
+    call.status === "ready" ||
+    call.status === "approved" ||
+    call.status === "running";
   switch (toolKind(call)) {
     case "search":
       return { action: busy ? "Searching the web" : "Searched the web", detail };

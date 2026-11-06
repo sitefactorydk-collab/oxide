@@ -11,7 +11,7 @@ import {
 import { useState } from "react";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
-import type { ToolCallView } from "@/features/chat/streams";
+import { useStreams, type ToolCallView } from "@/features/chat/streams";
 import { useMcpUi } from "@/features/mcp/store";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -42,6 +42,8 @@ function StatusBadge({ call }: { call: ToolCallView }) {
       );
     case "awaitingApproval":
       return <span className="shrink-0 text-sm text-accent">Needs your approval</span>;
+    case "approved":
+      return <span className="shrink-0 text-sm text-fg-subtle">Allowed</span>;
     case "error":
       return (
         <span className="inline-flex shrink-0 items-center gap-1 text-sm text-danger">
@@ -106,12 +108,17 @@ export function ToolResultView({
 export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
   const answer = useAnswerApproval();
   const name = request.title ?? request.tool;
-  const send = (decision: ApprovalDecision) =>
+  const send = (decision: ApprovalDecision) => {
+    // Close the card at once: the call runs when the step's other calls are answered.
+    useStreams
+      .getState()
+      .markAnswered(request.conversationId, request.toolUseId, decision !== "deny");
     answer.mutate({
       conversationId: request.conversationId,
       toolUseId: request.toolUseId,
       decision,
     });
+  };
   const Icon = request.destructive ? ShieldAlert : ShieldCheck;
   return (
     <div
