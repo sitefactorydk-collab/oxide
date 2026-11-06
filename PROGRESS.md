@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 4 — Chat UX completeness (`ffa1146`, follow-up fixes `fb6276d`; both confirmed by the user)
-- **In progress:** Phase 5 — MCP client (code done; Windows checks and manual exit check open)
+- **Last completed:** Phase 5 — MCP client (`42328f1`, `bf6cb29`; exit check confirmed by the user on 2026-11-06)
 - **Next phase:** Phase 6 — Agent loop, approvals & built-in tools
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -29,11 +28,21 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 5 — MCP client — 2026-11-05/06
-Status: code done; Linux checks green; the Windows checks (`scripts\win\phase5.cmd`) and the manual exit check are still open.
+Status: done. `scripts\win\phase5.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test, typecheck, lint, Vitest) and committed `phase 5: MCP client` (`42328f1`, then `bf6cb29` with the fixes below). The user ran the exit check by hand the same evening.
 
-Exit criteria (manual, in `cargo tauri dev`; paste `docs\mcp-test-servers.json` into Settings → Developer, or add the servers by hand):
-- [ ] The reference "everything" server (`npx`), the filesystem server (`npx`) and a `uvx` Python server (`mcp-server-time`) connect on Windows, list tools, and run calls from the debug panel (Settings → Connectors → a server → Run).
-- [ ] A remote HTTP server connects (`https://mcp.deepwiki.com/mcp`, no sign-in; fallback: `npx @modelcontextprotocol/server-everything streamableHttp` in a terminal, then `http://localhost:3001/mcp`).
+Exit criteria, checked by hand in `cargo tauri dev` on 2026-11-06 (servers from `docs\mcp-test-servers.json`, pasted into Settings → Developer):
+- [x] The reference "everything" server (`npx`): connects, lists tools, `echo` runs from the debug panel.
+- [x] The filesystem server (`npx`): connects, lists tools, `list_directory` on `C:/AI Apps/Oxide/docs` runs.
+- [x] A `uvx` Python server (`mcp-server-time`): connects over **MCP 2026-07-28** (`mcp-time 2026.11.4`), `get_current_time` returns the Copenhagen time.
+- [x] A remote HTTP server: `https://mcp.deepwiki.com/mcp` connects over **MCP 2026-07-28** (DeepWiki 4.0.2) and lists its 3 tools; `ask_wiki_question` reaches the server (it validates the arguments).
+
+Fixes after the first Windows runs (all in `bf6cb29`):
+- **Bindings didn't load (Vite: "Declarations with the name `arguments` cannot be used in an ECMAScript module"):** three commands had a Rust parameter named `arguments`, which tauri-specta copies into the generated TypeScript, where `arguments` is reserved. Renamed to `input` (`mcp_call_tool`) and `values` (`mcp_get_prompt`, `mcp_attach_prompt`). **Never name a command parameter `arguments` (or another JS reserved word).**
+- **Clicking Restart crashed the app** ("there is no reactor running" in `manager.rs`): `mcp_restart` was a synchronous command, which Tauri runs on the main thread outside the Tokio runtime, and `McpManager::restart` used `tokio::spawn`. The manager now keeps the runtime's handle (from `new`/`start`) and spawns through it; the command is async too. Test: `restart_works_from_a_thread_outside_the_runtime`.
+- **Argument prefill for "either/or" schemas:** DeepWiki's `repoName` is `anyOf: [string, string[]]` and was prefilled as `{}`. `argumentSkeleton` now takes the first non-null `anyOf`/`oneOf` choice and skips `"null"` in type lists (`schema.test.ts`).
+- **Windows paths in the JSON arguments** (`"C:\AI Apps"` with single backslashes) gave a bare "invalid escape" error from the backend. The runner now checks the JSON first and explains that backslashes must be doubled or written as `/`.
+- Clippy on Windows: one collapsible `if` in the Job Object code (Windows-only, not compiled on Linux).
+- A Vitest name clash ("Run echo" matched two buttons): the list button is now "Open the runner for …".
 
 Done:
 - **`oxide-core` (`mcp.rs`):** UI types for MCP. Config entry `McpServerConfig` (stdio command/args/env or http url/headers, enabled). `McpServerState` (status disabled|starting|running|error|needsAuth|stopped, era modern|legacy, protocol version, server info, capabilities, counts, restarts, signedIn). `McpTool`/`McpResource`/`McpResourceTemplate`/`McpPrompt`, `McpContent` (text, image, audio, resourceLink, resource), `McpToolResult`, `McpLogLine`, `McpInteraction` + `McpAsk` (elicitation form/URL, sampling) + `McpAnswer`, `McpEvent`, `ChatTools` (per-chat switches, `server/tool`), import preview types. JSON schemas travel as strings (like `ToolUse.inputJson`).
@@ -69,7 +78,7 @@ Deviations from PLAN.md (and why):
 - **Sampling** answers with text only (no images/tools in sampling yet).
 
 Known issues / TODO carried forward:
-- `src-tauri` and the Windows-only code (`process/windows.rs`, `CREATE_NO_WINDOW`) are compiled for the first time by `phase5.cmd`. `src/bindings/index.ts` was extended by hand on the agent side; `cargo test` (export_bindings) regenerates it.
+- Windows code paths the Linux workspace can't compile (`process/windows.rs`, `CREATE_NO_WINDOW`, `#[cfg(windows)]` blocks) are only checked by the Windows run; keep them small.
 - Tools aren't given to models yet (Phase 6 builds the tool loop and uses `ChatTools`).
 - Web search in the "+" menu is still a placeholder (Phase 6).
 - A first `npx -y` download can take longer than the 20 s stdio probe; Oxide then treats the server as legacy for that start, and a 2026-07-28-only server fails once and is retried.
@@ -81,7 +90,7 @@ Notes for Phase 6:
 - `McpToolAnnotations.readOnlyHint` feeds the auto-allow setting in Settings → Permissions.
 - Agent-side workflow: Linux tests that start processes must run in their own session (`setsid cargo test …`), and parallel test builds can exhaust the workspace's memory; use `-j2`.
 
-Verified (Linux workspace): clippy ✅ tests ✅ (library crates) fmt ✅; typecheck ✅ lint ✅ prettier ✅ (on the device). Windows: pending (`scripts\win\phase5.cmd`).
+Verified: clippy ✅ tests ✅ typecheck ✅ lint ✅ (Windows, phase5.cmd) tauri dev on Windows ✅ (manual exit check by the user; fixes above).
 
 ## Phase 4 — Chat UX completeness — 2026-11-05
 Status: code done and checked on Windows. The first `scripts\win\phase4.cmd` run passed fmt, prettier, clippy, cargo test (including `src-tauri` with both new plugins) and typecheck; lint and 90 of 93 Vitest tests also passed. The 3 failures were test setup only: `Markdown.test.tsx` rendered code blocks (which have tooltip buttons) without `Tooltip.Provider`. The test now wraps them; the second run passed everything (Vitest 93/93) and committed `ffa1146 phase 4: chat UX completeness`. The user tested the app the same evening (results below).
