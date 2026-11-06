@@ -37,8 +37,20 @@ export function useToolSwitches(conversationId: string | undefined) {
     });
   };
 
+  /** Web search and web fetch are switched together ("Web search" in the "+" menu). */
+  const webOn = !tools.disabledBuiltins.includes("web_search");
+  const toggleWeb = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "web_search" && b !== "web_fetch")
+        : [...new Set([...tools.disabledBuiltins, "web_search", "web_fetch"])],
+    });
+
   return {
     tools,
+    webOn,
+    toggleWeb,
     serverOn: (server: string) => !tools.disabledServers.includes(server),
     toolOn: (server: string, tool: string) => !tools.disabledTools.includes(`${server}/${tool}`),
     toggleServer,
@@ -49,7 +61,12 @@ export function useToolSwitches(conversationId: string | undefined) {
 /** Saves the draft switches to a chat that was just created, then clears the draft. */
 export function applyDraftChatTools(qc: QueryClient, conversationId: string): void {
   const draft = useMcpUi.getState().draftTools;
-  if (draft.disabledServers.length === 0 && draft.disabledTools.length === 0) return;
+  if (
+    draft.disabledServers.length === 0 &&
+    draft.disabledTools.length === 0 &&
+    draft.disabledBuiltins.length === 0
+  )
+    return;
   qc.setQueryData(mcpKeys.chatTools(conversationId), draft);
   useMcpUi.getState().setDraftTools(EMPTY_TOOLS);
   void commands.setChatTools(conversationId, draft).catch(() => {});

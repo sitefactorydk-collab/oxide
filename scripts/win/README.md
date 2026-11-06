@@ -18,6 +18,8 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase4-prep.cmd` | Phase 4: `npm install`, refreshed Rust source bundle (`logs\linux-vendor.tgz`), and the local-server thinking test | `phase4-prep*`, `local-thinking.log` |
 | `local-thinking.ps1` | Sends a tiny prompt to Strata and LM Studio with each thinking switch and logs which ones work (run by `phase4-prep.cmd`; can be run alone) | `local-thinking.log` |
 | `phase4.cmd` | Phase 4: checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
+| `phase5.cmd` | Phase 5: `npm install`, checks, commit when green, then starts the app | `phase5*`, `check*`, `commit*`, `dev.log` |
+| `phase6.cmd` | Phase 6: checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 
 Later phases add a `phaseN.cmd` that does the phase's setup, runs `check.ps1`, commits when green and starts the app.

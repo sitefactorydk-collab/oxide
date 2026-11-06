@@ -174,7 +174,7 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
         }
         body.insert("system".into(), json!([block]));
     }
-    if !req.tools.is_empty() {
+    if !req.tools.is_empty() || !req.server_tools.is_empty() {
         let mut tools: Vec<Value> = req
             .tools
             .iter()
@@ -185,6 +185,7 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
                     "input_schema": t.input_schema,
                 })
             })
+            .chain(req.server_tools.iter().cloned())
             .collect();
         if req.cache
             && let Some(last) = tools.last_mut()
@@ -309,9 +310,28 @@ async fn convert_blocks(
                 id,
                 name,
                 input_json,
+                ..
             } => {
                 let input: Value = serde_json::from_str(input_json).unwrap_or_else(|_| json!({}));
                 out.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
+            }
+            ContentBlock::ServerToolUse {
+                id,
+                name,
+                input_json,
+            } => {
+                let input: Value = serde_json::from_str(input_json).unwrap_or_else(|_| json!({}));
+                out.push(
+                    json!({ "type": "server_tool_use", "id": id, "name": name, "input": input }),
+                );
+            }
+            ContentBlock::ServerToolResult { raw_json, .. } => {
+                if let Ok(mut v) = serde_json::from_str::<Value>(raw_json) {
+                    if let Some(o) = v.as_object_mut() {
+                        o.remove("cache_control");
+                    }
+                    out.push(v);
+                }
             }
             ContentBlock::ToolResult {
                 tool_use_id,
@@ -341,6 +361,7 @@ fn stop_reason(s: &str) -> StopReason {
         "max_tokens" => StopReason::MaxTokens,
         "stop_sequence" => StopReason::StopSequence,
         "tool_use" => StopReason::ToolUse,
+        "pause_turn" => StopReason::PauseTurn,
         "refusal" => StopReason::Refusal,
         "model_context_window_exceeded" => StopReason::ContextFull,
         _ => StopReason::Other,
@@ -417,7 +438,32 @@ impl Decoder for AnthropicDecoder {
                             out.push_back(Ok(ChatEvent::ThinkingDelta(t.to_owned())));
                         }
                     }
-                    _ => {} // redacted thinking, server tools: not shown
+                    "server_tool_use" => {
+                        let id = block["id"].as_str().unwrap_or_default().to_owned();
+                        let name = block["name"].as_str().unwrap_or_default().to_owned();
+                        self.tools.insert(index, id.clone());
+                        out.push_back(Ok(ChatEvent::ServerToolStart { id, name }));
+                        // Some proxies send the whole input in the start block.
+                        if let Some(input) = block
+                            .get("input")
+                            .filter(|i| i.as_object().is_some_and(|o| !o.is_empty()))
+                            && let Some(id) = self.tools.get(&index)
+                        {
+                            out.push_back(Ok(ChatEvent::ToolUseDelta {
+                                id: id.clone(),
+                                partial_json: input.to_string(),
+                            }));
+                        }
+                    }
+                    t if t.ends_with("_tool_result") => {
+                        let tool_use_id =
+                            block["tool_use_id"].as_str().unwrap_or_default().to_owned();
+                        out.push_back(Ok(ChatEvent::ServerToolResult {
+                            tool_use_id,
+                            raw_json: block.to_string(),
+                        }));
+                    }
+                    _ => {} // redacted thinking: not shown
                 }
             }
             "content_block_delta" => {
@@ -617,6 +663,77 @@ mod tests {
             json!({"type": "enabled", "budget_tokens": 2048, "display": "summarized"})
         );
         assert!(body.get("temperature").is_none());
+    }
+
+    #[tokio::test]
+    async fn server_tools_stream_and_go_back_unchanged() {
+        let stream = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"oxide\\\"}\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srvtoolu_1\",\"content\":[{\"type\":\"web_search_result\",\"title\":\"Oxide\",\"url\":\"https://example.com\",\"encrypted_content\":\"abc\"}]}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\"},\"usage\":{\"output_tokens\":9}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        let server = serve(vec![Reply::sse(stream)]).await;
+        let provider = connect(endpoint(&server.base)).expect("connects");
+        let mut req = ChatRequest::new("claude-x", vec![ChatMessage::user("hi")]);
+        req.server_tools = vec![json!({"type": "web_search_20250305", "name": "web_search"})];
+        let events: Vec<ChatEvent> = collect(provider.stream(req).await.expect("starts"))
+            .await
+            .into_iter()
+            .map(|e| e.expect("ok"))
+            .collect();
+        assert!(events.contains(&ChatEvent::ServerToolStart {
+            id: "srvtoolu_1".into(),
+            name: "web_search".into()
+        }));
+        assert!(events.contains(&ChatEvent::ToolUseDelta {
+            id: "srvtoolu_1".into(),
+            partial_json: "{\"query\":\"oxide\"}".into()
+        }));
+        let raw = events
+            .iter()
+            .find_map(|e| match e {
+                ChatEvent::ServerToolResult {
+                    tool_use_id,
+                    raw_json,
+                } => {
+                    assert_eq!(tool_use_id, "srvtoolu_1");
+                    Some(raw_json.clone())
+                }
+                _ => None,
+            })
+            .expect("a result");
+        assert_eq!(events.last(), Some(&ChatEvent::Stop(StopReason::PauseTurn)));
+        let body: Value =
+            serde_json::from_str(&server.requests().await.remove(0).body).expect("json");
+        assert_eq!(body["tools"][0]["type"], "web_search_20250305");
+
+        // The paused turn goes back with the server blocks as they came.
+        let mut req = ChatRequest::new("claude-x", vec![ChatMessage::user("hi")]);
+        req.messages.push(ChatMessage {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::ServerToolUse {
+                    id: "srvtoolu_1".into(),
+                    name: "web_search".into(),
+                    input_json: "{\"query\":\"oxide\"}".into(),
+                },
+                ContentBlock::ServerToolResult {
+                    tool_use_id: "srvtoolu_1".into(),
+                    raw_json: raw,
+                },
+            ],
+        });
+        let body = request_body(&req).await.expect("body");
+        let blocks = &body["messages"][1]["content"];
+        assert_eq!(blocks[0]["type"], "server_tool_use");
+        assert_eq!(blocks[0]["input"]["query"], "oxide");
+        assert_eq!(blocks[1]["type"], "web_search_tool_result");
+        assert_eq!(blocks[1]["content"][0]["encrypted_content"], "abc");
     }
 
     #[tokio::test]

@@ -143,7 +143,7 @@ function Badge({ on, children }: { on: boolean; children: ReactNode }) {
   );
 }
 
-function Toggle({
+export function Toggle({
   label,
   hint,
   checked,

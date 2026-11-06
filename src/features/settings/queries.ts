@@ -6,6 +6,8 @@ import {
   type ChatFont,
   type ModelSettings,
   type ThemePref,
+  type ToolSettings,
+  type WebSearchSettings,
 } from "@/bindings";
 import { unwrap } from "@/lib/api";
 import { useUi } from "@/stores/ui";
@@ -16,6 +18,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   profile: { name: "" },
   appearance: { theme: "system", chatFont: "serif" },
   models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
+  tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
+  webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
 };
 
 export function useSettings() {
@@ -106,4 +110,16 @@ export function useSetModelSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ModelSettings>) =>
     update((s) => ({ ...s, models: { ...s.models, ...patch } }));
+}
+
+export function useSetToolSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ToolSettings>) =>
+    update((s) => ({ ...s, tools: { ...s.tools, ...patch } }));
+}
+
+export function useSetWebSearchSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<WebSearchSettings>) =>
+    update((s) => ({ ...s, webSearch: { ...s.webSearch, ...patch } }));
 }

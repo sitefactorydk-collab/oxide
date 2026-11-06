@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oxide_agent::{AttachmentStore, ChatService, EventSink, ModelRegistry};
+use oxide_agent::{AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Tools};
 use oxide_mcp::{ManagerOptions, ManagerSink, McpManager};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
@@ -50,7 +50,6 @@ impl AppState {
         let store = Store::open(&db).await?;
         let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecrets::new(service));
         let models = Arc::new(ModelRegistry::new(store.clone(), secrets.clone()));
-        let chat = ChatService::new(store.clone(), models.clone(), sink);
         let attachments = AttachmentStore::new(data_dir.join("attachments"));
         let parts = mcp(&models, &secrets);
         let mcp = McpManager::new(
@@ -61,6 +60,13 @@ impl AppState {
             parts.tokens,
             ManagerOptions::default(),
         );
+        // Models get the running MCP servers' tools plus Oxide's web tools.
+        let tools = Tools::new(
+            Some(Arc::new(mcp.clone()) as Arc<dyn McpTools>),
+            secrets.clone(),
+            Some(attachments.clone()),
+        );
+        let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
             secrets,

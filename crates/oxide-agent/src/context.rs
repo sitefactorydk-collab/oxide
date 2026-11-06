@@ -18,60 +18,299 @@ const ANSWER_ROOM: u32 = 4_096;
 /// The conversation as the model sees it.
 ///
 /// - Earlier thinking is left out (providers ignore or reject it in past turns).
-/// - Tool calls and results are left out until the tool loop exists (Phase 6): a call without
-///   its result would be rejected.
+/// - A reply that used tools is split into its turns: the model's calls, then the results
+///   (as a user turn), then what it wrote next. Calls without results (and results without
+///   calls) are dropped, since both APIs reject them.
+/// - Provider-run tools (Anthropic web search) of earlier replies are left out; their text
+///   stays.
 /// - Empty turns are skipped and consecutive turns of the same role merged, so roles
 ///   alternate starting with the user.
 pub fn build_messages(thread: &[Message]) -> Vec<ChatMessage> {
     let mut out: Vec<ChatMessage> = Vec::new();
     for m in thread {
-        let content: Vec<ContentBlock> = m
-            .content
-            .iter()
-            .filter(|b| match b {
-                ContentBlock::Text { text } => !text.trim().is_empty(),
-                ContentBlock::Image { .. }
-                | ContentBlock::Document { .. }
-                | ContentBlock::ArtifactRef { .. } => true,
-                ContentBlock::Thinking { .. }
-                | ContentBlock::ToolUse { .. }
-                | ContentBlock::ToolResult { .. } => false,
-            })
-            .cloned()
-            .collect();
-        if content.is_empty() {
-            continue;
-        }
-        match out.last_mut() {
-            Some(prev) if prev.role == m.role => prev.content.extend(content),
-            _ => out.push(ChatMessage {
-                role: m.role,
-                content,
-            }),
+        match m.role {
+            Role::User => push_turn(&mut out, Role::User, keep_blocks(&m.content, false)),
+            Role::Assistant => {
+                for turn in split_turns(&m.content, false) {
+                    push_turn(&mut out, turn.role, turn.content);
+                }
+            }
         }
     }
-    while out.first().is_some_and(|m| m.role != Role::User) {
-        out.remove(0);
+    finish(out)
+}
+
+/// The turns of the reply being written, sent after [`build_messages`] while the tool loop
+/// runs. Signed thinking and provider tool blocks are kept: they must go back unchanged.
+pub fn reply_turns(content: &[ContentBlock]) -> Vec<ChatMessage> {
+    let mut out = Vec::new();
+    for turn in split_turns(content, true) {
+        push_turn(&mut out, turn.role, turn.content);
     }
     out
 }
 
-/// The system prompt: who the assistant is, today's date, the user's name.
-pub fn system_prompt(user_name: &str, now_ms: i64) -> String {
-    let (y, m, d) = civil_date(now_ms);
+/// Joins the history and the reply so far, and drops unmatched tool calls and results.
+pub fn request_messages(history: &[ChatMessage], reply: &[ContentBlock]) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::new();
+    for m in history.iter().cloned().chain(reply_turns(reply)) {
+        push_turn(&mut out, m.role, m.content);
+    }
+    finish(out)
+}
+
+fn keep_blocks(content: &[ContentBlock], current: bool) -> Vec<ContentBlock> {
+    content
+        .iter()
+        .filter(|b| match b {
+            ContentBlock::Text { text } => !text.trim().is_empty(),
+            ContentBlock::Image { .. }
+            | ContentBlock::Document { .. }
+            | ContentBlock::ArtifactRef { .. }
+            | ContentBlock::ToolUse { .. }
+            | ContentBlock::ToolResult { .. } => true,
+            ContentBlock::Thinking { signature, .. } => current && signature.is_some(),
+            ContentBlock::ServerToolUse { .. } | ContentBlock::ServerToolResult { .. } => current,
+        })
+        .cloned()
+        .collect()
+}
+
+/// An assistant message's blocks as alternating assistant / user (tool results) turns.
+fn split_turns(content: &[ContentBlock], current: bool) -> Vec<ChatMessage> {
+    let mut turns: Vec<ChatMessage> = Vec::new();
+    for b in keep_blocks(content, current) {
+        let role = if matches!(b, ContentBlock::ToolResult { .. }) {
+            Role::User
+        } else {
+            Role::Assistant
+        };
+        match turns.last_mut() {
+            Some(t) if t.role == role => t.content.push(b),
+            _ => turns.push(ChatMessage {
+                role,
+                content: vec![b],
+            }),
+        }
+    }
+    turns
+}
+
+fn push_turn(out: &mut Vec<ChatMessage>, role: Role, content: Vec<ContentBlock>) {
+    if content.is_empty() {
+        return;
+    }
+    match out.last_mut() {
+        Some(prev) if prev.role == role => {
+            // Tool results go first in a user turn (Anthropic requires it).
+            if role == Role::User {
+                let (mut results, rest): (Vec<_>, Vec<_>) = prev
+                    .content
+                    .drain(..)
+                    .chain(content)
+                    .partition(|b| matches!(b, ContentBlock::ToolResult { .. }));
+                results.extend(rest);
+                prev.content = results;
+            } else {
+                prev.content.extend(content);
+            }
+        }
+        _ => out.push(ChatMessage { role, content }),
+    }
+}
+
+/// Drops tool calls without a result in the next turn and results without a call in the
+/// turn before, then empty turns, and starts with a user turn.
+fn finish(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    use std::collections::HashSet;
+    let ids = |m: &ChatMessage, results: bool| -> HashSet<String> {
+        m.content
+            .iter()
+            .filter_map(|b| match (b, results) {
+                (ContentBlock::ToolUse { id, .. }, false) => Some(id.clone()),
+                (ContentBlock::ToolResult { tool_use_id, .. }, true) => Some(tool_use_id.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let n = turns.len();
+    let calls: Vec<HashSet<String>> = turns.iter().map(|m| ids(m, false)).collect();
+    let results: Vec<HashSet<String>> = turns.iter().map(|m| ids(m, true)).collect();
+    // Server tool uses need their result in the same turn.
+    let server_results: Vec<HashSet<String>> = turns
+        .iter()
+        .map(|m| {
+            m.content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::ServerToolResult { tool_use_id, .. } => Some(tool_use_id.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    let mut cleaned: Vec<ChatMessage> = Vec::new();
+    for (i, mut m) in turns.into_iter().enumerate() {
+        let next_results = if i + 1 < n {
+            &results[i + 1]
+        } else {
+            &HashSet::new()
+        };
+        let prev_calls = if i > 0 {
+            &calls[i - 1]
+        } else {
+            &HashSet::new()
+        };
+        let is_last = i + 1 == n;
+        m.content.retain(|b| match b {
+            // The last turn's calls are being answered right now (never sent that way).
+            ContentBlock::ToolUse { id, .. } => !is_last && next_results.contains(id),
+            ContentBlock::ToolResult { tool_use_id, .. } => prev_calls.contains(tool_use_id),
+            ContentBlock::ServerToolUse { id, .. } => server_results[i].contains(id),
+            _ => true,
+        });
+        push_turn(&mut cleaned, m.role, m.content);
+    }
+    while cleaned.first().is_some_and(|m| m.role != Role::User) {
+        cleaned.remove(0);
+    }
+    cleaned
+}
+
+/// What the system prompt says about the user's situation.
+#[derive(Debug, Clone, Default)]
+pub struct PromptContext<'a> {
+    pub user_name: &'a str,
+    pub now_ms: i64,
+    /// Minutes east of UTC, from the window's clock.
+    pub utc_offset_minutes: Option<i32>,
+    /// IANA name, e.g. `Europe/Copenhagen`.
+    pub time_zone: Option<&'a str>,
+    /// `windows`, `macos`, `linux`.
+    pub os: &'a str,
+    pub web_search: bool,
+    pub web_fetch: bool,
+    /// MCP servers whose tools are on.
+    pub connectors: Vec<String>,
+    /// The chat's project instructions (Phase 7 fills more of this in).
+    pub project_instructions: Option<&'a str>,
+    /// What Oxide remembers about the user (Phase 7).
+    pub memory: Option<&'a str>,
+}
+
+fn os_name(os: &str) -> &str {
+    match os {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        other => other,
+    }
+}
+
+/// The system prompt: who the assistant is, the date and time, the user, tools, project
+/// instructions and memory.
+pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
+    let offset = ctx.utc_offset_minutes.unwrap_or(0);
+    let local = ctx.now_ms + i64::from(offset) * 60_000;
+    let (y, m, d) = civil_date(local);
+    let mins = local.div_euclid(60_000).rem_euclid(1_440);
+    let (hh, mm) = (mins / 60, mins % 60);
+    let weekday =
+        WEEKDAYS[usize::try_from(local.div_euclid(86_400_000).rem_euclid(7)).unwrap_or(0)];
+    let zone = match (ctx.utc_offset_minutes, ctx.time_zone) {
+        (None, _) => "UTC".to_owned(),
+        (Some(o), tz) => {
+            let sign = if o < 0 { '-' } else { '+' };
+            let o = o.abs();
+            let utc = format!("UTC{sign}{:02}:{:02}", o / 60, o % 60);
+            match tz.filter(|t| !t.trim().is_empty()) {
+                Some(t) => format!("{t}, {utc}"),
+                None => utc,
+            }
+        }
+    };
     let mut s = format!(
-        "You are Oxide, a helpful AI assistant in a desktop app. Today's date is {y:04}-{m:02}-{d:02} (UTC). \
+        "You are Oxide, a helpful AI assistant in a desktop app. It is {weekday} \
+         {y:04}-{m:02}-{d:02}, {hh:02}:{mm:02} ({zone}) for the user. \
          Format answers with Markdown where it helps; use fenced code blocks with a language for code. \
          Files the user attaches appear in their message as <file> blocks or documents; read them in \
          full. Finish what you're asked in one reply: long replies are fine and there is room for \
          them. When asked to translate, rewrite, convert or summarize a file or text, do all of it, \
          not a sample or the first part, unless the user asks for less."
     );
-    let name = user_name.trim();
+    let name = ctx.user_name.trim();
     if !name.is_empty() {
         s.push_str(&format!(" The user's name is {name}."));
     }
+    if !ctx.os.is_empty() {
+        s.push_str(&format!(" The user's computer runs {}.", os_name(ctx.os)));
+    }
+
+    let mut tools = Vec::new();
+    if ctx.web_search {
+        tools.push("search the web".to_owned());
+    }
+    if ctx.web_fetch {
+        tools.push("read web pages by URL".to_owned());
+    }
+    if !ctx.connectors.is_empty() {
+        tools.push(format!(
+            "use tools from these connectors: {}",
+            ctx.connectors.join(", ")
+        ));
+    }
+    if !tools.is_empty() {
+        s.push_str(&format!(
+            "\n\nYou can {}. Use tools when they help answer better or are needed for the task; \
+             don't use them for things you already know well. Some tool calls need the user's \
+             approval; if one is declined, carry on without it or ask what they'd prefer. \
+             When you use information from the web, mention where it came from.",
+            join_list(&tools)
+        ));
+        if ctx.web_search {
+            s.push_str(&format!(
+                " Search for anything that may have changed since your training: news, prices, \
+                 current office holders, software versions. Write queries in the user's language \
+                 when it matters, and include the year ({y}) for recent events."
+            ));
+        }
+    }
+    if let Some(p) = ctx
+        .project_instructions
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        s.push_str(&format!(
+            "\n\n<project_instructions>\n{p}\n</project_instructions>\nFollow the project \
+             instructions above in this chat."
+        ));
+    }
+    if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
+        s.push_str(&format!(
+            "\n\n<memory>\n{mem}\n</memory>\nThese are things the user asked Oxide to remember. \
+             Use them when relevant; don't mention them otherwise."
+        ));
+    }
     s
+}
+
+const WEEKDAYS: [&str; 7] = [
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+];
+
+fn join_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [a] => a.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
 }
 
 /// Year, month and day (UTC) of a Unix time in milliseconds.
@@ -162,6 +401,7 @@ pub fn plan_request(
 mod tests {
     use super::*;
     use oxide_core::{MediaSource, Message};
+    use oxide_llm::ChatMessage;
 
     fn msg(role: Role, content: Vec<ContentBlock>) -> Message {
         Message {
@@ -203,6 +443,8 @@ mod tests {
                         id: "t".into(),
                         name: "x".into(),
                         input_json: "{}".into(),
+                        server: None,
+                        tool: None,
                     },
                 ],
             ),
@@ -217,6 +459,152 @@ mod tests {
         assert_eq!(out[2].content, vec![ContentBlock::text("second")]);
     }
 
+    fn use_(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: "t".into(),
+            input_json: "{}".into(),
+            server: None,
+            tool: None,
+        }
+    }
+
+    fn result(id: &str) -> ContentBlock {
+        ContentBlock::ToolResult {
+            tool_use_id: id.into(),
+            content: vec![ContentBlock::text("out")],
+            is_error: false,
+        }
+    }
+
+    #[test]
+    fn replies_with_tools_split_into_turns() {
+        let thread = vec![
+            msg(Role::User, vec![ContentBlock::text("q")]),
+            msg(
+                Role::Assistant,
+                vec![
+                    ContentBlock::text("looking"),
+                    use_("a"),
+                    use_("orphan"),
+                    result("a"),
+                    result("ghost"),
+                    ContentBlock::ServerToolUse {
+                        id: "s".into(),
+                        name: "web_search".into(),
+                        input_json: "{}".into(),
+                    },
+                    ContentBlock::text("found"),
+                ],
+            ),
+            msg(Role::User, vec![ContentBlock::text("next")]),
+        ];
+        let out = build_messages(&thread);
+        let roles: Vec<Role> = out.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![
+                Role::User,
+                Role::Assistant,
+                Role::User,
+                Role::Assistant,
+                Role::User
+            ]
+        );
+        assert_eq!(
+            out[1].content,
+            vec![ContentBlock::text("looking"), use_("a")]
+        );
+        assert_eq!(out[2].content, vec![result("a")]);
+        assert_eq!(out[3].content, vec![ContentBlock::text("found")]);
+    }
+
+    #[test]
+    fn a_stopped_reply_ending_in_results_merges_with_the_next_question() {
+        let thread = vec![
+            msg(Role::User, vec![ContentBlock::text("q")]),
+            msg(Role::Assistant, vec![use_("a"), result("a")]),
+            msg(Role::User, vec![ContentBlock::text("go on")]),
+        ];
+        let out = build_messages(&thread);
+        assert_eq!(out.len(), 3);
+        assert_eq!(
+            out[2].content,
+            vec![result("a"), ContentBlock::text("go on")]
+        );
+    }
+
+    #[test]
+    fn the_current_reply_keeps_signed_thinking_and_server_blocks() {
+        let history = vec![ChatMessage::user("q")];
+        let reply = vec![
+            ContentBlock::Thinking {
+                text: "plan".into(),
+                signature: Some("sig".into()),
+                duration_ms: None,
+            },
+            ContentBlock::Thinking {
+                text: "local model thoughts".into(),
+                signature: None,
+                duration_ms: None,
+            },
+            use_("a"),
+            result("a"),
+            ContentBlock::ServerToolUse {
+                id: "s".into(),
+                name: "web_search".into(),
+                input_json: "{}".into(),
+            },
+            ContentBlock::ServerToolResult {
+                tool_use_id: "s".into(),
+                raw_json: "{}".into(),
+            },
+        ];
+        let out = request_messages(&history, &reply);
+        assert_eq!(out.len(), 4);
+        assert!(matches!(
+            &out[1].content[0],
+            ContentBlock::Thinking {
+                signature: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(out[1].content.len(), 2, "unsigned thinking is left out");
+        assert_eq!(out[3].role, Role::Assistant);
+        assert_eq!(out[3].content.len(), 2);
+    }
+
+    #[test]
+    fn system_prompt_mentions_time_tools_and_project() {
+        let p = system_prompt(&PromptContext {
+            user_name: "Mikkel",
+            now_ms: 1_793_992_217_000, // 2026-11-06T19:10:17Z
+            utc_offset_minutes: Some(60),
+            time_zone: Some("Europe/Copenhagen"),
+            os: "windows",
+            web_search: true,
+            web_fetch: true,
+            connectors: vec!["fs".into(), "time".into()],
+            project_instructions: Some("Answer in Danish."),
+            memory: None,
+        });
+        assert!(
+            p.contains("Friday 2026-11-06, 20:10 (Europe/Copenhagen, UTC+01:00)"),
+            "{p}"
+        );
+        assert!(p.contains("runs Windows"));
+        assert!(p.contains("search the web, read web pages by URL, and use tools from these connectors: fs, time"), "{p}");
+        assert!(p.contains("include the year (2026)"));
+        assert!(p.contains("<project_instructions>\nAnswer in Danish.\n</project_instructions>"));
+        assert!(!p.contains("<memory>"));
+        let neg = system_prompt(&PromptContext {
+            utc_offset_minutes: Some(-330),
+            ..PromptContext::default()
+        });
+        assert!(neg.contains("(UTC-05:30)"), "{neg}");
+        assert!(!neg.contains("You can"));
+    }
+
     #[test]
     fn dates_are_utc_calendar_dates() {
         assert_eq!(civil_date(0), (1970, 1, 1));
@@ -224,10 +612,15 @@ mod tests {
         assert_eq!(civil_date(1_793_880_000_000), (2026, 11, 5));
         // 2024-02-29
         assert_eq!(civil_date(1_709_164_800_000), (2024, 2, 29));
-        let p = system_prompt(" Ada ", 0);
-        assert!(p.contains("1970-01-01") && p.ends_with("The user's name is Ada."));
-        assert!(!system_prompt("", 0).contains("name is"));
-        assert!(system_prompt("", 0).contains("do all of it"));
+        let ctx = |name| PromptContext {
+            user_name: name,
+            ..PromptContext::default()
+        };
+        let p = system_prompt(&ctx(" Ada "));
+        assert!(p.contains("Thursday 1970-01-01, 00:00 (UTC)"), "{p}");
+        assert!(p.ends_with("The user's name is Ada."), "{p}");
+        assert!(!system_prompt(&ctx("")).contains("name is"));
+        assert!(system_prompt(&ctx("")).contains("do all of it"));
     }
 
     fn on() -> GenerateOptions {

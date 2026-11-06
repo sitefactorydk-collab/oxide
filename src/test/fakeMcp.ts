@@ -433,7 +433,8 @@ export const fakeMcpCommands: Pick<
     setState({ ...s, status: "needsAuth", signedIn: false });
     return ok(null);
   },
-  getChatTools: (id) => ok(mcp.chatTools.get(id) ?? { disabledServers: [], disabledTools: [] }),
+  getChatTools: (id) =>
+    ok(mcp.chatTools.get(id) ?? { disabledServers: [], disabledTools: [], disabledBuiltins: [] }),
   setChatTools: (id, tools) => {
     mcp.chatTools.set(id, tools);
     return ok(null);

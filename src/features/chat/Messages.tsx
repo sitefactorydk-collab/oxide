@@ -8,7 +8,6 @@ import {
   RotateCcw,
   ThumbsDown,
   ThumbsUp,
-  Wrench,
 } from "lucide-react";
 import { memo, useEffect, useState, type ReactNode } from "react";
 import type { Feedback, Message, Rating, Usage } from "@/bindings";
@@ -19,6 +18,8 @@ import { MessageAttachments } from "@/features/attachments/MessageAttachments";
 import { useModelLabel } from "@/features/models/queries";
 import { cn } from "@/lib/cn";
 import { useCopy } from "@/lib/useCopy";
+import { ToolCallBlock } from "@/features/tools/ToolCallBlock";
+import { replySegments } from "@/features/tools/toolView";
 import { useStreams } from "./streams";
 import { attachmentsOf, messageText, thinkingOf, type ThinkingInfo } from "./thread";
 
@@ -307,15 +308,20 @@ export const AssistantMessage = memo(function AssistantMessage({
   onRate: (message: Message, feedback: Feedback | null) => void;
 }) {
   const [copied, copy] = useCopy();
-  const thinking = thinkingOf(message);
   const note = stopNote(message);
-  const tools = message.content.flatMap((b) => (b.type === "toolUse" ? [b] : []));
   const text = messageText(message);
+  const segments = replySegments(message.content);
   return (
     <article aria-label="Reply" className="group flex flex-col gap-2">
-      {thinking && <ThinkingBlock thinking={thinking} />}
-      {text && <Markdown text={text} className="ox-prose select-text" />}
-      {tools.length > 0 && <ToolCalls names={tools.map((t) => t.name)} />}
+      {segments.map((seg, i) =>
+        seg.kind === "text" ? (
+          <Markdown key={i} text={seg.text} className="ox-prose select-text" />
+        ) : seg.kind === "thinking" ? (
+          <ThinkingBlock key={i} thinking={{ seconds: seg.seconds, text: seg.text }} />
+        ) : (
+          <ToolCallBlock key={seg.call.id} call={seg.call} />
+        ),
+      )}
       {note && (
         <p role="note" className="text-sm text-fg-subtle">
           {note}
@@ -372,27 +378,17 @@ function stopNote(m: Message): string | null {
       return "The model declined to answer.";
     case "contextFull":
       return "The conversation is too long for this model.";
+    case "stepLimit":
+      return "Stopped after the most tool steps a reply may take (Settings → Permissions).";
     case "toolUse":
-      return "The model asked to use a tool. Oxide doesn’t run tools yet.";
+      return "The model asked for a tool that couldn’t be run.";
     default:
-      return messageText(m).trim() === "" && !thinkingOf(m) ? "No response." : null;
+      return messageText(m).trim() === "" &&
+        !thinkingOf(m) &&
+        !m.content.some((b) => b.type === "toolUse" || b.type === "serverToolUse")
+        ? "No response."
+        : null;
   }
-}
-
-function ToolCalls({ names }: { names: string[] }) {
-  return (
-    <ul aria-label="Tool calls" className="flex flex-wrap gap-2">
-      {names.map((name, i) => (
-        <li
-          key={`${name}-${i}`}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-sunken px-2 font-mono text-xs text-fg-muted"
-        >
-          <Wrench className="size-3.5" />
-          {name}
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 /**
@@ -403,25 +399,40 @@ function ToolCalls({ names }: { names: string[] }) {
 export function LiveReplyView({ conversationId }: { conversationId: string }) {
   const live = useStreams((s) => s.live[conversationId]);
   if (!live) return null;
-  const thinkingDone = live.thinkingEndedAt !== null;
-  const thinkingSecs =
-    live.thinkingStartedAt !== null && live.thinkingEndedAt !== null
-      ? Math.max(1, Math.round((live.thinkingEndedAt - live.thinkingStartedAt) / 1000))
-      : 0;
+  const last = live.blocks[live.blocks.length - 1];
+  // "Working" while nothing new is showing: before any output, and after a tool finished.
+  const working =
+    last === undefined ||
+    (last.kind === "tool" && (last.call.status === "done" || last.call.status === "error"));
   return (
     <div aria-busy="true" aria-label="Reply in progress" className="flex flex-col gap-2">
-      {live.thinking &&
-        (thinkingDone ? (
-          <ThinkingBlock thinking={{ seconds: thinkingSecs, text: live.thinking }} />
-        ) : (
-          <ThinkingBlock
-            thinking={{ seconds: 0, text: live.thinking }}
-            liveSince={live.thinkingStartedAt ?? live.startedAt}
-          />
-        ))}
-      {live.text && <Markdown text={live.text} streaming className="ox-prose select-text" />}
-      {live.tools.length > 0 && <ToolCalls names={live.tools.map((t) => t.name)} />}
-      {!live.text && !live.thinking && <WorkingLine startedAt={live.startedAt} />}
+      {live.blocks.map((b, i) => {
+        if (b.kind === "text") {
+          const isLast = i === live.blocks.length - 1;
+          return (
+            <Markdown key={i} text={b.text} streaming={isLast} className="ox-prose select-text" />
+          );
+        }
+        if (b.kind === "thinking") {
+          return b.endedAt !== null ? (
+            <ThinkingBlock
+              key={i}
+              thinking={{
+                seconds: Math.max(1, Math.round((b.endedAt - b.startedAt) / 1000)),
+                text: b.text,
+              }}
+            />
+          ) : (
+            <ThinkingBlock
+              key={i}
+              thinking={{ seconds: 0, text: b.text }}
+              liveSince={b.startedAt}
+            />
+          );
+        }
+        return <ToolCallBlock key={b.call.id} call={b.call} />;
+      })}
+      {working && <WorkingLine startedAt={live.startedAt} />}
     </div>
   );
 }

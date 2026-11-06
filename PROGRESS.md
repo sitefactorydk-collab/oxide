@@ -3,8 +3,8 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 5 — MCP client (`42328f1`, `bf6cb29`; exit check confirmed by the user on 2026-11-06)
-- **Next phase:** Phase 6 — Agent loop, approvals & built-in tools
+- **Last completed:** Phase 6 — Agent loop, approvals & built-in tools (code and checks; manual exit check pending, see the Phase 6 section)
+- **Next phase:** Phase 7 — Projects & memory
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -26,6 +26,65 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - New crates must already be in the vendor bundle. `futures-util` stays `default-features = false` because `futures-macro` isn't vendored.
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 6 — Agent loop, approvals & built-in tools — 2026-11-06
+Status: code done; Linux-side Rust checks pass (fmt, clippy `-D warnings`, cargo test for core/store/llm/agent/mcp), typecheck and lint pass. `scripts\win\phase6.cmd` runs every check on Windows and commits `phase 6: agent loop, approvals & built-in tools` when green, then starts the app.
+
+Exit criteria (check by hand in `cargo tauri dev`):
+- [ ] A model chains several MCP and web tools with approvals in one turn. Suggested prompt with the `docs\mcp-test-servers.json` servers: “What time is it in Copenhagen, which files are in C:/AI Apps/Oxide/docs, and what does https://modelcontextprotocol.io say MCP is? Use your tools.” Expect approval cards for `time` and `filesystem`, a web fetch without asking, and a final answer.
+  - On **Strata** (works today) and on an **LM Studio** model (start its server first).
+  - On **Anthropic** once the account has API credits (the Anthropic path is covered by tests, incl. server-side web search and `pause_turn`).
+- [ ] **Stop mid-loop** while an approval card waits, and while a tool runs: the reply is saved as “Stopped.”, the call shows “Didn’t run”, and the next message works.
+- [ ] Settings → Permissions: “Run read-only connector tools without asking” skips the card for `readOnlyHint` tools; the step limit stops a reply with a note.
+- [ ] Settings → Web search: pick a service (Brave/Tavily key, or a SearXNG URL), **Test search**, then ask something current. Without a service, models get `web_fetch` only (no `web_search`).
+- [ ] The “+” menu’s Web search switch removes both web tools from that chat; the right-hand panel lists “Used in this chat”.
+
+Done:
+- **`oxide-core`:**
+  - `ContentBlock::ToolUse` gains `server` / `tool` (filled by the loop; older rows load with `null`). New `ServerToolUse` and `ServerToolResult { rawJson }` for provider-run tools (Anthropic web search), kept verbatim because they must go back unchanged.
+  - `StopReason::PauseTurn`, `StopReason::StepLimit`. `StreamEvent::ToolCall` (arguments complete, with server/tool/title), `ToolApproval { request }`, `ToolRunning`, `ToolResult { content, isError, durationMs }`.
+  - `tools.rs`: `ToolApprovalRequest`, `ApprovalDecision` (allowOnce, allowChat, deny), `ToolUsage` + `ToolUsageKind`, `WebSearchKeys`, `SearchKeyKind` (keychain names `websearch:brave|tavily`), `WebSearchTest`, constants `web_search` / `web_fetch` / `anthropic`.
+  - Settings: `tools { autoAllowReadOnly (off), askBeforeWeb (off), maxSteps (25, 1–200) }`, `webSearch { provider none|brave|tavily|searxng, searxngUrl, anthropicNative (on), maxResults (5, 1–10) }`. `ChatTools.disabledBuiltins`.
+- **`oxide-store`:** migration `0005_tool_loop.sql`: `chat_tool_grants` (“Allow always for this chat”, keys `server/tool` or `builtin/<name>`) and `tool_usage` (every call: kind, server, tool, label, error, reply id). `grant_chat_tool`, `chat_tool_grants`, `revoke_chat_tools`, `log_tool_use`, `tool_usage`.
+- **`oxide-llm`:** `ChatRequest.server_tools` (raw JSON definitions, Anthropic only). Anthropic decoder: `server_tool_use` → `ServerToolStart` (input as `ToolUseDelta`s), any `*_tool_result` block → `ServerToolResult` (raw JSON), `pause_turn`. Request body sends `server_tool_use` / result blocks back unchanged. OpenAI-compatible: images in tool results follow the `tool` messages in a user message (tool messages are text only).
+- **`oxide-agent`:**
+  - `tools/mod.rs`: `McpTools` trait (implemented for `McpManager`: running servers’ tools, `call_tool` with the call id as progress token), `Tools::tool_set(chat, settings, kind)` → `ToolSet` (built-ins first, then MCP tools sorted, names `server__tool` cleaned to `[A-Za-z0-9_-]{1,64}` and de-duplicated, descriptions prefixed `[server]`). `normalize_schema`: top-level `object` with `properties`, no `$schema`/`$id`, top-level `anyOf/oneOf/allOf` folded into `properties` (both APIs reject them), `required` kept only for known properties. MCP results → blocks (text, images stored through `AttachmentStore`, resources inlined, links noted, structured content as a fallback), 100k-character cap per result. `usage_label` for the log.
+  - `tools/web.rs`: `WebTools` (reqwest client, keys in the keychain). Brave (`X-Subscription-Token`), Tavily (bearer, `search_depth: basic`), SearXNG (`/search?format=json`, a readable hint when JSON is off); readable errors (401/403 key refused, 429). `web_fetch`: http/https only, 5 MB cap, HTML → Markdown, text/JSON/XML/CSV as is, PDFs through pdf-extract, images returned as image blocks; 40k characters per call with a `start` offset to read on.
+  - `tools/html.rs`: forgiving HTML parser + Markdown renderer (largest `<article>`, else `<main>`, else `<body>`; drops nav/header/footer/aside/forms/scripts/hidden/cookie banners; headings, lists with nesting and `start`, links resolved against the final URL, inline code, fenced code with language, quotes, tables, images with alt text, entities).
+  - `chat.rs` (the loop): one reply = one assistant message whose blocks keep the order (thinking, text, tool calls, results, more text). Each step sends history + the reply so far (`context::request_messages`). Calls are resolved, announced (`ToolCall`), checked for approval (grants, `autoAllowReadOnly` for `readOnlyHint`, `askBeforeWeb` for built-ins), then run: all read-only → in parallel, otherwise one at a time. Deny → an error result telling the model not to retry. Unknown tools and invalid JSON → error results the model can recover from. Local models that call tools but finish with `stop` still get results. `pause_turn` continues. Step limit → error results + `StepLimit`. Stop while waiting or running → open calls get “stopped” results, so the saved reply is a valid history. Usage is summed over steps. Every call (and Anthropic searches) is logged.
+  - `context.rs`: `build_messages` splits earlier replies into assistant / tool-result turns, keeps call/result pairs, drops unmatched ones, drops provider tool blocks and thinking of earlier replies, puts tool results first when a user turn merges. `reply_turns` keeps signed thinking and provider blocks for the current reply. `system_prompt(PromptContext)`: weekday, local date and time with zone (from the window), OS, user name, tools available (search / fetch / connector names) with usage guidance, `<project_instructions>` (from the chat’s project), `<memory>` slot (Phase 7).
+  - `ChatService::new(store, registry, sink, tools)`; `pending_approvals`, `answer_approval`, `set_client_clock`, `tools()`.
+- **`src-tauri`:** `AppState` builds the MCP manager first and gives `Tools` the manager, the keychain and the attachments store. New commands in `commands/tools.rs`: `answer_tool_approval`, `pending_tool_approvals`, `tool_usage`, `chat_tool_grants`, `revoke_chat_tool_grant`, `set_client_clock`, `web_search_keys`, `set_web_search_key`, `test_web_search`.
+- **Frontend:**
+  - `features/chat/streams.ts`: a live reply is an ordered list of blocks (text, thinking with its own timing, tool calls with status streaming → ready → awaitingApproval → running → done/error). `liveText` / `liveThinking` helpers.
+  - `features/tools/`: `ToolCallBlock` (one line: “Searched the web · query”, “Read example.com”, connector tool + server chip; status: preparing, running with MCP progress, needs approval, failed / didn’t run, duration; opens to Request and Response with images), `ApprovalCard` (tool, server, description, destructive warning, pretty arguments, Deny / Allow always for this chat / Allow once), `toolView.ts` (saved replies → segments, provider search summaries, headlines, “Used in this chat” rows), queries, `PermissionsSection`, `WebSearchSection`.
+  - Saved replies render their blocks in order; stop notes for `stepLimit`. “Working” shows again after a tool finishes while the model continues.
+  - Chat page: waiting approvals the window didn’t see live (after a reload) show as cards; the details panel shows the chat’s tools and “Used in this chat” (collapsed per kind with counts; click scrolls to the call).
+  - “+” menu: Web search switch (per chat; switches web search and web fetch together).
+  - Settings: **Permissions** (no longer a placeholder) and a new **Web search** section.
+  - `useChatEvents` sends the window’s UTC offset and IANA zone (`set_client_clock`) at start and on focus.
+- **Tests:** Rust (Linux): core 33, store 35, llm 44, agent 57 (new: tool loop with approval, deny + allow-always, parallel read-only, stop while waiting, step limit with unknown tool and bad JSON, local models finishing with `stop`, provider tools and `pause_turn`; tool sets, names, schemas, MCP results; Brave/Tavily/SearXNG against a local HTTP server; fetch; HTML → Markdown; history with tool turns; system prompt), mcp 50. Vitest: `features/tools/Tools.test.tsx` (inline approval → running → result → saved reply, deny + orphan approvals, “Used in this chat”, clock, helpers, Permissions, Web search key + test, “+” menu switch), updated `streams.test.ts`. The fake backend implements the new commands (`askApproval`, `finishReplyWith`, `heldReplyId`, `logToolUse`).
+
+Deviations from PLAN.md (and why):
+- **web_fetch’s readability is Oxide’s own** (`tools/html.rs`), not a crate: no HTML parser is in the offline Linux vendor bundle, and a small converter tuned for model input is testable here. Pages that need JavaScript come back nearly empty (the tool says so).
+- **Built-in web tools run without asking by default** (Settings → Permissions → “Ask before web search and web fetch”). They only read public pages, like Claude desktop’s web search.
+- **Approvals are asked one call at a time**, in the order the model made the calls, then the approved calls run (read-only ones in parallel).
+- **Anthropic web search uses `web_search_20250305`** with `max_uses: 5` (basic search, every model; checked in the docs today). Dynamic filtering (`20260209`+) needs code execution and isn’t used. Earlier replies’ search blocks aren’t sent back (their text is), because the encrypted results and citations must otherwise be sent exactly as received.
+- **Citations on Anthropic text blocks aren’t kept** (`ContentBlock::Text` has no citations yet).
+- **Time zone comes from the window** (`set_client_clock`), since there is no time-zone crate in the backend.
+
+Known issues / TODO carried forward:
+- Anthropic `redacted_thinking` blocks aren’t stored, so a tool loop after redacted thinking may be rejected by the API (rare with summarized thinking).
+- A reply that streams while the window reloads isn’t shown live again (as before); its waiting approvals are, as standalone cards.
+- `web_fetch` has no domain allow/deny list and can reach local addresses (e.g. `http://127.0.0.1`); the user sees every fetch in the thread.
+- The per-chat “Allow always” list can be read and cleared through `chat_tool_grants` / `revoke_chat_tool_grant`, but there’s no UI for it yet (Phase 11’s session panel is a good home).
+- `src/bindings/index.ts` was edited by hand on the agent side; `cargo test` (export_bindings) regenerates it on Windows.
+
+Notes for Phase 7:
+- The system prompt already has slots: `PromptContext.project_instructions` (filled from the chat’s project) and `memory` (`None` today). Knowledge search can be a built-in tool next to `web_search` in `tools/mod.rs` (`Builtin` enum + `builtin_entry`).
+- Tool calls are logged per chat in `tool_usage`; Phase 11’s session panel reads `tool_usage` and can extend `usageRows`.
+
+Verified: clippy ✅ tests ✅ (Linux: library crates) typecheck ✅ lint ✅ (agent side) — Windows run of `phase6.cmd` and the manual exit check pending.
 
 ## Phase 5 — MCP client — 2026-11-05/06
 Status: done. `scripts\win\phase5.cmd` passed every check on Windows (fmt, prettier, clippy, cargo test, typecheck, lint, Vitest) and committed `phase 5: MCP client` (`42328f1`, then `bf6cb29` with the fixes below). The user ran the exit check by hand the same evening.

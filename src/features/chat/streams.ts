@@ -1,5 +1,48 @@
 import { create } from "zustand";
-import type { ChatStreamEvent, Message, Usage } from "@/bindings";
+import type {
+  ChatStreamEvent,
+  ContentBlock,
+  Message,
+  ToolApprovalRequest,
+  Usage,
+} from "@/bindings";
+
+/** Where a tool call is. */
+export type ToolStatus =
+  /** The model is still writing the arguments. */
+  | "streaming"
+  /** Arguments complete; about to be checked or run. */
+  | "ready"
+  /** Waiting for the user to allow or deny it. */
+  | "awaitingApproval"
+  | "running"
+  | "done"
+  | "error";
+
+/** A tool call as the UI shows it, live or saved. */
+export interface ToolCallView {
+  id: string;
+  /** The name the model used (`server__tool` for MCP tools). */
+  name: string;
+  /** MCP server; `null` for Oxide's own tools; `"anthropic"` for provider-run tools. */
+  server: string | null;
+  tool: string;
+  title: string | null;
+  inputJson: string;
+  status: ToolStatus;
+  approval: ToolApprovalRequest | null;
+  result: ContentBlock[] | null;
+  isError: boolean;
+  durationMs: number | null;
+  /** Provider-run (Anthropic web search). */
+  provider: boolean;
+}
+
+/** One piece of a live reply, in the order it arrived. */
+export type LiveBlock =
+  | { kind: "text"; text: string }
+  | { kind: "thinking"; text: string; startedAt: number; endedAt: number | null }
+  | { kind: "tool"; call: ToolCallView };
 
 /** A reply being written, built from `chatStream` events. */
 export interface LiveReply {
@@ -8,12 +51,7 @@ export interface LiveReply {
   parentId: string;
   model: string;
   startedAt: number;
-  text: string;
-  thinking: string;
-  /** When thinking started and ended (client clock), for the "Thought for Ns" line. */
-  thinkingStartedAt: number | null;
-  thinkingEndedAt: number | null;
-  tools: Array<{ id: string; name: string }>;
+  blocks: LiveBlock[];
   usage: Usage | null;
 }
 
@@ -41,6 +79,33 @@ function without<T>(map: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
+/** Closes an open thinking block. */
+function endThinking(blocks: LiveBlock[], now: number): LiveBlock[] {
+  const last = blocks[blocks.length - 1];
+  if (last?.kind === "thinking" && last.endedAt === null) {
+    return [...blocks.slice(0, -1), { ...last, endedAt: now }];
+  }
+  return blocks;
+}
+
+function updateTool(
+  blocks: LiveBlock[],
+  id: string,
+  f: (c: ToolCallView) => ToolCallView,
+): LiveBlock[] {
+  return blocks.map((b) => (b.kind === "tool" && b.call.id === id ? { ...b, call: f(b.call) } : b));
+}
+
+/** All text of a live reply (for tests and the status line). */
+export function liveText(live: LiveReply): string {
+  return live.blocks.flatMap((b) => (b.kind === "text" ? [b.text] : [])).join("");
+}
+
+/** All thinking of a live reply. */
+export function liveThinking(live: LiveReply): string {
+  return live.blocks.flatMap((b) => (b.kind === "thinking" ? [b.text] : [])).join("\n\n");
+}
+
 /** Applies one stream event. Pure, so it can be tested on its own. */
 export function reduceStream(
   state: Maps,
@@ -48,6 +113,7 @@ export function reduceStream(
   now: number,
 ): Maps {
   const live = state.live[id];
+  const put = (next: LiveReply): Maps => ({ ...state, live: { ...state.live, [id]: next } });
   switch (event.type) {
     case "started":
       return {
@@ -58,57 +124,99 @@ export function reduceStream(
             parentId: event.parentId,
             model: event.model,
             startedAt: now,
-            text: "",
-            thinking: "",
-            thinkingStartedAt: null,
-            thinkingEndedAt: null,
-            tools: [],
+            blocks: [],
             usage: null,
           },
         },
         failures: without(state.failures, id),
       };
-    case "thinkingDelta":
+    case "thinkingDelta": {
       if (!live) return state;
-      return {
-        ...state,
-        live: {
-          ...state.live,
-          [id]: {
-            ...live,
-            thinking: live.thinking + event.text,
-            thinkingStartedAt: live.thinkingStartedAt ?? now,
-          },
-        },
-      };
-    case "textDelta":
+      const last = live.blocks[live.blocks.length - 1];
+      const blocks: LiveBlock[] =
+        last?.kind === "thinking" && last.endedAt === null
+          ? [...live.blocks.slice(0, -1), { ...last, text: last.text + event.text }]
+          : [...live.blocks, { kind: "thinking", text: event.text, startedAt: now, endedAt: null }];
+      return put({ ...live, blocks });
+    }
+    case "textDelta": {
       if (!live) return state;
-      return {
-        ...state,
-        live: {
-          ...state.live,
-          [id]: {
-            ...live,
-            text: live.text + event.text,
-            thinkingEndedAt:
-              live.thinkingStartedAt !== null && live.thinkingEndedAt === null
-                ? now
-                : live.thinkingEndedAt,
-          },
-        },
-      };
-    case "toolUse":
+      const closed = endThinking(live.blocks, now);
+      const last = closed[closed.length - 1];
+      const blocks: LiveBlock[] =
+        last?.kind === "text"
+          ? [...closed.slice(0, -1), { kind: "text", text: last.text + event.text }]
+          : [...closed, { kind: "text", text: event.text }];
+      return put({ ...live, blocks });
+    }
+    case "toolUse": {
       if (!live) return state;
-      return {
-        ...state,
-        live: {
-          ...state.live,
-          [id]: { ...live, tools: [...live.tools, { id: event.id, name: event.name }] },
-        },
+      const call: ToolCallView = {
+        id: event.id,
+        name: event.name,
+        server: null,
+        tool: event.name,
+        title: null,
+        inputJson: "",
+        status: "streaming",
+        approval: null,
+        result: null,
+        isError: false,
+        durationMs: null,
+        provider: false,
       };
+      return put({ ...live, blocks: [...endThinking(live.blocks, now), { kind: "tool", call }] });
+    }
+    case "toolCall":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({
+          ...c,
+          server: event.server,
+          tool: event.tool,
+          title: event.title,
+          inputJson: event.inputJson,
+          provider: event.server === "anthropic",
+          status: c.status === "streaming" ? "ready" : c.status,
+        })),
+      });
+    case "toolApproval":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.request.toolUseId, (c) => ({
+          ...c,
+          status: "awaitingApproval",
+          approval: event.request,
+        })),
+      });
+    case "toolRunning":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({
+          ...c,
+          status: "running",
+          approval: null,
+        })),
+      });
+    case "toolResult":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({
+          ...c,
+          status: event.isError ? "error" : "done",
+          approval: null,
+          result: event.content,
+          isError: event.isError,
+          durationMs: event.durationMs,
+        })),
+      });
     case "usage":
       if (!live) return state;
-      return { ...state, live: { ...state.live, [id]: { ...live, usage: event.usage } } };
+      return put({ ...live, usage: event.usage });
     case "done":
       return { live: without(state.live, id), failures: without(state.failures, id) };
     case "failed":

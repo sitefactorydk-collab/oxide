@@ -57,6 +57,9 @@ pub struct ChatRequest {
     pub system: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<ToolSpec>,
+    /// Tools the provider runs itself, as the provider's JSON definitions (Anthropic's
+    /// `web_search_20250305`). Ignored by OpenAI-compatible servers.
+    pub server_tools: Vec<Value>,
     /// Output token limit. Required by Anthropic (a default is used when `None`); omitted for
     /// OpenAI-compatible servers when `None`, so their own default applies.
     pub max_tokens: Option<u32>,
@@ -79,6 +82,7 @@ impl ChatRequest {
             system: None,
             messages,
             tools: Vec::new(),
+            server_tools: Vec::new(),
             max_tokens: None,
             thinking: Thinking::Default,
             cache: false,
@@ -107,6 +111,17 @@ pub enum ChatEvent {
     },
     ToolUseEnd {
         id: String,
+    },
+    /// The provider started running one of its own tools (Anthropic `server_tool_use`).
+    /// Its input streams as [`ChatEvent::ToolUseDelta`] and ends with [`ChatEvent::ToolUseEnd`].
+    ServerToolStart {
+        id: String,
+        name: String,
+    },
+    /// The result of a provider-run tool, exactly as sent (it must be sent back unchanged).
+    ServerToolResult {
+        tool_use_id: String,
+        raw_json: String,
     },
     /// Token counts so far (cumulative; later events replace earlier ones).
     Usage(Usage),

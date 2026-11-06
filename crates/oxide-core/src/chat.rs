@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::{Conversation, Effort, Message, Timestamp};
+use crate::{ContentBlock, Conversation, Effort, Message, Timestamp, ToolApprovalRequest};
 
 /// Per-request options chosen in the composer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -24,8 +24,13 @@ pub enum StopReason {
     /// The output token limit was reached.
     MaxTokens,
     StopSequence,
-    /// The model wants to call a tool (the tool loop arrives in Phase 6).
+    /// The model wants to call a tool. The tool loop runs it and continues; a saved reply only
+    /// ends this way if its tools couldn't be run.
     ToolUse,
+    /// The provider paused a long turn (Anthropic server tools); the tool loop continues it.
+    PauseTurn,
+    /// The reply used the most tool steps allowed (Settings → Permissions).
+    StepLimit,
     /// The model declined to answer.
     Refusal,
     /// The context window is full.
@@ -46,6 +51,8 @@ impl StopReason {
             StopReason::MaxTokens => "maxTokens",
             StopReason::StopSequence => "stopSequence",
             StopReason::ToolUse => "toolUse",
+            StopReason::PauseTurn => "pauseTurn",
+            StopReason::StepLimit => "stepLimit",
             StopReason::Refusal => "refusal",
             StopReason::ContextFull => "contextFull",
             StopReason::Stopped => "stopped",
@@ -60,6 +67,8 @@ impl StopReason {
             "maxTokens" => StopReason::MaxTokens,
             "stopSequence" => StopReason::StopSequence,
             "toolUse" => StopReason::ToolUse,
+            "pauseTurn" => StopReason::PauseTurn,
+            "stepLimit" => StopReason::StepLimit,
             "refusal" => StopReason::Refusal,
             "contextFull" => StopReason::ContextFull,
             "stopped" => StopReason::Stopped,
@@ -115,10 +124,38 @@ pub enum StreamEvent {
     ThinkingDelta {
         text: String,
     },
-    /// The model started a tool call (shown, not run, until Phase 6).
+    /// The model started a tool call; its arguments are still streaming.
     ToolUse {
         id: String,
         name: String,
+    },
+    /// A tool call's arguments are complete. `server` is the MCP server (`None` for built-in
+    /// tools, `Some("anthropic")` for a tool the provider runs itself); `tool` is the tool's
+    /// own name and `title` its display name.
+    #[serde(rename_all = "camelCase")]
+    ToolCall {
+        id: String,
+        name: String,
+        server: Option<String>,
+        tool: String,
+        title: Option<String>,
+        input_json: String,
+    },
+    /// A tool call waits for the user's approval (answer with `answer_tool_approval`).
+    ToolApproval {
+        request: ToolApprovalRequest,
+    },
+    /// A tool call was approved (or needed no approval) and is running.
+    ToolRunning {
+        id: String,
+    },
+    /// A tool call finished. `content` is what the model sees.
+    #[serde(rename_all = "camelCase")]
+    ToolResult {
+        id: String,
+        content: Vec<ContentBlock>,
+        is_error: bool,
+        duration_ms: u32,
     },
     Usage {
         usage: Usage,
@@ -160,6 +197,8 @@ mod tests {
             StopReason::MaxTokens,
             StopReason::StopSequence,
             StopReason::ToolUse,
+            StopReason::PauseTurn,
+            StopReason::StepLimit,
             StopReason::Refusal,
             StopReason::ContextFull,
             StopReason::Stopped,

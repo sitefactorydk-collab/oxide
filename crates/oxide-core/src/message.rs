@@ -109,18 +109,40 @@ pub enum ContentBlock {
         signature: Option<String>,
         duration_ms: Option<u32>,
     },
-    /// A tool call made by the model. `input` is the JSON arguments as text.
+    /// A tool call made by the model. `input_json` is the JSON arguments as text; `name` is
+    /// the name the model used (MCP tools are `server__tool`).
+    ///
+    /// `server` (the MCP server; `None` for Oxide's built-in tools) and `tool` (the tool's own
+    /// name) are filled in by the tool loop, so the UI can label the call.
     #[serde(rename_all = "camelCase")]
     ToolUse {
         id: String,
         name: String,
         input_json: String,
+        #[serde(default)]
+        server: Option<String>,
+        #[serde(default)]
+        tool: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     ToolResult {
         tool_use_id: String,
         content: Vec<ContentBlock>,
         is_error: bool,
+    },
+    /// A tool the provider ran itself during the reply (Anthropic's web search).
+    #[serde(rename_all = "camelCase")]
+    ServerToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    },
+    /// The result of a [`ContentBlock::ServerToolUse`], kept exactly as the provider sent it
+    /// (`raw_json`), because it must be sent back unchanged while the reply continues.
+    #[serde(rename_all = "camelCase")]
+    ServerToolResult {
+        tool_use_id: String,
+        raw_json: String,
     },
     #[serde(rename_all = "camelCase")]
     ArtifactRef {
@@ -165,10 +187,24 @@ mod tests {
             id: "t1".into(),
             name: "search".into(),
             input_json: "{}".into(),
+            server: None,
+            tool: None,
         };
         let json = serde_json::to_value(&block).expect("serializes");
         assert_eq!(json["type"], "toolUse");
         assert_eq!(json["inputJson"], "{}");
+        // Blocks saved before Phase 6 have no server/tool fields.
+        let old: ContentBlock =
+            serde_json::from_str(r#"{"type":"toolUse","id":"t","name":"n","inputJson":"{}"}"#)
+                .expect("parses");
+        assert!(matches!(
+            old,
+            ContentBlock::ToolUse {
+                server: None,
+                tool: None,
+                ..
+            }
+        ));
     }
 
     #[test]

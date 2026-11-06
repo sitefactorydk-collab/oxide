@@ -9,6 +9,7 @@ pub mod projects;
 pub mod providers;
 pub mod settings;
 pub mod system;
+pub mod tools;
 
 use serde::Serialize;
 use specta::Type;

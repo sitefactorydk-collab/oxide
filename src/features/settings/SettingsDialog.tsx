@@ -1,3 +1,5 @@
+import { PermissionsSection } from "@/features/tools/PermissionsSection";
+import { WebSearchSection } from "@/features/tools/WebSearchSection";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
@@ -99,6 +101,10 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <ConnectorsSection />;
     case "developer":
       return <DeveloperSection />;
+    case "permissions":
+      return <PermissionsSection />;
+    case "web-search":
+      return <WebSearchSection />;
     case "about":
       return <AboutSection />;
     default:

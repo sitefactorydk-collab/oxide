@@ -20,11 +20,15 @@ pub mod export;
 mod registry;
 pub mod sampling;
 mod title;
+pub mod tools;
 
 pub use attachments::{AttachmentError, AttachmentStore};
 pub use chat::{ChatService, EventSink, path_to};
-pub use context::{build_messages, plan_request, system_prompt};
+pub use context::{
+    PromptContext, build_messages, plan_request, reply_turns, request_messages, system_prompt,
+};
 pub use error::AgentError;
 pub use registry::{Connector, ModelRegistry};
 pub use sampling::run_sampling;
 pub use title::{clean_title, pick_title_model};
+pub use tools::{McpTools, Tools, WebTools};

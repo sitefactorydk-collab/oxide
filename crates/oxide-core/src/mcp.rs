@@ -363,9 +363,16 @@ pub struct ChatTools {
     pub disabled_servers: Vec<String>,
     /// Single tools that are off, as `server/tool`.
     pub disabled_tools: Vec<String>,
+    /// Built-in tools that are off (`web_search`, `web_fetch`).
+    pub disabled_builtins: Vec<String>,
 }
 
 impl ChatTools {
+    /// Whether the built-in tool `name` may be used in this chat.
+    pub fn allows_builtin(&self, name: &str) -> bool {
+        !self.disabled_builtins.iter().any(|b| b == name)
+    }
+
     /// Whether `tool` of `server` may be used in this chat.
     pub fn allows(&self, server: &str, tool: &str) -> bool {
         !self.disabled_servers.iter().any(|s| s == server)
@@ -422,9 +429,12 @@ mod tests {
         let t = ChatTools {
             disabled_servers: vec!["fs".into()],
             disabled_tools: vec!["web/fetch".into()],
+            disabled_builtins: vec!["web_search".into()],
         };
         assert!(!t.allows("fs", "read_file"));
         assert!(!t.allows("web", "fetch"));
+        assert!(!t.allows_builtin("web_search"));
+        assert!(t.allows_builtin("web_fetch"));
         assert!(t.allows("web", "search"));
         assert!(ChatTools::default().allows("fs", "x"));
     }

@@ -13,6 +13,7 @@ pub mod model;
 pub mod project;
 pub mod provider;
 pub mod settings;
+pub mod tools;
 
 pub use attachment::{
     ATTACHMENT_LIMITS, Attachment, AttachmentKind, AttachmentLimits, AttachmentSource,
@@ -34,6 +35,11 @@ pub use project::{NewProject, Project, ProjectPatch};
 pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, ModelSettings, ProfileSettings, ThemePref,
+    ToolSettings, WebSearchProvider, WebSearchSettings,
+};
+pub use tools::{
+    ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,
+    WebSearchTest,
 };
 
 /// Product name shown in the UI and window titles.

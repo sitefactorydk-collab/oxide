@@ -254,7 +254,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 - **Session usage log:** every tool call is recorded per chat (tool, server or built-in, a short label such as the search query, file or URL, time, and the message it belongs to), so the Phase 11 side panel can list what the chat used. Until then, the existing right-hand "In this chat" panel shows a simple "Used in this chat" list from this log.
 - **Built-in tools:**
   - `web_search`, with selectable providers: Brave Search API, Tavily, SearXNG URL, or Anthropic's server-side web search when on Anthropic.
-  - `web_fetch`: `reqwest` + readability extraction to Markdown, with size caps.
+  - `web_fetch`: `reqwest` + Oxide's own HTML → Markdown extraction of the main content (`oxide-agent/src/tools/html.rs`; changed in Phase 6, see PROGRESS.md), with size caps.
 - System prompt builder: date and time, user name, OS, enabled tools, project instructions slot, and memory slot.
 
 **Exit:** a model chains several MCP and web tools with approvals in one turn on both Anthropic and an LM Studio model. Stop mid-loop is clean.

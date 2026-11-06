@@ -34,8 +34,7 @@ import { unwrap } from "@/lib/api";
 
 /**
  * Composer "+" menu: attach files; switch connectors and single tools on or off for this
- * chat; attach an MCP prompt or resource as context. Web search is a placeholder until
- * Phase 6.
+ * chat; attach an MCP prompt or resource as context; web search (and web fetch) on or off.
  */
 export function PlusMenu({
   onPickFiles,
@@ -51,7 +50,6 @@ export function PlusMenu({
   onAttach: (name: string, run: () => Promise<Attachment[]>) => void;
 }) {
   const openSettings = useOpenSettings();
-  const [webSearch, setWebSearch] = useState(true);
   const [promptToFill, setPromptToFill] = useState<McpPrompt | null>(null);
   const { data: servers } = useMcpServers();
   const switches = useToolSwitches(conversationId);
@@ -144,8 +142,8 @@ export function PlusMenu({
           )}
           <MenuSeparator />
           <MenuCheckboxItem
-            checked={webSearch}
-            onCheckedChange={(v) => setWebSearch(v === true)}
+            checked={switches.webOn}
+            onCheckedChange={(v) => switches.toggleWeb(v === true)}
             onSelect={(e) => e.preventDefault()}
           >
             <Globe />

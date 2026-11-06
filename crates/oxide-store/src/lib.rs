@@ -13,6 +13,7 @@ mod providers;
 mod search;
 pub mod secrets;
 mod settings;
+mod tool_log;
 
 use std::path::Path;
 use std::str::FromStr;
@@ -27,6 +28,7 @@ pub use secrets::{
     KeyringSecrets, MemorySecrets, Secret, SecretError, SecretStore, delete_large, get_large,
     set_large,
 };
+pub use tool_log::NewToolUsage;
 
 /// File name of the database inside the app data directory.
 pub const DB_FILE_NAME: &str = "oxide.db";

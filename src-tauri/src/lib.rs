@@ -26,7 +26,7 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{attachments, chats, mcp, models, projects, providers, settings, system};
+    use commands::{attachments, chats, mcp, models, projects, providers, settings, system, tools};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::ChatStream,
@@ -82,6 +82,16 @@ fn specta_builder() -> Builder<tauri::Wry> {
             mcp::mcp_sign_out,
             mcp::get_chat_tools,
             mcp::set_chat_tools,
+            // Tool loop
+            tools::answer_tool_approval,
+            tools::pending_tool_approvals,
+            tools::tool_usage,
+            tools::chat_tool_grants,
+            tools::revoke_chat_tool_grant,
+            tools::set_client_clock,
+            tools::web_search_keys,
+            tools::set_web_search_key,
+            tools::test_web_search,
             // System
             system::open_external,
             // Models

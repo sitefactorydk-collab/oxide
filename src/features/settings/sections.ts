@@ -1,6 +1,7 @@
 import {
   Brain,
   Database,
+  Globe,
   Info,
   KeyRound,
   Palette,
@@ -54,6 +55,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "Local and remote MCP servers: what they offer, whether they're running, and a place to try their tools.",
   },
   {
+    id: "web-search",
+    label: "Web search",
+    icon: Globe,
+    blurb:
+      "The service Oxide’s web search tool uses. Anthropic models can use Anthropic’s own search instead. Keys live in the system keychain.",
+  },
+  {
     id: "extensions",
     label: "Extensions",
     icon: Puzzle,
@@ -71,8 +79,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "permissions",
     label: "Permissions",
     icon: ShieldCheck,
-    phase: 6,
-    blurb: "Tool approvals, auto-allow rules and folder access.",
+    blurb: "When Oxide asks before a tool runs, and how many tool steps a reply may take.",
   },
   {
     id: "memory",

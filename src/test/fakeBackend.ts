@@ -17,6 +17,10 @@ import type {
   Result,
   SearchHit,
   StreamEvent,
+  ApprovalDecision,
+  ToolApprovalRequest,
+  ToolUsage,
+  WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
 import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
@@ -64,6 +68,14 @@ interface FakeState {
   exports: Array<{ id: string; leafId: string | null; format: string }>;
   /** Links opened outside the app. */
   opened: string[];
+  /** Tool calls waiting for approval. */
+  pending: ToolApprovalRequest[];
+  /** Approval answers, in order. */
+  answers: Array<{ conversationId: string; toolUseId: string; decision: ApprovalDecision }>;
+  toolUsage: ToolUsage[];
+  grants: Map<string, string[]>;
+  searchKeys: WebSearchKeys;
+  clock: { offset: number; zone: string | null } | null;
 }
 
 export interface FakeSeed {
@@ -86,6 +98,8 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
       profile: { name: seed.settings?.name ?? "" },
       appearance: { theme: seed.settings?.theme ?? "system", chatFont: "serif" },
       models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
+      tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
+      webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -94,6 +108,12 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     attachments: new Map(),
     exports: [],
     opened: [],
+    pending: [],
+    answers: [],
+    toolUsage: [],
+    grants: new Map(),
+    searchKeys: { brave: null, tavily: null },
+    clock: null,
   };
   resetFakeMcp();
 }
@@ -258,13 +278,18 @@ function newMessage(
   return m;
 }
 
-function saveReply(r: HeldReply, text: string, stopReason: Message["stopReason"]): Message {
+function saveReply(
+  r: HeldReply,
+  text: string,
+  stopReason: Message["stopReason"],
+  content?: ContentBlock[],
+): Message {
   const m: Message = {
     id: r.messageId,
     conversationId: r.conversationId,
     parentId: r.parentId,
     role: "assistant",
-    content: text ? [{ type: "text", text }] : [],
+    content: content ?? (text ? [{ type: "text", text }] : []),
     model: r.model,
     createdAt: Date.now(),
     stopReason,
@@ -330,6 +355,34 @@ export function finishReply(conversationId: string): void {
     type: "done",
     message: saveReply(r, `Partial ${r.text}`, "endTurn"),
   });
+}
+
+/** Ends a held reply, saving `content` as its blocks (tool calls and all). */
+export function finishReplyWith(conversationId: string, content: ContentBlock[]): Message {
+  const r = state.held.get(conversationId);
+  if (!r) throw new Error(`no held reply in ${conversationId}`);
+  state.held.delete(conversationId);
+  const m = saveReply(r, "", "endTurn", content);
+  emitStream(conversationId, { type: "done", message: m });
+  return m;
+}
+
+/** The held reply's id (to build tool events in tests). */
+export function heldReplyId(conversationId: string): string {
+  const r = state.held.get(conversationId);
+  if (!r) throw new Error(`no held reply in ${conversationId}`);
+  return r.messageId;
+}
+
+/** Adds a tool call waiting for approval, as the backend would, and sends its events. */
+export function askApproval(request: ToolApprovalRequest): void {
+  state.pending.push(request);
+  emitStream(request.conversationId, { type: "toolApproval", request });
+}
+
+/** Adds entries to a chat's tool log. */
+export function logToolUse(entries: ToolUsage[]): void {
+  state.toolUsage.push(...entries);
 }
 
 /** Switches how later replies behave. */
@@ -535,6 +588,44 @@ export const fakeCommands: typeof RealCommands = {
     state.projects = state.projects.filter((p) => p.id !== id);
     for (const c of state.conversations) if (c.projectId === id) c.projectId = null;
     return ok(null);
+  },
+
+  answerToolApproval: (conversationId, toolUseId, decision) => {
+    const had = state.pending.some(
+      (p) => p.conversationId === conversationId && p.toolUseId === toolUseId,
+    );
+    state.pending = state.pending.filter((p) => p.toolUseId !== toolUseId);
+    state.answers.push({ conversationId, toolUseId, decision });
+    if (decision === "allowChat") {
+      const g = state.grants.get(conversationId) ?? [];
+      state.grants.set(conversationId, [...g, `fs/${toolUseId}`]);
+    }
+    return ok(had);
+  },
+  pendingToolApprovals: () => ok(state.pending),
+  toolUsage: (conversationId) =>
+    ok(state.toolUsage.filter((u) => u.conversationId === conversationId)),
+  chatToolGrants: (conversationId) => ok(state.grants.get(conversationId) ?? []),
+  revokeChatToolGrant: (conversationId, toolKey) => {
+    const g = state.grants.get(conversationId) ?? [];
+    state.grants.set(conversationId, toolKey === null ? [] : g.filter((k) => k !== toolKey));
+    return ok(state.grants.get(conversationId) ?? []);
+  },
+  setClientClock: (offset, zone) => {
+    state.clock = { offset, zone };
+    return ok(null);
+  },
+  webSearchKeys: () => ok(state.searchKeys),
+  setWebSearchKey: (service, key) => {
+    state.searchKeys = { ...state.searchKeys, [service]: key ? mask(key) : null };
+    return ok(state.searchKeys);
+  },
+  testWebSearch: (settings, key) => {
+    const stored = settings.provider === "brave" ? state.searchKeys.brave : state.searchKeys.tavily;
+    if ((settings.provider === "brave" || settings.provider === "tavily") && !key && !stored) {
+      return ok({ ok: false, message: "Brave Search needs an API key", sample: [] });
+    }
+    return ok({ ok: true, message: "2 results for a test search.", sample: ["Oxide", "Rust"] });
   },
 
   getSettings: () => ok(state.settings),

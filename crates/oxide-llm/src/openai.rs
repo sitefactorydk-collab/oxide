@@ -336,6 +336,34 @@ async fn user_messages(
                 if *is_error {
                     text = format!("Error: {text}");
                 }
+                // `tool` messages carry text only: images from the tool follow in the user
+                // message after them.
+                let images: Vec<&ContentBlock> = content
+                    .iter()
+                    .filter(|b| matches!(b, ContentBlock::Image { .. }))
+                    .collect();
+                if !images.is_empty() {
+                    if text.trim().is_empty() {
+                        text = format!("[{} image(s), shown below]", images.len());
+                    }
+                    for img in images {
+                        if let ContentBlock::Image { media_type, source } = img {
+                            if req.images {
+                                has_media = true;
+                                parts.push(json!({ "type": "text", "text": format!("Image from tool call {tool_use_id}:") }));
+                                let url = format!(
+                                    "data:{media_type};base64,{}",
+                                    base64_of(source).await?
+                                );
+                                parts.push(
+                                    json!({ "type": "image_url", "image_url": { "url": url } }),
+                                );
+                            } else {
+                                parts.push(json!({ "type": "text", "text": IMAGE_OMITTED }));
+                            }
+                        }
+                    }
+                }
                 out.push(json!({ "role": "tool", "tool_call_id": tool_use_id, "content": text }));
             }
             ContentBlock::Text { text } if !text.trim().is_empty() => {
@@ -398,6 +426,7 @@ fn assistant_message(content: &[ContentBlock]) -> Option<Value> {
                 id,
                 name,
                 input_json,
+                ..
             } => Some(json!({
                 "id": id,
                 "type": "function",
@@ -768,6 +797,8 @@ mod tests {
                             id: "c1".into(),
                             name: "f".into(),
                             input_json: "{\"a\":1}".into(),
+                            server: None,
+                            tool: None,
                         },
                     ],
                 },

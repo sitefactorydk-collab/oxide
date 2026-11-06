@@ -70,12 +70,77 @@ impl Default for ModelSettings {
     }
 }
 
+/// Default number of tool steps in one reply.
+pub const DEFAULT_MAX_STEPS: u32 = 25;
+/// Most tool steps Oxide allows in one reply.
+pub const MAX_MAX_STEPS: u32 = 200;
+
+/// Tool approvals and the tool loop (Settings → Permissions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ToolSettings {
+    /// Run MCP tools that say they only read (`readOnlyHint`) without asking.
+    pub auto_allow_read_only: bool,
+    /// Ask before Oxide's own web search and web fetch run.
+    pub ask_before_web: bool,
+    /// Most model → tools → model rounds in one reply.
+    pub max_steps: u32,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            auto_allow_read_only: false,
+            ask_before_web: false,
+            max_steps: DEFAULT_MAX_STEPS,
+        }
+    }
+}
+
+/// Which service Oxide's `web_search` tool uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum WebSearchProvider {
+    /// No search service: models get no `web_search` tool (except Anthropic's own, if on).
+    #[default]
+    None,
+    Brave,
+    Tavily,
+    Searxng,
+}
+
+/// Web search (Settings → Web search). API keys live in the keychain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebSearchSettings {
+    pub provider: WebSearchProvider,
+    /// Base URL of a SearXNG instance (its JSON format must be enabled).
+    pub searxng_url: String,
+    /// On Anthropic models, use Anthropic's server-side web search instead.
+    pub anthropic_native: bool,
+    /// Results per search (1–10).
+    pub max_results: u32,
+}
+
+impl Default for WebSearchSettings {
+    fn default() -> Self {
+        Self {
+            provider: WebSearchProvider::None,
+            searxng_url: String::new(),
+            anthropic_native: true,
+            max_results: 5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub profile: ProfileSettings,
     pub appearance: AppearanceSettings,
     pub models: ModelSettings,
+    pub tools: ToolSettings,
+    pub web_search: WebSearchSettings,
 }
 
 impl AppSettings {
@@ -91,6 +156,14 @@ impl AppSettings {
             .title_model
             .map(|m| m.trim().to_owned())
             .filter(|m| crate::model::split_model_id(m).is_some());
+        self.tools.max_steps = self.tools.max_steps.clamp(1, MAX_MAX_STEPS);
+        self.web_search.max_results = self.web_search.max_results.clamp(1, 10);
+        self.web_search.searxng_url = self
+            .web_search
+            .searxng_url
+            .trim()
+            .trim_end_matches('/')
+            .to_owned();
         self
     }
 }
@@ -131,5 +204,22 @@ mod tests {
         let s = s.normalized();
         assert_eq!(s.models.thinking_budget, MIN_THINKING_BUDGET);
         assert_eq!(s.models.title_model, None);
+    }
+
+    #[test]
+    fn tool_settings_default_and_clamp() {
+        let s: AppSettings = serde_json::from_str("{}").expect("parses");
+        assert_eq!(s.tools.max_steps, DEFAULT_MAX_STEPS);
+        assert!(!s.tools.auto_allow_read_only);
+        assert!(s.web_search.anthropic_native);
+        assert_eq!(s.web_search.provider, WebSearchProvider::None);
+        let mut s = AppSettings::default();
+        s.tools.max_steps = 0;
+        s.web_search.max_results = 50;
+        s.web_search.searxng_url = " http://localhost:8888/ ".into();
+        let s = s.normalized();
+        assert_eq!(s.tools.max_steps, 1);
+        assert_eq!(s.web_search.max_results, 10);
+        assert_eq!(s.web_search.searxng_url, "http://localhost:8888");
     }
 }

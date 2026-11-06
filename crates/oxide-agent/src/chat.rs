@@ -1,31 +1,49 @@
-//! Writing replies: one streamed generation per chat at a time.
+//! Writing replies: one generation per chat at a time, with the tool loop.
+//!
+//! A reply is one assistant message. When the model calls tools, the loop runs them (asking
+//! the user first where needed), adds the results to the same message and asks the model
+//! again, until it answers without tools, the user stops it, or the step limit is reached.
+//! The message's blocks keep the order things happened in: thinking, text, tool calls,
+//! their results, more text.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use futures_util::future::join_all;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
+use oxide_core::tools::PROVIDER_SERVER;
 use oxide_core::{
-    ChatStreamEvent, ContentBlock, Conversation, GenerateOptions, Message, ModelCapabilities,
-    ProviderKind, Role, StopReason, StreamEvent, ThinkingStyle, Usage,
+    AppSettings, ApprovalDecision, ChatStreamEvent, ContentBlock, Conversation, GenerateOptions,
+    Message, ModelCapabilities, ProviderKind, Role, StopReason, StreamEvent, ThinkingStyle,
+    ToolApprovalRequest, ToolUsageKind, Usage,
 };
 use oxide_llm::capabilities::anthropic_curated;
-use oxide_llm::{ChatEvent, ChatMessage, ChatRequest, Thinking, complete_text};
-use oxide_store::{NewReply, Store, new_id, now_ms};
-use tokio::sync::watch;
+use oxide_llm::{ChatEvent, ChatMessage, ChatRequest, Provider, Thinking, complete_text};
+use oxide_store::{NewReply, NewToolUsage, Store, new_id, now_ms};
+use serde_json::Value;
+use tokio::sync::{oneshot, watch};
 
 use crate::AgentError;
-use crate::context::{build_messages, plan_request, system_prompt};
+use crate::context::{
+    PromptContext, build_messages, plan_request, request_messages, system_prompt,
+};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
+use crate::tools::{ToolEntry, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label};
 
 /// How often buffered text is sent to the UI while a reply streams.
 const FLUSH_EVERY: Duration = Duration::from_millis(40);
 /// Longest wait for an automatic title.
 const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+const STOPPED_NOTE: &str = "The user stopped the reply before this tool ran.";
+const FAILED_NOTE: &str = "The reply ended before this tool ran.";
+const DENIED_NOTE: &str = "The user declined to run this tool call. Don't try it again unless the \
+                           user asks; continue without it or ask how they'd like to proceed.";
 
 /// Receives reply events. The app crate forwards them to the window.
 pub trait EventSink: Send + Sync + 'static {
@@ -38,11 +56,27 @@ struct Running {
     cancel: watch::Sender<bool>,
 }
 
+struct PendingApproval {
+    request: ToolApprovalRequest,
+    answer: oneshot::Sender<ApprovalDecision>,
+}
+
+/// The window's clock (time zone), for the system prompt.
+#[derive(Debug, Clone, Default)]
+struct ClientClock {
+    utc_offset_minutes: Option<i32>,
+    time_zone: Option<String>,
+}
+
 pub struct ChatService {
     store: Store,
     registry: Arc<ModelRegistry>,
     sink: Arc<dyn EventSink>,
+    tools: Tools,
     running: Mutex<HashMap<String, Running>>,
+    /// Tool calls waiting for the user, by tool call id.
+    approvals: Mutex<HashMap<String, PendingApproval>>,
+    clock: Mutex<ClientClock>,
 }
 
 /// How a generation ended.
@@ -52,18 +86,58 @@ enum Outcome {
     Failed(String),
 }
 
+/// Everything one reply's requests share.
+struct Setup {
+    provider: Arc<dyn Provider>,
+    model: String,
+    kind: ProviderKind,
+    caps: ModelCapabilities,
+    max_output: Option<u32>,
+    settings: AppSettings,
+    tool_set: ToolSet,
+    system: String,
+    /// "Allow always for this chat" keys.
+    grants: HashSet<String>,
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl ChatService {
-    pub fn new(store: Store, registry: Arc<ModelRegistry>, sink: Arc<dyn EventSink>) -> Arc<Self> {
+    pub fn new(
+        store: Store,
+        registry: Arc<ModelRegistry>,
+        sink: Arc<dyn EventSink>,
+        tools: Tools,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             registry,
             sink,
+            tools,
             running: Mutex::new(HashMap::new()),
+            approvals: Mutex::new(HashMap::new()),
+            clock: Mutex::new(ClientClock::default()),
         })
     }
 
+    pub fn tools(&self) -> &Tools {
+        &self.tools
+    }
+
     fn running(&self) -> std::sync::MutexGuard<'_, HashMap<String, Running>> {
-        self.running.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.running)
+    }
+
+    /// The window's time zone, used for the date and time in the system prompt.
+    pub fn set_client_clock(&self, utc_offset_minutes: i32, time_zone: Option<String>) {
+        *lock(&self.clock) = ClientClock {
+            utc_offset_minutes: Some(utc_offset_minutes.clamp(-14 * 60, 14 * 60)),
+            time_zone: time_zone
+                .map(|t| t.trim().chars().take(64).collect())
+                .filter(|t: &String| !t.is_empty()),
+        };
     }
 
     /// Whether a reply is being written in `conversation_id`.
@@ -84,6 +158,34 @@ impl ChatService {
                 r.cancel.send_replace(true);
                 true
             }
+            None => false,
+        }
+    }
+
+    /// Tool calls waiting for the user (all chats), oldest first.
+    pub fn pending_approvals(&self) -> Vec<ToolApprovalRequest> {
+        let mut v: Vec<ToolApprovalRequest> = lock(&self.approvals)
+            .values()
+            .map(|p| p.request.clone())
+            .collect();
+        v.sort_by_key(|r| r.requested_at);
+        v
+    }
+
+    /// Answers a waiting tool call. Returns whether it was still waiting.
+    pub fn answer_approval(
+        &self,
+        conversation_id: &str,
+        tool_use_id: &str,
+        decision: ApprovalDecision,
+    ) -> bool {
+        let mut map = lock(&self.approvals);
+        match map.get(tool_use_id) {
+            Some(p) if p.request.conversation_id == conversation_id => {}
+            _ => return false,
+        }
+        match map.remove(tool_use_id) {
+            Some(p) => p.answer.send(decision).is_ok(),
             None => false,
         }
     }
@@ -190,6 +292,7 @@ impl ChatService {
     /// as the UI hears this one is over.
     fn finish(&self, conversation_id: &str, event: StreamEvent) {
         self.running().remove(conversation_id);
+        lock(&self.approvals).retain(|_, p| p.request.conversation_id != conversation_id);
         self.emit(conversation_id, event);
     }
 
@@ -214,9 +317,10 @@ impl ChatService {
         let mut provider_label = String::new();
 
         let outcome = match self
-            .stream_reply(
+            .run(
                 &conversation,
                 &thread,
+                &reply_id,
                 options,
                 &mut reply,
                 &mut provider_label,
@@ -240,6 +344,24 @@ impl ChatService {
                 (StopReason::Error, Some(e))
             }
         };
+        // Calls that never ran get a result, so the reply stays a valid history.
+        let note = if stop_reason == StopReason::Stopped {
+            STOPPED_NOTE
+        } else {
+            FAILED_NOTE
+        };
+        for (id, out) in reply.close_open_calls(note) {
+            self.emit(
+                &cid,
+                StreamEvent::ToolResult {
+                    id,
+                    content: out.content,
+                    is_error: true,
+                    duration_ms: 0,
+                },
+            );
+        }
+        let usage = reply.total_usage();
         let content = reply.take_content();
         let keep = !content.is_empty()
             || matches!(
@@ -256,7 +378,7 @@ impl ChatService {
                     content,
                     model: conversation.model.clone(),
                     stop_reason,
-                    usage: reply.usage,
+                    usage,
                 })
                 .await;
             match saved {
@@ -305,17 +427,12 @@ impl ChatService {
         }
     }
 
-    /// Runs the request and accumulates the reply. Returns how it ended.
-    async fn stream_reply(
+    /// Resolves the model, its endpoint and the chat's tools.
+    async fn setup(
         &self,
         conversation: &Conversation,
-        thread: &[Message],
-        options: GenerateOptions,
-        reply: &mut ReplyBuilder,
         provider_label: &mut String,
-        cancelled: &mut watch::Receiver<bool>,
-    ) -> Result<Outcome, AgentError> {
-        let cid = conversation.id.as_str();
+    ) -> Result<Setup, AgentError> {
         let (provider_id, model) = split_model_id(&conversation.model).ok_or_else(|| {
             AgentError::Invalid(format!(
                 "unknown model “{}”. Pick a model in the composer.",
@@ -328,11 +445,12 @@ impl ChatService {
                 .await
                 .map_err(|e| {
                     match e {
-            AgentError::Store(oxide_store::StoreError::NotFound { .. }) => AgentError::Invalid(
-                "this chat's endpoint no longer exists. Pick another model in the composer.".into(),
-            ),
-            other => other,
-        }
+                AgentError::Store(oxide_store::StoreError::NotFound { .. }) => AgentError::Invalid(
+                    "this chat's endpoint no longer exists. Pick another model in the composer."
+                        .into(),
+                ),
+                other => other,
+            }
                 })?;
         *provider_label = config.name.clone();
         let info = self.registry.find(&conversation.model).await;
@@ -342,44 +460,467 @@ impl ChatService {
             (None, _) => ModelCapabilities::default(),
         };
         let settings = self.store.app_settings().await?;
+        let chat_tools = self.store.chat_tools(&conversation.id).await?;
+        let tool_set = if caps.tools {
+            self.tools
+                .tool_set(&chat_tools, &settings, config.kind)
+                .await
+        } else {
+            ToolSet::default()
+        };
+        let grants: HashSet<String> = self
+            .store
+            .chat_tool_grants(&conversation.id)
+            .await?
+            .into_iter()
+            .collect();
+        let project = match &conversation.project_id {
+            Some(p) => self.store.get_project(p).await.ok(),
+            None => None,
+        };
+        let clock = lock(&self.clock).clone();
+        let system = system_prompt(&PromptContext {
+            user_name: &settings.profile.name,
+            now_ms: now_ms(),
+            utc_offset_minutes: clock.utc_offset_minutes,
+            time_zone: clock.time_zone.as_deref(),
+            os: std::env::consts::OS,
+            web_search: tool_set.can_search(),
+            web_fetch: tool_set.can_fetch(),
+            connectors: tool_set.servers(),
+            project_instructions: project.as_ref().map(|p| p.instructions.as_str()),
+            memory: None,
+        });
+        Ok(Setup {
+            provider,
+            model: model.to_owned(),
+            kind: config.kind,
+            caps,
+            max_output: info.as_ref().and_then(|i| i.max_output_tokens),
+            settings,
+            tool_set,
+            system,
+            grants,
+        })
+    }
 
-        let mut request = ChatRequest::new(model, build_messages(thread));
-        request.system = Some(system_prompt(&settings.profile.name, now_ms()));
-        plan_request(
-            &mut request,
-            config.kind,
-            &caps,
-            info.as_ref().and_then(|i| i.max_output_tokens),
-            options,
-            settings.models.thinking_budget,
-        );
+    /// The tool loop: model, tools, model, … until the model is done.
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
+        &self,
+        conversation: &Conversation,
+        thread: &[Message],
+        reply_id: &str,
+        options: GenerateOptions,
+        reply: &mut ReplyBuilder,
+        provider_label: &mut String,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Result<Outcome, AgentError> {
+        let cid = conversation.id.as_str();
+        let mut setup = self.setup(conversation, provider_label).await?;
+        let history = build_messages(thread);
+        let max_steps = setup.settings.tools.max_steps;
+        let mut steps = 0u32;
+        loop {
+            let mut request = ChatRequest::new(
+                setup.model.clone(),
+                request_messages(&history, &reply.blocks),
+            );
+            request.system = Some(setup.system.clone());
+            plan_request(
+                &mut request,
+                setup.kind,
+                &setup.caps,
+                setup.max_output,
+                options,
+                setup.settings.models.thinking_budget,
+            );
+            request.tools = setup.tool_set.specs();
+            request.server_tools = setup.tool_set.server_tools.clone();
 
+            reply.begin_step();
+            let outcome = self
+                .stream_step(cid, reply_id, &setup, request, reply, cancelled)
+                .await?;
+            let open = reply.open_calls();
+            match outcome {
+                // Some local models end with "stop" after calling tools.
+                Outcome::Finished(StopReason::ToolUse | StopReason::EndTurn)
+                    if !open.is_empty() =>
+                {
+                    steps += 1;
+                    if steps > max_steps {
+                        let note = format!(
+                            "Oxide stopped here: this reply reached the limit of {max_steps} tool \
+                             steps (Settings → Permissions)."
+                        );
+                        for (id, out) in reply.close_open_calls(&note) {
+                            self.emit(
+                                cid,
+                                StreamEvent::ToolResult {
+                                    id,
+                                    content: out.content,
+                                    is_error: true,
+                                    duration_ms: 0,
+                                },
+                            );
+                        }
+                        return Ok(Outcome::Finished(StopReason::StepLimit));
+                    }
+                    if !self
+                        .run_calls(cid, reply_id, &mut setup, open, reply, cancelled)
+                        .await
+                    {
+                        return Ok(Outcome::Stopped);
+                    }
+                }
+                // The provider ran its own tools and wants to go on.
+                Outcome::Finished(StopReason::PauseTurn) => {
+                    steps += 1;
+                    if steps > max_steps {
+                        return Ok(Outcome::Finished(StopReason::StepLimit));
+                    }
+                }
+                Outcome::Finished(StopReason::ToolUse) => {
+                    return Ok(Outcome::Finished(StopReason::EndTurn));
+                }
+                other => return Ok(other),
+            }
+        }
+    }
+
+    /// One model request, streamed into `reply`.
+    async fn stream_step(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        setup: &Setup,
+        request: ChatRequest,
+        reply: &mut ReplyBuilder,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Result<Outcome, AgentError> {
         let mut stream = tokio::select! {
-            s = provider.stream(request) => s?,
+            s = setup.provider.stream(request) => s?,
             _ = cancelled.wait_for(|c| *c) => return Ok(Outcome::Stopped),
         };
-
         let mut ticker = tokio::time::interval(FLUSH_EVERY);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let outcome = loop {
-            tokio::select! {
+            let event = tokio::select! {
                 _ = cancelled.wait_for(|c| *c) => break Outcome::Stopped,
-                _ = ticker.tick() => self.flush(cid, reply),
+                _ = ticker.tick() => {
+                    self.flush(cid, reply);
+                    continue;
+                }
                 next = stream.next() => match next {
                     None => break Outcome::Failed("the reply ended unexpectedly".into()),
                     Some(Err(e)) => break Outcome::Failed(e.to_string()),
                     Some(Ok(ChatEvent::Stop(reason))) => break Outcome::Finished(reason),
-                    Some(Ok(event)) => {
-                        if let Some(ev) = reply.apply(event) {
-                            self.flush(cid, reply);
-                            self.emit(cid, ev);
-                        }
-                    }
+                    Some(Ok(event)) => event,
                 },
+            };
+            let events = reply.apply(event);
+            if !events.is_empty() {
+                self.flush(cid, reply);
+            }
+            for ev in events {
+                if let StreamEvent::ToolResult { id, is_error, .. } = &ev {
+                    self.log_provider_tool(cid, reply_id, reply, id, *is_error)
+                        .await;
+                }
+                self.emit(cid, ev);
             }
         };
         self.flush(cid, reply);
         Ok(outcome)
+    }
+
+    async fn log_provider_tool(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        reply: &ReplyBuilder,
+        id: &str,
+        is_error: bool,
+    ) {
+        let Some((name, input)) = reply.server_call(id) else {
+            return;
+        };
+        let label = usage_label(
+            if name == "web_search" {
+                oxide_core::tools::WEB_SEARCH
+            } else {
+                &name
+            },
+            &input,
+        );
+        let kind = if name == "web_search" {
+            ToolUsageKind::WebSearch
+        } else {
+            ToolUsageKind::ProviderTool
+        };
+        self.log(
+            cid,
+            reply_id,
+            id,
+            kind,
+            Some(PROVIDER_SERVER.into()),
+            name,
+            label,
+            is_error,
+        )
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn log(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        tool_use_id: &str,
+        kind: ToolUsageKind,
+        server: Option<String>,
+        tool: String,
+        label: Option<String>,
+        is_error: bool,
+    ) {
+        let r = self
+            .store
+            .log_tool_use(NewToolUsage {
+                conversation_id: cid.to_owned(),
+                message_id: reply_id.to_owned(),
+                tool_use_id: tool_use_id.to_owned(),
+                kind,
+                server,
+                tool,
+                label,
+                is_error,
+            })
+            .await;
+        if let Err(e) = r {
+            tracing::warn!("couldn't log a tool call: {e}");
+        }
+    }
+
+    fn needs_approval(entry: &ToolEntry, setup: &Setup) -> bool {
+        if setup.grants.contains(&entry.grant_key()) {
+            return false;
+        }
+        match entry.server() {
+            None => setup.settings.tools.ask_before_web,
+            Some(_) => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
+        }
+    }
+
+    /// Asks the user about one call. `None`: the reply was stopped while waiting.
+    async fn ask(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        call: &OpenCall,
+        entry: &ToolEntry,
+        input: &Value,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Option<ApprovalDecision> {
+        let request = ToolApprovalRequest {
+            conversation_id: cid.to_owned(),
+            message_id: reply_id.to_owned(),
+            tool_use_id: call.id.clone(),
+            server: entry.server().map(str::to_owned),
+            tool: entry.tool().to_owned(),
+            title: entry.title.clone(),
+            description: Some(entry.description.clone()).filter(|d| !d.is_empty()),
+            input_json: serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string()),
+            read_only: entry.read_only,
+            destructive: entry.destructive,
+            requested_at: now_ms(),
+        };
+        let (tx, rx) = oneshot::channel();
+        lock(&self.approvals).insert(
+            call.id.clone(),
+            PendingApproval {
+                request: request.clone(),
+                answer: tx,
+            },
+        );
+        self.emit(cid, StreamEvent::ToolApproval { request });
+        let answer = tokio::select! {
+            a = rx => Some(a.unwrap_or(ApprovalDecision::Deny)),
+            _ = cancelled.wait_for(|c| *c) => None,
+        };
+        lock(&self.approvals).remove(&call.id);
+        answer
+    }
+
+    /// Runs the calls of one step. Returns `false` if the user stopped the reply.
+    async fn run_calls(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        setup: &mut Setup,
+        calls: Vec<OpenCall>,
+        reply: &mut ReplyBuilder,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> bool {
+        let mut ready: Vec<(OpenCall, ToolEntry, Value)> = Vec::new();
+        for call in calls {
+            let stopped = *cancelled.borrow();
+            if stopped {
+                return false;
+            }
+            let Some(entry) = setup.tool_set.find(&call.name).cloned() else {
+                let out = ToolOutput::error(format!(
+                    "There's no tool called “{}”. Use one of the tools you were given.",
+                    call.name
+                ));
+                self.finish_call(cid, reply_id, &call, None, &Value::Null, out, reply)
+                    .await;
+                continue;
+            };
+            reply.label_call(&call.id, entry.server(), entry.tool());
+            let input: Value = if call.input_json.trim().is_empty() {
+                Value::Object(Default::default())
+            } else {
+                match serde_json::from_str(&call.input_json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        self.emit_call(cid, &call, &entry);
+                        let out = ToolOutput::error(format!(
+                            "The arguments weren't valid JSON ({e}). Call the tool again with a \
+                             JSON object."
+                        ));
+                        self.finish_call(
+                            cid,
+                            reply_id,
+                            &call,
+                            Some(&entry),
+                            &Value::Null,
+                            out,
+                            reply,
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+            };
+            self.emit_call(cid, &call, &entry);
+            if Self::needs_approval(&entry, setup) {
+                match self
+                    .ask(cid, reply_id, &call, &entry, &input, cancelled)
+                    .await
+                {
+                    None => return false,
+                    Some(ApprovalDecision::Deny) => {
+                        let out = ToolOutput::error(DENIED_NOTE);
+                        self.finish_call(cid, reply_id, &call, Some(&entry), &input, out, reply)
+                            .await;
+                        continue;
+                    }
+                    Some(ApprovalDecision::AllowChat) => {
+                        let key = entry.grant_key();
+                        if let Err(e) = self.store.grant_chat_tool(cid, &key).await {
+                            tracing::warn!("couldn't save the approval: {e}");
+                        }
+                        setup.grants.insert(key);
+                    }
+                    Some(ApprovalDecision::AllowOnce) => {}
+                }
+            }
+            ready.push((call, entry, input));
+        }
+
+        // Tools that only read run side by side; anything else runs one at a time.
+        let parallel = ready.len() > 1 && ready.iter().all(|(_, e, _)| e.read_only);
+        if parallel {
+            for (call, _, _) in &ready {
+                self.emit(
+                    cid,
+                    StreamEvent::ToolRunning {
+                        id: call.id.clone(),
+                    },
+                );
+            }
+            let settings = &setup.settings;
+            let runs = join_all(
+                ready
+                    .iter()
+                    .map(|(c, e, i)| self.tools.run(e, i, &c.id, settings)),
+            );
+            let outs = tokio::select! {
+                outs = runs => outs,
+                _ = cancelled.wait_for(|c| *c) => return false,
+            };
+            for ((call, entry, input), out) in ready.iter().zip(outs) {
+                self.finish_call(cid, reply_id, call, Some(entry), input, out, reply)
+                    .await;
+            }
+        } else {
+            for (call, entry, input) in &ready {
+                self.emit(
+                    cid,
+                    StreamEvent::ToolRunning {
+                        id: call.id.clone(),
+                    },
+                );
+                let out = tokio::select! {
+                    out = self.tools.run(entry, input, &call.id, &setup.settings) => out,
+                    _ = cancelled.wait_for(|c| *c) => return false,
+                };
+                self.finish_call(cid, reply_id, call, Some(entry), input, out, reply)
+                    .await;
+            }
+        }
+        true
+    }
+
+    fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
+        self.emit(
+            cid,
+            StreamEvent::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                server: entry.server().map(str::to_owned),
+                tool: entry.tool().to_owned(),
+                title: entry.title.clone(),
+                input_json: call.input_json.clone(),
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_call(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        call: &OpenCall,
+        entry: Option<&ToolEntry>,
+        input: &Value,
+        out: ToolOutput,
+        reply: &mut ReplyBuilder,
+    ) {
+        self.emit(
+            cid,
+            StreamEvent::ToolResult {
+                id: call.id.clone(),
+                content: out.content.clone(),
+                is_error: out.is_error,
+                duration_ms: out.duration_ms,
+            },
+        );
+        if let Some(entry) = entry {
+            self.log(
+                cid,
+                reply_id,
+                &call.id,
+                entry.usage_kind(),
+                entry.server().map(str::to_owned),
+                entry.tool().to_owned(),
+                usage_label(entry.tool(), input),
+                out.is_error,
+            )
+            .await;
+        }
+        reply.push_result(&call.id, out);
     }
 
     /// Sends buffered text to the UI.
@@ -513,96 +1054,316 @@ pub fn path_to(messages: &[Message], id: &str) -> Option<Vec<Message>> {
     Some(path)
 }
 
-/// Accumulates a streamed reply into content blocks.
+/// A tool call the model made that has no result yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenCall {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
+/// Accumulates a reply into content blocks, in the order things happen.
 #[derive(Default)]
 struct ReplyBuilder {
-    thinking: String,
-    signature: Option<String>,
+    blocks: Vec<ContentBlock>,
+    /// When the open thinking block (the last block) started.
     thinking_started: Option<Instant>,
-    thinking_ms: Option<u32>,
-    text: String,
-    tools: Vec<(String, String, String)>,
-    usage: Option<Usage>,
+    /// Usage of finished steps, summed.
+    usage_done: Option<Usage>,
+    /// Usage of the step being streamed (providers report it cumulatively).
+    usage_step: Option<Usage>,
     pending_text: String,
     pending_thinking: String,
 }
 
+fn add_usage(a: Option<Usage>, b: Option<Usage>) -> Option<Usage> {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(a), Some(b)) => Some(Usage {
+            input_tokens: a.input_tokens.saturating_add(b.input_tokens),
+            output_tokens: a.output_tokens.saturating_add(b.output_tokens),
+            cache_read_tokens: a.cache_read_tokens.saturating_add(b.cache_read_tokens),
+            cache_write_tokens: a.cache_write_tokens.saturating_add(b.cache_write_tokens),
+        }),
+    }
+}
+
 impl ReplyBuilder {
-    /// Applies an event. Text is buffered (see `flush`); other events that the UI shows are
+    fn begin_step(&mut self) {
+        self.end_thinking();
+        self.usage_done = add_usage(self.usage_done, self.usage_step.take());
+    }
+
+    fn total_usage(&self) -> Option<Usage> {
+        add_usage(self.usage_done, self.usage_step)
+    }
+
+    /// Applies an event. Text is buffered (see `flush`); other events the UI shows are
     /// returned to be sent straight away.
-    fn apply(&mut self, event: ChatEvent) -> Option<StreamEvent> {
+    fn apply(&mut self, event: ChatEvent) -> Vec<StreamEvent> {
         match event {
             ChatEvent::ThinkingDelta(t) => {
-                self.thinking_started.get_or_insert_with(Instant::now);
-                self.thinking.push_str(&t);
+                match self.blocks.last_mut() {
+                    Some(ContentBlock::Thinking { text, .. })
+                        if self.thinking_started.is_some() =>
+                    {
+                        text.push_str(&t);
+                    }
+                    _ => {
+                        self.thinking_started = Some(Instant::now());
+                        self.blocks.push(ContentBlock::Thinking {
+                            text: t.clone(),
+                            signature: None,
+                            duration_ms: None,
+                        });
+                    }
+                }
                 self.pending_thinking.push_str(&t);
-                None
+                vec![]
             }
             ChatEvent::ThinkingSignature(s) => {
-                self.signature = Some(s);
-                None
+                if let Some(ContentBlock::Thinking { signature, .. }) = self
+                    .blocks
+                    .iter_mut()
+                    .rev()
+                    .find(|b| matches!(b, ContentBlock::Thinking { .. }))
+                {
+                    *signature = Some(s);
+                }
+                vec![]
             }
             ChatEvent::TextDelta(t) => {
                 self.end_thinking();
-                self.text.push_str(&t);
+                match self.blocks.last_mut() {
+                    Some(ContentBlock::Text { text }) => text.push_str(&t),
+                    _ => self.blocks.push(ContentBlock::text(t.clone())),
+                }
                 self.pending_text.push_str(&t);
-                None
+                vec![]
             }
             ChatEvent::ToolUseStart { id, name } => {
                 self.end_thinking();
-                self.tools.push((id.clone(), name.clone(), String::new()));
-                Some(StreamEvent::ToolUse { id, name })
+                self.blocks.push(ContentBlock::ToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input_json: String::new(),
+                    server: None,
+                    tool: None,
+                });
+                vec![StreamEvent::ToolUse { id, name }]
+            }
+            ChatEvent::ServerToolStart { id, name } => {
+                self.end_thinking();
+                self.blocks.push(ContentBlock::ServerToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input_json: String::new(),
+                });
+                vec![StreamEvent::ToolUse { id, name }]
             }
             ChatEvent::ToolUseDelta { id, partial_json } => {
-                if let Some(t) = self.tools.iter_mut().find(|t| t.0 == id) {
-                    t.2.push_str(&partial_json);
+                if let Some(json) = self.input_of(&id) {
+                    json.push_str(&partial_json);
                 }
-                None
+                vec![]
             }
-            ChatEvent::ToolUseEnd { .. } => None,
+            ChatEvent::ToolUseEnd { id } => {
+                if let Some(json) = self.input_of(&id)
+                    && json.trim().is_empty()
+                {
+                    *json = "{}".into();
+                }
+                // Provider-run tools are announced here; Oxide's own when they run.
+                self.blocks
+                    .iter()
+                    .find_map(|b| match b {
+                        ContentBlock::ServerToolUse {
+                            id: bid,
+                            name,
+                            input_json,
+                        } if *bid == id => Some(StreamEvent::ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            server: Some(PROVIDER_SERVER.into()),
+                            tool: name.clone(),
+                            title: Some(if name == "web_search" {
+                                "Web search".into()
+                            } else {
+                                name.clone()
+                            }),
+                            input_json: input_json.clone(),
+                        }),
+                        _ => None,
+                    })
+                    .into_iter()
+                    .chain(std::iter::once(StreamEvent::ToolRunning { id: id.clone() }))
+                    .filter(|_| self.server_call(&id).is_some())
+                    .collect()
+            }
+            ChatEvent::ServerToolResult {
+                tool_use_id,
+                raw_json,
+            } => {
+                let (content, is_error) = provider_result_summary(&raw_json);
+                self.blocks.push(ContentBlock::ServerToolResult {
+                    tool_use_id: tool_use_id.clone(),
+                    raw_json,
+                });
+                vec![StreamEvent::ToolResult {
+                    id: tool_use_id,
+                    content,
+                    is_error,
+                    duration_ms: 0,
+                }]
+            }
             ChatEvent::Usage(u) => {
-                let mut total = self.usage.unwrap_or_default();
-                total.merge(u);
-                self.usage = Some(total);
-                Some(StreamEvent::Usage { usage: total })
+                let mut step = self.usage_step.unwrap_or_default();
+                step.merge(u);
+                self.usage_step = Some(step);
+                match self.total_usage() {
+                    Some(usage) => vec![StreamEvent::Usage { usage }],
+                    None => vec![],
+                }
             }
-            ChatEvent::Stop(_) => None,
+            ChatEvent::Stop(_) => vec![],
         }
     }
 
+    fn input_of(&mut self, id: &str) -> Option<&mut String> {
+        self.blocks.iter_mut().rev().find_map(|b| match b {
+            ContentBlock::ToolUse {
+                id: bid,
+                input_json,
+                ..
+            }
+            | ContentBlock::ServerToolUse {
+                id: bid,
+                input_json,
+                ..
+            } if bid == id => Some(input_json),
+            _ => None,
+        })
+    }
+
+    /// Name and input of a provider-run call.
+    fn server_call(&self, id: &str) -> Option<(String, Value)> {
+        self.blocks.iter().find_map(|b| match b {
+            ContentBlock::ServerToolUse {
+                id: bid,
+                name,
+                input_json,
+            } if bid == id => Some((
+                name.clone(),
+                serde_json::from_str(input_json).unwrap_or(Value::Null),
+            )),
+            _ => None,
+        })
+    }
+
     fn end_thinking(&mut self) {
-        if self.thinking_ms.is_none()
-            && let Some(start) = self.thinking_started
+        if let Some(start) = self.thinking_started.take()
+            && let Some(ContentBlock::Thinking { duration_ms, .. }) = self
+                .blocks
+                .iter_mut()
+                .rev()
+                .find(|b| matches!(b, ContentBlock::Thinking { .. }))
+            && duration_ms.is_none()
         {
-            self.thinking_ms = Some(u32::try_from(start.elapsed().as_millis()).unwrap_or(u32::MAX));
+            *duration_ms = Some(u32::try_from(start.elapsed().as_millis()).unwrap_or(u32::MAX));
         }
+    }
+
+    /// Oxide-run calls without a result, in order.
+    fn open_calls(&self) -> Vec<OpenCall> {
+        let answered: HashSet<&str> = self
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.blocks
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                    ..
+                } if !answered.contains(id.as_str()) => Some(OpenCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input_json: input_json.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Fills in which server and tool a call went to.
+    fn label_call(&mut self, call_id: &str, server_name: Option<&str>, tool_name: &str) {
+        for b in &mut self.blocks {
+            if let ContentBlock::ToolUse {
+                id, server, tool, ..
+            } = b
+                && id == call_id
+            {
+                *server = server_name.map(str::to_owned);
+                *tool = Some(tool_name.to_owned());
+            }
+        }
+    }
+
+    fn push_result(&mut self, id: &str, out: ToolOutput) {
+        self.end_thinking();
+        self.blocks.push(ContentBlock::ToolResult {
+            tool_use_id: id.to_owned(),
+            content: out.content,
+            is_error: out.is_error,
+        });
+    }
+
+    /// Gives every open call an error result. Returns them for the UI.
+    fn close_open_calls(&mut self, note: &str) -> Vec<(String, ToolOutput)> {
+        let open = self.open_calls();
+        let mut closed = Vec::new();
+        for c in open {
+            let out = ToolOutput::error(note);
+            self.push_result(&c.id, out.clone());
+            closed.push((c.id, out));
+        }
+        closed
     }
 
     fn take_content(&mut self) -> Vec<ContentBlock> {
         self.end_thinking();
-        let mut out = Vec::new();
-        if !self.thinking.trim().is_empty() || self.signature.is_some() {
-            out.push(ContentBlock::Thinking {
-                text: std::mem::take(&mut self.thinking),
-                signature: self.signature.take(),
-                duration_ms: self.thinking_ms,
-            });
-        }
-        if !self.text.is_empty() {
-            out.push(ContentBlock::text(std::mem::take(&mut self.text)));
-        }
-        for (id, name, json) in self.tools.drain(..) {
-            out.push(ContentBlock::ToolUse {
-                id,
-                name,
-                input_json: if json.trim().is_empty() {
-                    "{}".into()
-                } else {
-                    json
+        std::mem::take(&mut self.blocks)
+            .into_iter()
+            .filter(|b| match b {
+                ContentBlock::Text { text } => !text.is_empty(),
+                ContentBlock::Thinking {
+                    text, signature, ..
+                } => !text.trim().is_empty() || signature.is_some(),
+                _ => true,
+            })
+            .map(|b| match b {
+                ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                    server,
+                    tool,
+                } if input_json.trim().is_empty() => ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json: "{}".into(),
+                    server,
+                    tool,
                 },
-            });
-        }
-        out
+                b => b,
+            })
+            .collect()
     }
 }
 
@@ -610,6 +1371,7 @@ impl ReplyBuilder {
 pub(crate) mod tests {
     use super::*;
     use crate::registry::Connector;
+    use crate::tools::tests::{FakeMcp, tool};
     use futures_util::FutureExt;
     use futures_util::future::BoxFuture;
     use oxide_core::{ModelInfo, StartConversation};
@@ -848,16 +1610,25 @@ pub(crate) mod tests {
     }
 
     async fn fixture(scripts: Vec<Vec<Step>>) -> Fixture {
+        fixture_with(scripts, None).await
+    }
+
+    async fn fixture_with(scripts: Vec<Vec<Step>>, mcp: Option<Arc<FakeMcp>>) -> Fixture {
         let store = Store::open_in_memory().await.expect("store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
         let fake = FakeProvider::new(scripts);
         let registry = Arc::new(ModelRegistry::with_connector(
             store.clone(),
-            secrets,
+            secrets.clone(),
             fake_connector(fake.clone()),
         ));
         let sink = Arc::new(Recorder::default());
-        let service = ChatService::new(store.clone(), registry, sink.clone());
+        let tools = Tools::new(
+            mcp.map(|m| m as Arc<dyn crate::tools::McpTools>),
+            secrets,
+            None,
+        );
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
         let (chat, first) = store
             .start_conversation(StartConversation {
                 text: "What is Rust?".into(),
@@ -1205,6 +1976,421 @@ pub(crate) mod tests {
         send(service.regenerate("m", o));
         send(registry.list(false));
         send(registry.find("a/b"));
+    }
+
+    // ---- The tool loop ----------------------------------------------------------------
+
+    fn call(id: &str, name: &str, json: &str) -> Vec<Step> {
+        vec![
+            ev(ChatEvent::ToolUseStart {
+                id: id.into(),
+                name: name.into(),
+            }),
+            ev(ChatEvent::ToolUseDelta {
+                id: id.into(),
+                partial_json: json.into(),
+            }),
+            ev(ChatEvent::ToolUseEnd { id: id.into() }),
+        ]
+    }
+
+    fn turn(mut steps: Vec<Step>, stop: StopReason) -> Vec<Step> {
+        steps.push(ev(ChatEvent::Usage(Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Usage::default()
+        })));
+        steps.push(ev(ChatEvent::Stop(stop)));
+        steps
+    }
+
+    fn fs_mcp() -> Arc<FakeMcp> {
+        Arc::new(FakeMcp {
+            tools: vec![
+                tool("fs", "read", true),
+                tool("fs", "list", true),
+                tool("fs", "write", false),
+            ],
+            ..FakeMcp::default()
+        })
+    }
+
+    async fn wait_approval(f: &Fixture, id: &str) -> ToolApprovalRequest {
+        let id = id.to_owned();
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::ToolApproval { request } if request.tool_use_id == id))
+            })
+            .await;
+        f.service
+            .pending_approvals()
+            .into_iter()
+            .find(|r| r.tool_use_id == id)
+            .expect("pending")
+    }
+
+    fn saved(f: &Fixture) -> Message {
+        match f.sink.events().last().cloned() {
+            Some(StreamEvent::Done { message: Some(m) }) => m,
+            other => panic!("ends with a saved reply: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_run_after_approval_and_the_model_continues() {
+        let mcp = fs_mcp();
+        let mut first = vec![text("Let me look.")];
+        first.extend(call("c1", "fs__write", "{\"path\":\"a.txt\"}"));
+        let f = fixture_with(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("Done: wrote it.")], StopReason::EndTurn),
+                vec![text("Title"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+            ],
+            Some(mcp.clone()),
+        )
+        .await;
+        let reply_id = f
+            .service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        let ask = wait_approval(&f, "c1").await;
+        assert_eq!(ask.server.as_deref(), Some("fs"));
+        assert_eq!(ask.tool, "write");
+        assert_eq!(ask.message_id, reply_id);
+        assert!(
+            ask.input_json.contains("\"path\": \"a.txt\""),
+            "{}",
+            ask.input_json
+        );
+        assert!(
+            !f.service
+                .answer_approval("other-chat", "c1", ApprovalDecision::AllowOnce)
+        );
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "c1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+
+        let m = saved(&f);
+        assert_eq!(m.stop_reason, Some(StopReason::EndTurn));
+        assert_eq!(m.content.len(), 4, "{:?}", m.content);
+        assert_eq!(m.content[0], ContentBlock::text("Let me look."));
+        assert!(
+            matches!(&m.content[1], ContentBlock::ToolUse { id, server: Some(s), tool: Some(t), .. }
+            if id == "c1" && s == "fs" && t == "write")
+        );
+        assert!(
+            matches!(&m.content[2], ContentBlock::ToolResult { tool_use_id, is_error: false, .. }
+            if tool_use_id == "c1")
+        );
+        assert_eq!(m.content[3], ContentBlock::text("Done: wrote it."));
+        // Two steps' usage, added up.
+        assert_eq!(m.usage.map(|u| u.input_tokens), Some(20));
+        assert_eq!(
+            mcp.calls.lock().expect("lock")[0].2,
+            serde_json::json!({"path": "a.txt"})
+        );
+
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["web_fetch", "fs__list", "fs__read", "fs__write"]
+        );
+        assert!(
+            reqs[0]
+                .system
+                .as_deref()
+                .is_some_and(|s| s.contains("connectors: fs"))
+        );
+        // The second request carries the call and its result.
+        let second = &reqs[1].messages;
+        assert_eq!(second.len(), 3);
+        assert_eq!(second[1].role, Role::Assistant);
+        assert!(matches!(second[1].content[1], ContentBlock::ToolUse { .. }));
+        assert!(matches!(
+            second[2].content[0],
+            ContentBlock::ToolResult { .. }
+        ));
+
+        let events = f.sink.events();
+        let kinds: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolUse { .. } => Some("use"),
+                StreamEvent::ToolCall { .. } => Some("call"),
+                StreamEvent::ToolApproval { .. } => Some("ask"),
+                StreamEvent::ToolRunning { .. } => Some("run"),
+                StreamEvent::ToolResult { .. } => Some("result"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, vec!["use", "call", "ask", "run", "result"]);
+
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert_eq!(used.len(), 1);
+        assert_eq!(used[0].label.as_deref(), Some("a.txt"));
+        assert_eq!(used[0].message_id, reply_id);
+        assert!(f.service.pending_approvals().is_empty());
+
+        // The next reply sees the tool turns in its history.
+        let next = f
+            .service
+            .send(
+                &f.chat.id,
+                Some(&reply_id),
+                vec![ContentBlock::text("thanks")],
+                GenerateOptions::default(),
+            )
+            .await;
+        assert!(next.is_ok());
+    }
+
+    #[tokio::test]
+    async fn denied_calls_tell_the_model_and_allow_always_sticks() {
+        let mut first = call("c1", "fs__write", "{}");
+        first.extend(call("c2", "fs__write", "{\"path\":\"b\"}"));
+        let f = fixture_with(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(
+                    call("c3", "fs__write", "{\"path\":\"c\"}"),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("ok")], StopReason::EndTurn),
+                vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+            ],
+            Some(fs_mcp()),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_approval(&f, "c1").await;
+        f.service
+            .answer_approval(&f.chat.id, "c1", ApprovalDecision::Deny);
+        wait_approval(&f, "c2").await;
+        f.service
+            .answer_approval(&f.chat.id, "c2", ApprovalDecision::AllowChat);
+        // c3 runs without asking.
+        f.sink.wait_finished().await;
+        let asks = f
+            .sink
+            .events()
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::ToolApproval { .. }))
+            .count();
+        assert_eq!(asks, 2);
+        let m = saved(&f);
+        let results: Vec<(String, bool)> = m
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } => Some((tool_use_id.clone(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            results,
+            vec![
+                ("c1".into(), true),
+                ("c2".into(), false),
+                ("c3".into(), false)
+            ]
+        );
+        assert!(plain_text(&m.content).contains("declined"));
+        assert_eq!(
+            f.store.chat_tool_grants(&f.chat.id).await.expect("grants"),
+            vec!["fs/write".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_tools_can_run_unasked_and_in_parallel() {
+        let mcp = Arc::new(FakeMcp {
+            tools: vec![tool("fs", "read", true), tool("fs", "list", true)],
+            delay_ms: 300,
+            ..FakeMcp::default()
+        });
+        let mut first = call("r1", "fs__read", "{\"path\":\"a\"}");
+        first.extend(call("r2", "fs__list", "{\"path\":\"b\"}"));
+        let f = fixture_with(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("both read")], StopReason::EndTurn),
+                vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+            ],
+            Some(mcp.clone()),
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.tools.auto_allow_read_only = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        let started = Instant::now();
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        assert!(
+            started.elapsed() < Duration::from_millis(550),
+            "ran side by side"
+        );
+        assert_eq!(mcp.calls.lock().expect("lock").len(), 2);
+        assert!(
+            !f.sink
+                .events()
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolApproval { .. }))
+        );
+        assert_eq!(saved(&f).stop_reason, Some(StopReason::EndTurn));
+    }
+
+    #[tokio::test]
+    async fn stop_while_waiting_keeps_a_valid_reply() {
+        let f = fixture_with(
+            vec![turn(call("c1", "fs__write", "{}"), StopReason::ToolUse)],
+            Some(fs_mcp()),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_approval(&f, "c1").await;
+        assert!(f.service.stop(&f.chat.id));
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert_eq!(m.stop_reason, Some(StopReason::Stopped));
+        assert!(matches!(
+            &m.content[1],
+            ContentBlock::ToolResult { is_error: true, .. }
+        ));
+        assert!(plain_text(&m.content).contains("stopped the reply"));
+        assert!(f.service.pending_approvals().is_empty());
+        assert!(!f.service.is_running(&f.chat.id));
+    }
+
+    #[tokio::test]
+    async fn step_limit_bad_json_and_unknown_tools() {
+        let mut first = call("u1", "nope__tool", "{}");
+        first.extend(call("j1", "fs__read", "{not json"));
+        let f = fixture_with(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(call("r1", "fs__read", "{}"), StopReason::ToolUse),
+                turn(vec![text("never")], StopReason::EndTurn),
+            ],
+            Some(fs_mcp()),
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.tools.max_steps = 1;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert_eq!(m.stop_reason, Some(StopReason::StepLimit));
+        let text = plain_text(&m.content);
+        assert!(
+            text.contains("There's no tool called “nope__tool”"),
+            "{text}"
+        );
+        assert!(text.contains("weren't valid JSON"), "{text}");
+        assert!(text.contains("limit of 1 tool steps"), "{text}");
+        // Two model steps (a title request may follow; it has no tools).
+        let steps = f
+            .fake
+            .requests()
+            .iter()
+            .filter(|r| !r.tools.is_empty())
+            .count();
+        assert_eq!(steps, 2);
+    }
+
+    #[tokio::test]
+    async fn local_models_that_stop_after_calls_still_get_results() {
+        let f = fixture_with(
+            vec![
+                turn(call("r1", "fs__read", "{}"), StopReason::EndTurn),
+                turn(vec![text("read")], StopReason::EndTurn),
+                vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+            ],
+            Some(fs_mcp()),
+        )
+        .await;
+        f.store
+            .grant_chat_tool(&f.chat.id, "fs/read")
+            .await
+            .expect("grant");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        assert_eq!(saved(&f).content.last(), Some(&ContentBlock::text("read")));
+    }
+
+    #[tokio::test]
+    async fn provider_tools_are_shown_and_logged() {
+        let f = fixture(vec![
+            turn(
+                vec![
+                    ev(ChatEvent::ServerToolStart {
+                        id: "s1".into(),
+                        name: "web_search".into(),
+                    }),
+                    ev(ChatEvent::ToolUseDelta {
+                        id: "s1".into(),
+                        partial_json: "{\"query\":\"oxide\"}".into(),
+                    }),
+                    ev(ChatEvent::ToolUseEnd { id: "s1".into() }),
+                    ev(ChatEvent::ServerToolResult {
+                        tool_use_id: "s1".into(),
+                        raw_json: r#"{"type":"web_search_tool_result","tool_use_id":"s1","content":[{"type":"web_search_result","title":"Oxide","url":"https://o.example"}]}"#.into(),
+                    }),
+                ],
+                StopReason::PauseTurn,
+            ),
+            turn(vec![text("Found it.")], StopReason::EndTurn),
+            vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+        ])
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert!(matches!(m.content[0], ContentBlock::ServerToolUse { .. }));
+        assert!(matches!(
+            m.content[1],
+            ContentBlock::ServerToolResult { .. }
+        ));
+        // The paused turn went back with the server blocks.
+        let second = &f.fake.requests()[1].messages;
+        assert!(matches!(
+            second.last().map(|m| &m.content[0]),
+            Some(ContentBlock::ServerToolUse { .. })
+        ));
+        assert!(f.sink.events().iter().any(|e| matches!(e,
+            StreamEvent::ToolCall { server: Some(s), .. } if s == "anthropic")));
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert_eq!(used[0].kind, ToolUsageKind::WebSearch);
+        assert_eq!(used[0].label.as_deref(), Some("oxide"));
     }
 
     #[test]

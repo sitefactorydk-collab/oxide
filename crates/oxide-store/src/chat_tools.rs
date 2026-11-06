@@ -58,6 +58,7 @@ mod tests {
         let t = ChatTools {
             disabled_servers: vec!["fs".into()],
             disabled_tools: vec!["web/fetch".into()],
+            disabled_builtins: vec!["web_search".into()],
         };
         store.set_chat_tools(&chat.id, &t).await.expect("saves");
         store

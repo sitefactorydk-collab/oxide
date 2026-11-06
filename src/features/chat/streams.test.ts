@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ChatStreamEvent, Message, StreamEvent } from "@/bindings";
-import { reduceStream } from "./streams";
+import type { ChatStreamEvent, Message, StreamEvent, ToolApprovalRequest } from "@/bindings";
+import { liveText, liveThinking, reduceStream } from "./streams";
 
 const ev = (event: StreamEvent, conversationId = "c1"): ChatStreamEvent => ({
   conversationId,
@@ -22,13 +22,58 @@ describe("reduceStream", () => {
     s = reduceStream(s, ev({ type: "thinkingDelta", text: "think" }), 300);
     s = reduceStream(s, ev({ type: "textDelta", text: "Hello" }), 2_300);
     s = reduceStream(s, ev({ type: "textDelta", text: " there" }), 2_400);
-    s = reduceStream(s, ev({ type: "toolUse", id: "t", name: "search" }), 2_500);
     const live = s.live["c1"];
-    expect(live?.text).toBe("Hello there");
-    expect(live?.thinking).toBe("Let me think");
-    expect(live?.thinkingStartedAt).toBe(200);
-    expect(live?.thinkingEndedAt).toBe(2_300);
-    expect(live?.tools).toEqual([{ id: "t", name: "search" }]);
+    expect(live && liveText(live)).toBe("Hello there");
+    expect(live && liveThinking(live)).toBe("Let me think");
+    expect(live?.blocks[0]).toEqual({
+      kind: "thinking",
+      text: "Let me think",
+      startedAt: 200,
+      endedAt: 2_300,
+    });
+  });
+
+  it("follows a tool call from start to result, in order with the text", () => {
+    let s = reduceStream(empty, started, 1);
+    s = reduceStream(s, ev({ type: "textDelta", text: "Looking." }), 2);
+    s = reduceStream(s, ev({ type: "toolUse", id: "t", name: "fs__read" }), 3);
+    s = reduceStream(
+      s,
+      ev({
+        type: "toolCall",
+        id: "t",
+        name: "fs__read",
+        server: "fs",
+        tool: "read",
+        title: "Read file",
+        inputJson: '{"path":"a"}',
+      }),
+      4,
+    );
+    const request = { toolUseId: "t", conversationId: "c1" } as ToolApprovalRequest;
+    s = reduceStream(s, ev({ type: "toolApproval", request }), 5);
+    const tool = () => {
+      const b = s.live["c1"]?.blocks[1];
+      return b?.kind === "tool" ? b.call : null;
+    };
+    expect(tool()?.status).toBe("awaitingApproval");
+    expect(tool()?.approval).toBe(request);
+    s = reduceStream(s, ev({ type: "toolRunning", id: "t" }), 6);
+    expect(tool()?.status).toBe("running");
+    s = reduceStream(
+      s,
+      ev({
+        type: "toolResult",
+        id: "t",
+        content: [{ type: "text", text: "data" }],
+        isError: false,
+        durationMs: 12,
+      }),
+      7,
+    );
+    expect(tool()).toMatchObject({ status: "done", server: "fs", tool: "read", durationMs: 12 });
+    s = reduceStream(s, ev({ type: "textDelta", text: "Done." }), 8);
+    expect(s.live["c1"]?.blocks.map((b) => b.kind)).toEqual(["text", "tool", "text"]);
   });
 
   it("ignores deltas for chats without a started reply", () => {
@@ -52,7 +97,7 @@ describe("reduceStream", () => {
   it("keeps chats apart", () => {
     let s = reduceStream(empty, started, 1);
     s = reduceStream(s, ev({ type: "textDelta", text: "other" }, "c2"), 2);
-    expect(s.live["c1"]?.text).toBe("");
+    expect(s.live["c1"]?.blocks).toEqual([]);
     expect(s.live["c2"]).toBeUndefined();
   });
 });

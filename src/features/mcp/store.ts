@@ -24,7 +24,11 @@ interface McpUiState {
   setDraftTools: (t: Required<ChatTools>) => void;
 }
 
-export const EMPTY_TOOLS: Required<ChatTools> = { disabledServers: [], disabledTools: [] };
+export const EMPTY_TOOLS: Required<ChatTools> = {
+  disabledServers: [],
+  disabledTools: [],
+  disabledBuiltins: [],
+};
 
 export const useMcpUi = create<McpUiState>((set) => ({
   asks: [],

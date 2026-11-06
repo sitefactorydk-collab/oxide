@@ -220,6 +220,7 @@ describe("composer + menu", () => {
       expect(fakeMcpState().chatTools.get("c2")).toEqual({
         disabledServers: ["docs"],
         disabledTools: [],
+        disabledBuiltins: [],
       }),
     );
   });

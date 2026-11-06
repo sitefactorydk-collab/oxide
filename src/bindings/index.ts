@@ -441,6 +441,105 @@ async setChatTools(conversationId: string, tools: ChatTools) : Promise<Result<nu
 }
 },
 /**
+ * Answers a tool call that waits for approval. Returns whether it was still waiting.
+ */
+async answerToolApproval(conversationId: string, toolUseId: string, decision: ApprovalDecision) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("answer_tool_approval", { conversationId, toolUseId, decision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tool calls waiting for approval in every chat (after a window reload).
+ */
+async pendingToolApprovals() : Promise<Result<ToolApprovalRequest[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pending_tool_approvals") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every tool call a chat made, oldest first ("Used in this chat").
+ */
+async toolUsage(conversationId: string) : Promise<Result<ToolUsage[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tool_usage", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tools allowed for the rest of a chat (`server/tool`, `builtin/<name>`).
+ */
+async chatToolGrants(conversationId: string) : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_tool_grants", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Withdraws "Allow always" for one tool, or every tool of the chat when `tool_key` is null.
+ */
+async revokeChatToolGrant(conversationId: string, toolKey: string | null) : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("revoke_chat_tool_grant", { conversationId, toolKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The window's time zone, for the date and time models are told.
+ */
+async setClientClock(utcOffsetMinutes: number, timeZone: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_client_clock", { utcOffsetMinutes, timeZone }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Masked hints of the stored web search keys.
+ */
+async webSearchKeys() : Promise<Result<WebSearchKeys, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("web_search_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stores (or with `null`, removes) a web search API key in the keychain.
+ */
+async setWebSearchKey(service: SearchKeyKind, key: string | null) : Promise<Result<WebSearchKeys, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_web_search_key", { service, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs a test search with `settings` (not saved) and an optional typed key.
+ */
+async testWebSearch(settings: WebSearchSettings, key: string | null) : Promise<Result<WebSearchTest, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_web_search", { settings, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -608,8 +707,16 @@ mcpChanged: "mcp-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
+/**
+ * The user's answer to a [`ToolApprovalRequest`].
+ */
+export type ApprovalDecision = "allowOnce" | 
+/**
+ * Allow this tool for the rest of the chat (saved).
+ */
+"allowChat" | "deny"
 /**
  * A prepared attachment, ready to send.
  */
@@ -694,7 +801,11 @@ disabledServers: string[];
 /**
  * Single tools that are off, as `server/tool`.
  */
-disabledTools: string[] }
+disabledTools: string[]; 
+/**
+ * Built-in tools that are off (`web_search`, `web_fetch`).
+ */
+disabledBuiltins: string[] }
 export type CommandError = 
 /**
  * The thing asked for doesn't exist (any more).
@@ -721,9 +832,22 @@ export type ContentBlock = { type: "text"; text: string } | { type: "image"; med
  */
 { type: "thinking"; text: string; signature: string | null; durationMs: number | null } | 
 /**
- * A tool call made by the model. `input` is the JSON arguments as text.
+ * A tool call made by the model. `input_json` is the JSON arguments as text; `name` is
+ * the name the model used (MCP tools are `server__tool`).
+ * 
+ * `server` (the MCP server; `None` for Oxide's built-in tools) and `tool` (the tool's own
+ * name) are filled in by the tool loop, so the UI can label the call.
  */
-{ type: "toolUse"; id: string; name: string; inputJson: string } | { type: "toolResult"; toolUseId: string; content: ContentBlock[]; isError: boolean } | { type: "artifactRef"; artifactId: string; title: string; version: number }
+{ type: "toolUse"; id: string; name: string; inputJson: string; server?: string | null; tool?: string | null } | { type: "toolResult"; toolUseId: string; content: ContentBlock[]; isError: boolean } | 
+/**
+ * A tool the provider ran itself during the reply (Anthropic's web search).
+ */
+{ type: "serverToolUse"; id: string; name: string; inputJson: string } | 
+/**
+ * The result of a [`ContentBlock::ServerToolUse`], kept exactly as the provider sent it
+ * (`raw_json`), because it must be sent back unchanged while the reply continues.
+ */
+{ type: "serverToolResult"; toolUseId: string; rawJson: string } | { type: "artifactRef"; artifactId: string; title: string; version: number }
 /**
  * One chat. Messages hang off it as a tree (see [`crate::Message::parent_id`]).
  */
@@ -1220,6 +1344,10 @@ export type Role = "user" | "assistant"
  */
 export type SearchHit = { conversation: Conversation; messageId: string | null; snippet: string | null }
 /**
+ * A web search service whose key lives in the keychain.
+ */
+export type SearchKeyKind = "brave" | "tavily"
+/**
  * Creates a chat together with its first user message.
  */
 export type StartConversation = { text: string; model: string; projectId: string | null; 
@@ -1240,9 +1368,18 @@ export type StopReason =
  */
 "maxTokens" | "stopSequence" | 
 /**
- * The model wants to call a tool (the tool loop arrives in Phase 6).
+ * The model wants to call a tool. The tool loop runs it and continues; a saved reply only
+ * ends this way if its tools couldn't be run.
  */
 "toolUse" | 
+/**
+ * The provider paused a long turn (Anthropic server tools); the tool loop continues it.
+ */
+"pauseTurn" | 
+/**
+ * The reply used the most tool steps allowed (Settings → Permissions).
+ */
+"stepLimit" | 
 /**
  * The model declined to answer.
  */
@@ -1272,9 +1409,27 @@ export type StreamEvent =
  */
 { type: "started"; messageId: string; parentId: string; model: string; startedAt: number } | { type: "textDelta"; text: string } | { type: "thinkingDelta"; text: string } | 
 /**
- * The model started a tool call (shown, not run, until Phase 6).
+ * The model started a tool call; its arguments are still streaming.
  */
-{ type: "toolUse"; id: string; name: string } | { type: "usage"; usage: Usage } | 
+{ type: "toolUse"; id: string; name: string } | 
+/**
+ * A tool call's arguments are complete. `server` is the MCP server (`None` for built-in
+ * tools, `Some("anthropic")` for a tool the provider runs itself); `tool` is the tool's
+ * own name and `title` its display name.
+ */
+{ type: "toolCall"; id: string; name: string; server: string | null; tool: string; title: string | null; inputJson: string } | 
+/**
+ * A tool call waits for the user's approval (answer with `answer_tool_approval`).
+ */
+{ type: "toolApproval"; request: ToolApprovalRequest } | 
+/**
+ * A tool call was approved (or needed no approval) and is running.
+ */
+{ type: "toolRunning"; id: string } | 
+/**
+ * A tool call finished. `content` is what the model sees.
+ */
+{ type: "toolResult"; id: string; content: ContentBlock[]; isError: boolean; durationMs: number } | { type: "usage"; usage: Usage } | 
 /**
  * The reply is saved. `message` is `None` when it was stopped before any output.
  */
@@ -1311,6 +1466,66 @@ export type ThinkingStyle =
  */
 "switch"
 /**
+ * A tool call that waits for the user.
+ */
+export type ToolApprovalRequest = { conversationId: string; 
+/**
+ * The reply the call belongs to.
+ */
+messageId: string; toolUseId: string; 
+/**
+ * MCP server; `None` for built-in tools.
+ */
+server: string | null; tool: string; title: string | null; description: string | null; 
+/**
+ * The arguments as pretty-printed JSON.
+ */
+inputJson: string; 
+/**
+ * The server says the tool only reads.
+ */
+readOnly: boolean; 
+/**
+ * The server says the tool may destroy data.
+ */
+destructive: boolean; requestedAt: number }
+/**
+ * Tool approvals and the tool loop (Settings → Permissions).
+ */
+export type ToolSettings = { 
+/**
+ * Run MCP tools that say they only read (`readOnlyHint`) without asking.
+ */
+autoAllowReadOnly: boolean; 
+/**
+ * Ask before Oxide's own web search and web fetch run.
+ */
+askBeforeWeb: boolean; 
+/**
+ * Most model → tools → model rounds in one reply.
+ */
+maxSteps: number }
+/**
+ * One tool call, logged per chat.
+ */
+export type ToolUsage = { id: string; conversationId: string; messageId: string; toolUseId: string; kind: ToolUsageKind; server: string | null; tool: string; 
+/**
+ * A short label: the search query, the URL, a file path.
+ */
+label: string | null; isError: boolean; createdAt: number }
+/**
+ * What kind of thing a chat used (the "Used in this chat" list).
+ */
+export type ToolUsageKind = "webSearch" | "webFetch" | 
+/**
+ * An MCP server's tool.
+ */
+"connector" | 
+/**
+ * A tool the provider ran (Anthropic web search).
+ */
+"providerTool"
+/**
  * Token counts for one reply.
  */
 export type Usage = { inputTokens: number; outputTokens: number; 
@@ -1322,6 +1537,42 @@ cacheReadTokens: number;
  * Prompt tokens written to the provider's cache.
  */
 cacheWriteTokens: number }
+/**
+ * Masked hints of the web search API keys in the keychain.
+ */
+export type WebSearchKeys = { brave: string | null; tavily: string | null }
+/**
+ * Which service Oxide's `web_search` tool uses.
+ */
+export type WebSearchProvider = 
+/**
+ * No search service: models get no `web_search` tool (except Anthropic's own, if on).
+ */
+"none" | "brave" | "tavily" | "searxng"
+/**
+ * Web search (Settings → Web search). API keys live in the keychain.
+ */
+export type WebSearchSettings = { provider: WebSearchProvider; 
+/**
+ * Base URL of a SearXNG instance (its JSON format must be enabled).
+ */
+searxngUrl: string; 
+/**
+ * On Anthropic models, use Anthropic's server-side web search instead.
+ */
+anthropicNative: boolean; 
+/**
+ * Results per search (1–10).
+ */
+maxResults: number }
+/**
+ * The result of "Test" in Settings → Web search.
+ */
+export type WebSearchTest = { ok: boolean; message: string; 
+/**
+ * Titles of the first results.
+ */
+sample: string[] }
 
 /** tauri-specta globals **/
 

@@ -1,4 +1,14 @@
-import { AlertCircle, ArrowDown, FileText, Lightbulb, Plug, RotateCcw, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  FileText,
+  Globe,
+  Lightbulb,
+  Plug,
+  RotateCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -25,6 +35,11 @@ import { Composer } from "@/features/composer/Composer";
 import { useGenerateOptions } from "@/features/composer/options";
 import { EFFORT_LABELS, effectiveEffort, findModel } from "@/features/models/models";
 import { useModelLabel, useModels } from "@/features/models/queries";
+import { useToolSwitches } from "@/features/mcp/chatTools";
+import { useMcpServers } from "@/features/mcp/queries";
+import { usePendingApprovals, useToolUsage } from "@/features/tools/queries";
+import { ApprovalCard } from "@/features/tools/ToolCallBlock";
+import { usageRows, type UsageRow } from "@/features/tools/toolView";
 import { errorMessage } from "@/lib/api";
 import { useUi } from "@/stores/ui";
 import { useBranches } from "./branches";
@@ -242,6 +257,7 @@ function ChatView({ id }: { id: string }) {
               ),
             )}
             <LiveReplyView conversationId={id} />
+            {!isLive && <OrphanApprovals conversationId={id} />}
             {!isLive && failure && leaf && (
               <ReplyFailed error={failure.error} onRetry={retryLeaf} />
             )}
@@ -294,7 +310,7 @@ function ChatView({ id }: { id: string }) {
           />
         </div>
       </div>
-      {rightPanelOpen && <ChatDetailsPanel modelId={convo.model} thread={thread} />}
+      {rightPanelOpen && <ChatDetailsPanel id={id} modelId={convo.model} thread={thread} />}
     </div>
   );
 }
@@ -342,8 +358,110 @@ function Unanswered({ since, onAnswer }: { since: number; onAnswer: () => void }
   );
 }
 
-/** Right-hand "in this chat" panel: model, thinking and effort, files in the thread. */
-function ChatDetailsPanel({ modelId, thread }: { modelId: string; thread: Message[] }) {
+/**
+ * Tool calls still waiting for approval in a chat whose live reply this window didn't see
+ * (it was reloaded while the reply ran). Answering lets the reply continue.
+ */
+function OrphanApprovals({ conversationId }: { conversationId: string }) {
+  const { data } = usePendingApprovals(true);
+  const mine = (data ?? []).filter((r) => r.conversationId === conversationId);
+  if (mine.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {mine.map((r) => (
+        <div
+          key={r.toolUseId}
+          className="overflow-hidden rounded-xl border border-accent bg-raised"
+        >
+          <ApprovalCard request={r} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
+  const Icon =
+    kind === "webSearch"
+      ? Globe
+      : kind === "webFetch"
+        ? FileText
+        : kind === "providerTool"
+          ? Sparkles
+          : Plug;
+  return <Icon aria-hidden className="size-4" />;
+}
+
+/** "Used in this chat": web searches, pages, connectors. Click a row to see the call. */
+function UsedInChat({ id }: { id: string }) {
+  const { data } = useToolUsage(id);
+  const rows = usageRows(data ?? []);
+  if (rows.length === 0) {
+    return <p className="text-sm text-fg-subtle">Nothing yet.</p>;
+  }
+  return (
+    <ul aria-label="Used in this chat" className="flex flex-col gap-1">
+      {rows.map((r) => (
+        <li key={r.key}>
+          <button
+            type="button"
+            onClick={() =>
+              document
+                .querySelector(`[data-tool-call="${CSS.escape(r.toolUseId)}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" })
+            }
+            className="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
+          >
+            <span className="mt-0.5 text-fg-subtle">
+              <UsageIcon kind={r.kind} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 text-base text-fg">
+                <span className="truncate">{r.title}</span>
+                {r.count > 1 && (
+                  <span className="shrink-0 rounded bg-sunken px-1.5 text-xs tabular-nums text-fg-subtle">
+                    {r.count}
+                  </span>
+                )}
+                {r.errors > 0 && (
+                  <span className="shrink-0 text-xs text-danger">{r.errors} failed</span>
+                )}
+              </span>
+              {r.details.length > 0 && (
+                <span className="block truncate text-xs text-fg-subtle">
+                  {r.details.slice(-3).join(" · ")}
+                </span>
+              )}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Which tools the chat may use: web and running connectors. */
+function useToolsSummary(id: string): string {
+  const switches = useToolSwitches(id);
+  const { data: servers } = useMcpServers();
+  const on = servers.filter((s) => s.status === "running" && switches.serverOn(s.name));
+  const parts: string[] = [];
+  if (switches.webOn) parts.push("Web");
+  if (on.length > 0) parts.push(on.map((s) => s.name).join(", "));
+  return parts.length > 0 ? parts.join(" · ") : "None";
+}
+
+/** Right-hand "in this chat" panel: model, tools, files, and what the chat used. */
+function ChatDetailsPanel({
+  id,
+  modelId,
+  thread,
+}: {
+  id: string;
+  modelId: string;
+  thread: Message[];
+}) {
+  const toolsSummary = useToolsSummary(id);
   const toggle = useUi((s) => s.toggleRightPanel);
   const thinking = useUi((s) => s.thinking);
   const effort = useUi((s) => s.effort);
@@ -370,12 +488,14 @@ function ChatDetailsPanel({ modelId, thread }: { modelId: string; thread: Messag
             {applied ? ` · ${EFFORT_LABELS[applied]} effort` : ""}
           </Row>
           <Row icon={<Plug className="size-4" />} label="Tools">
-            None connected
+            {toolsSummary}
           </Row>
           <Row icon={<FileText className="size-4" />} label="Files">
             {files.length === 0 ? "None yet" : `${files.length}: ${files.join(", ")}`}
           </Row>
         </dl>
+        <h3 className="mb-1.5 mt-5 text-sm font-semibold text-fg">Used in this chat</h3>
+        <UsedInChat id={id} />
       </div>
     </aside>
   );

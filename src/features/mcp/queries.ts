@@ -156,12 +156,17 @@ export function appendLogLine(qc: QueryClient, server: string, line: McpLogLine)
 
 // --- Per-chat tool switches -------------------------------------------------------------
 
-export const NO_CHAT_TOOLS: Required<ChatTools> = { disabledServers: [], disabledTools: [] };
+export const NO_CHAT_TOOLS: Required<ChatTools> = {
+  disabledServers: [],
+  disabledTools: [],
+  disabledBuiltins: [],
+};
 
 export function normalizeChatTools(t: ChatTools | undefined): Required<ChatTools> {
   return {
     disabledServers: t?.disabledServers ?? [],
     disabledTools: t?.disabledTools ?? [],
+    disabledBuiltins: t?.disabledBuiltins ?? [],
   };
 }
 

@@ -8,7 +8,7 @@ import { useAttachmentPreview } from "./queries";
 /** Preview size for images in the thread (fits 2× DPI at the shown height). */
 const THREAD_PREVIEW_SIDE = 480;
 
-function ImageThumb({ path, index }: { path: string; index: number }) {
+export function ImageThumb({ path, index }: { path: string; index: number }) {
   const [open, setOpen] = useState(false);
   const preview = useAttachmentPreview(path, THREAD_PREVIEW_SIDE);
   const full = useAttachmentPreview(path, null, open);
