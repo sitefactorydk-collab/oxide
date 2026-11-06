@@ -7,6 +7,7 @@
 pub mod attachment;
 pub mod chat;
 pub mod conversation;
+pub mod mcp;
 pub mod message;
 pub mod model;
 pub mod project;
@@ -20,6 +21,13 @@ pub use chat::{
     ChatStreamEvent, ConversationChanged, GenerateOptions, StopReason, StreamEvent, Usage,
 };
 pub use conversation::{Conversation, SearchHit, StartConversation};
+pub use mcp::{
+    ChatTools, ImportCandidate, ImportPreview, ImportStatus, McpAnswer, McpAsk, McpCapabilities,
+    McpConfigFile, McpContent, McpEra, McpEvent, McpInteraction, McpLogLine, McpLogSource,
+    McpPrompt, McpPromptArgument, McpPromptMessage, McpPromptResult, McpResource, McpResourceRead,
+    McpResourceTemplate, McpServerConfig, McpServerLists, McpServerState, McpStatus, McpTool,
+    McpToolAnnotations, McpToolResult, McpTransport,
+};
 pub use message::{ContentBlock, Feedback, MediaSource, Message, Rating, Role};
 pub use model::{Effort, ModelCapabilities, ModelInfo, ProviderModels, ThinkingStyle};
 pub use project::{NewProject, Project, ProjectPatch};

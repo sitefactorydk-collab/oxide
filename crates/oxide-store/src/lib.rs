@@ -4,6 +4,7 @@
 //! One [`Store`] wraps a connection pool. Repository methods live in the submodules as
 //! `impl Store` blocks and return `oxide-core` types.
 
+mod chat_tools;
 mod conversations;
 mod messages;
 mod probes;
@@ -22,7 +23,10 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 
 pub use messages::NewReply;
 pub use search::fts_query;
-pub use secrets::{KeyringSecrets, MemorySecrets, Secret, SecretError, SecretStore};
+pub use secrets::{
+    KeyringSecrets, MemorySecrets, Secret, SecretError, SecretStore, delete_large, get_large,
+    set_large,
+};
 
 /// File name of the database inside the app data directory.
 pub const DB_FILE_NAME: &str = "oxide.db";

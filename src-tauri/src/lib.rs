@@ -7,6 +7,7 @@
 mod commands;
 mod error;
 mod events;
+mod mcp_bridge;
 mod state;
 
 use std::sync::Arc;
@@ -25,11 +26,12 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{attachments, chats, models, projects, providers, settings, system};
+    use commands::{attachments, chats, mcp, models, projects, providers, settings, system};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::ChatStream,
-            events::ConversationUpdated
+            events::ConversationUpdated,
+            events::McpChanged
         ])
         .commands(collect_commands![
             commands::ping,
@@ -55,6 +57,31 @@ fn specta_builder() -> Builder<tauri::Wry> {
             attachments::prepare_attachment,
             attachments::attachment_preview,
             attachments::attachment_limits,
+            // MCP
+            mcp::mcp_servers,
+            mcp::mcp_server_lists,
+            mcp::mcp_logs,
+            mcp::mcp_server_config,
+            mcp::mcp_save_server,
+            mcp::mcp_remove_server,
+            mcp::mcp_set_enabled,
+            mcp::mcp_restart,
+            mcp::mcp_config,
+            mcp::mcp_save_config,
+            mcp::mcp_open_config,
+            mcp::mcp_import_preview,
+            mcp::mcp_import,
+            mcp::mcp_call_tool,
+            mcp::mcp_read_resource,
+            mcp::mcp_get_prompt,
+            mcp::mcp_attach_prompt,
+            mcp::mcp_attach_resource,
+            mcp::mcp_pending_asks,
+            mcp::mcp_answer,
+            mcp::mcp_sign_in,
+            mcp::mcp_sign_out,
+            mcp::get_chat_tools,
+            mcp::set_chat_tools,
             // System
             system::open_external,
             // Models
@@ -109,22 +136,53 @@ pub fn run() -> anyhow::Result<()> {
 
     let builder = specta_builder();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
-            let data_dir = app.path().app_data_dir()?;
+            let dirs = state::AppDirs {
+                data: app.path().app_data_dir()?,
+                config: app.path().app_config_dir()?,
+                logs: app.path().app_log_dir()?,
+            };
             let service = app.config().identifier.clone();
             let sink = Arc::new(events::TauriSink::new(app.handle().clone()));
-            let state =
-                tauri::async_runtime::block_on(state::AppState::open(&data_dir, &service, sink))?;
+            let handle = app.handle().clone();
+            let state = tauri::async_runtime::block_on(state::AppState::open(
+                &dirs,
+                &service,
+                sink,
+                move |models, secrets| state::McpParts {
+                    sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
+                    agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),
+                    tokens: Arc::new(mcp_bridge::KeychainTokens::new(secrets.clone())),
+                },
+            ))?;
+            let mcp = state.mcp.clone();
             app.manage(state);
+            // Servers start in the background; the window doesn't wait for them.
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = mcp.start().await {
+                    tracing::warn!("MCP config: {e}");
+                }
+            });
             tracing::info!("{} {} started", oxide_core::APP_NAME, oxide_core::version());
             Ok(())
         })
-        .run(tauri::generate_context!())?;
+        .build(tauri::generate_context!())?;
+
+    app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Stop MCP servers cleanly. On Windows their process trees also end with Oxide
+            // (job objects) if this is cut short.
+            if let Some(state) = handle.try_state::<state::AppState>() {
+                let mcp = state.mcp.clone();
+                tauri::async_runtime::block_on(mcp.shutdown());
+            }
+        }
+    });
 
     Ok(())
 }

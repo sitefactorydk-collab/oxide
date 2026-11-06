@@ -224,6 +224,223 @@ async attachmentLimits() : Promise<AttachmentLimits> {
     return await TAURI_INVOKE("attachment_limits");
 },
 /**
+ * Every configured server and how it's doing, in config order.
+ */
+async mcpServers() : Promise<McpServerState[]> {
+    return await TAURI_INVOKE("mcp_servers");
+},
+/**
+ * A server's tools, resources, templates and prompts (empty until it runs).
+ */
+async mcpServerLists(name: string) : Promise<McpServerLists> {
+    return await TAURI_INVOKE("mcp_server_lists", { name });
+},
+/**
+ * The last log lines of a server (stderr, its log messages, Oxide's notes).
+ */
+async mcpLogs(name: string) : Promise<McpLogLine[]> {
+    return await TAURI_INVOKE("mcp_logs", { name });
+},
+/**
+ * One server's entry, for the edit form.
+ */
+async mcpServerConfig(name: string) : Promise<Result<McpServerConfig, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_server_config", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Adds a server, or replaces `old_name` (renaming it if the name changed).
+ */
+async mcpSaveServer(server: McpServerConfig, oldName: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_save_server", { server, oldName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpRemoveServer(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_remove_server", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpSetEnabled(name: string, enabled: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_set_enabled", { name, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpRestart(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_restart", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConfig() : Promise<Result<McpConfigStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves the config editor's text (it must be valid JSON) and applies it.
+ */
+async mcpSaveConfig(text: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_save_config", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens `oxide_config.json` in the system's editor for JSON files.
+ */
+async mcpOpenConfig() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_open_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What "Import from Claude desktop" would add or change (reads its config, read-only).
+ */
+async mcpImportPreview() : Promise<Result<ImportPreview, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_import_preview") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copies the chosen servers from Claude desktop's config. Returns how many were copied.
+ */
+async mcpImport(names: string[]) : Promise<Result<number, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_import", { names }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs a tool (debug panel). `input` is the arguments as a JSON object in text (not named
+ * `arguments`: that name is reserved in the generated JavaScript); `token` names the call
+ * in `progress` events.
+ */
+async mcpCallTool(server: string, tool: string, input: string, token: string | null) : Promise<Result<McpToolResult, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_call_tool", { server, tool, input, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpReadResource(server: string, uri: string) : Promise<Result<McpResourceRead, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_read_resource", { server, uri }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpGetPrompt(server: string, name: string, values: Partial<{ [key in string]: string }>) : Promise<Result<McpPromptResult, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_get_prompt", { server, name, values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs a prompt and attaches its text to the message being written.
+ */
+async mcpAttachPrompt(server: string, name: string, values: Partial<{ [key in string]: string }>) : Promise<Result<Attachment, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_attach_prompt", { server, name, values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Reads a resource and attaches its contents (text, images, PDFs) as files.
+ */
+async mcpAttachResource(server: string, uri: string) : Promise<Result<Attachment[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_attach_resource", { server, uri }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Questions from servers waiting for the user (after a window reload).
+ */
+async mcpPendingAsks() : Promise<McpInteraction[]> {
+    return await TAURI_INVOKE("mcp_pending_asks");
+},
+/**
+ * Answers a server's question. `false` if it was no longer open.
+ */
+async mcpAnswer(id: string, answer: McpAnswer) : Promise<boolean> {
+    return await TAURI_INVOKE("mcp_answer", { id, answer });
+},
+/**
+ * Signs in to a remote server in the browser, then reconnects it.
+ */
+async mcpSignIn(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_sign_in", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpSignOut(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_sign_out", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Which servers and tools a chat may use.
+ */
+async getChatTools(conversationId: string) : Promise<Result<ChatTools, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_chat_tools", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setChatTools(conversationId: string, tools: ChatTools) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_chat_tools", { conversationId, tools }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -377,10 +594,12 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 
 export const events = __makeEvents__<{
 chatStream: ChatStream,
-conversationUpdated: ConversationUpdated
+conversationUpdated: ConversationUpdated,
+mcpChanged: McpChanged
 }>({
 chatStream: "chat-stream",
-conversationUpdated: "conversation-updated"
+conversationUpdated: "conversation-updated",
+mcpChanged: "mcp-changed"
 })
 
 /** user-defined constants **/
@@ -464,6 +683,18 @@ export type ChatStream = ChatStreamEvent
  * A [`StreamEvent`] for one conversation.
  */
 export type ChatStreamEvent = { conversationId: string; event: StreamEvent }
+/**
+ * Per-chat tool switches. Everything is on unless listed here.
+ */
+export type ChatTools = { 
+/**
+ * Servers whose tools are off in this chat.
+ */
+disabledServers: string[]; 
+/**
+ * Single tools that are off, as `server/tool`.
+ */
+disabledTools: string[] }
 export type CommandError = 
 /**
  * The thing asked for doesn't exist (any more).
@@ -548,6 +779,291 @@ thinking: boolean;
  * Effort level. `None` (and levels the model doesn't accept) leave the model's default.
  */
 effort: Effort | null }
+export type ImportCandidate = { config: McpServerConfig; status: ImportStatus }
+/**
+ * What "Import from Claude desktop" would do.
+ */
+export type ImportPreview = { 
+/**
+ * The file that was read, or the first place looked if none was found.
+ */
+path: string; found: boolean; candidates: ImportCandidate[] }
+/**
+ * How an entry in Claude desktop's config compares to Oxide's.
+ */
+export type ImportStatus = 
+/**
+ * Oxide has no server of that name.
+ */
+"new" | 
+/**
+ * Oxide has the same entry already.
+ */
+"same" | 
+/**
+ * Oxide has a different entry under that name; importing replaces it.
+ */
+"changed"
+/**
+ * The user's answer to an [`McpInteraction`].
+ */
+export type McpAnswer = 
+/**
+ * `action` is `accept`, `decline` or `cancel`; `content` is the form data as a JSON
+ * string (accept only).
+ */
+{ kind: "elicitation"; action: string; content: string | null } | 
+/**
+ * Run the sampling request with `model` (`None`: the default model), or refuse it.
+ */
+{ kind: "sampling"; approved: boolean; model: string | null }
+/**
+ * Something a server asks of the user while handling a request.
+ */
+export type McpAsk = 
+/**
+ * Elicitation: fill in a form (`schema` is the requested JSON Schema as a string), or
+ * open a URL (`url` mode).
+ */
+{ kind: "elicitation"; message: string; schema: string | null; url: string | null } | 
+/**
+ * Sampling: the server wants a model to answer. Shown for approval first.
+ */
+{ kind: "sampling"; systemPrompt: string | null; messages: McpPromptMessage[]; maxTokens: number; modelHints: string[] }
+/**
+ * What a running server says it supports.
+ */
+export type McpCapabilities = { tools: boolean; resources: boolean; prompts: boolean; logging: boolean; 
+/**
+ * The server announces changes to its lists.
+ */
+listChanged: boolean }
+/**
+ * Something changed in the MCP layer: a server's state, its lists, a log line, progress,
+ * or a question for the user (`events.mcpChanged`).
+ */
+export type McpChanged = McpEvent
+/**
+ * The raw config file, for the "Edit config" editor.
+ */
+export type McpConfigFile = { path: string; text: string }
+/**
+ * The config file's path and text, plus why it can't be used (if it can't).
+ */
+export type McpConfigStatus = { file: McpConfigFile; error: string | null }
+/**
+ * One piece of a tool result, prompt message or resource.
+ */
+export type McpContent = { type: "text"; text: string } | 
+/**
+ * Base64 data.
+ */
+{ type: "image"; data: string; mimeType: string } | 
+/**
+ * Base64 data.
+ */
+{ type: "audio"; data: string; mimeType: string } | 
+/**
+ * A link to a resource the client may read.
+ */
+{ type: "resourceLink"; uri: string; name: string | null; mimeType: string | null; description: string | null } | 
+/**
+ * An embedded resource: `text`, or `blob` (base64).
+ */
+{ type: "resource"; uri: string; mimeType: string | null; text: string | null; blob: string | null }
+/**
+ * Which generation of the protocol a server speaks.
+ */
+export type McpEra = 
+/**
+ * 2026-07-28 and later: stateless, metadata on every request.
+ */
+"modern" | 
+/**
+ * 2025-11-25 and earlier: `initialize` handshake and sessions.
+ */
+"legacy"
+/**
+ * Something changed in the MCP layer (`events.mcpEvent` in TypeScript).
+ */
+export type McpEvent = 
+/**
+ * A server's state changed (status, counts, error).
+ */
+{ type: "server"; state: McpServerState } | 
+/**
+ * A server was removed from the config.
+ */
+{ type: "removed"; name: string } | 
+/**
+ * A server's tools, resources or prompts changed.
+ */
+{ type: "lists"; server: string } | 
+/**
+ * A new log line.
+ */
+{ type: "log"; server: string; line: McpLogLine } | 
+/**
+ * Progress of a running call (`token` is the call id the UI chose).
+ */
+{ type: "progress"; token: string; progress: number; total: number | null; message: string | null } | 
+/**
+ * A server needs the user (see [`McpInteraction`]).
+ */
+{ type: "ask"; interaction: McpInteraction } | 
+/**
+ * An ask was answered, timed out or withdrawn.
+ */
+{ type: "askClosed"; id: string }
+/**
+ * A pending [`McpAsk`] with its id and server.
+ */
+export type McpInteraction = { id: string; server: string; ask: McpAsk; createdAt: number }
+export type McpLogLine = { at: number; source: McpLogSource; 
+/**
+ * Log level for server messages (`info`, `error`, …).
+ */
+level: string | null; text: string }
+/**
+ * Where a log line came from.
+ */
+export type McpLogSource = 
+/**
+ * The process's standard error.
+ */
+"stderr" | 
+/**
+ * A `notifications/message` log message.
+ */
+"server" | 
+/**
+ * Oxide's own notes (connected, restarted, errors).
+ */
+"oxide"
+export type McpPrompt = { server: string; name: string; title: string | null; description: string | null; arguments: McpPromptArgument[] }
+export type McpPromptArgument = { name: string; title: string | null; description: string | null; required: boolean }
+export type McpPromptMessage = { 
+/**
+ * `user` or `assistant`.
+ */
+role: string; content: McpContent }
+/**
+ * The result of `prompts/get`.
+ */
+export type McpPromptResult = { description: string | null; messages: McpPromptMessage[] }
+export type McpResource = { server: string; uri: string; name: string; title: string | null; description: string | null; mimeType: string | null; size: number | null }
+/**
+ * The result of `resources/read`.
+ */
+export type McpResourceRead = { contents: McpContent[] }
+export type McpResourceTemplate = { server: string; uriTemplate: string; name: string; title: string | null; description: string | null; mimeType: string | null }
+/**
+ * One server entry, as edited in Settings. Mirrors an `mcpServers` entry in
+ * `oxide_config.json` (Claude desktop's schema), plus the Oxide-only `enabled` flag that
+ * lives under the file's top-level `oxide` object.
+ */
+export type McpServerConfig = { name: string; transport: McpTransport; 
+/**
+ * Stdio: the program to run (`npx`, `uvx`, a path).
+ */
+command: string; args: string[]; 
+/**
+ * Stdio: extra environment variables (merged over Oxide's own environment).
+ */
+env: Partial<{ [key in string]: string }>; 
+/**
+ * HTTP: the MCP endpoint URL.
+ */
+url: string; 
+/**
+ * HTTP: extra request headers (e.g. a static `Authorization`).
+ */
+headers: Partial<{ [key in string]: string }>; enabled: boolean }
+/**
+ * Everything a server currently offers.
+ */
+export type McpServerLists = { tools: McpTool[]; resources: McpResource[]; templates: McpResourceTemplate[]; prompts: McpPrompt[] }
+/**
+ * A configured server and how it is doing.
+ */
+export type McpServerState = { name: string; transport: McpTransport; 
+/**
+ * Command line or URL, for display.
+ */
+summary: string; status: McpStatus; 
+/**
+ * Why it failed, written for users.
+ */
+error: string | null; era: McpEra | null; protocolVersion: string | null; 
+/**
+ * The server's own name and version (self-reported).
+ */
+serverName: string | null; serverVersion: string | null; instructions: string | null; capabilities: McpCapabilities; tools: number; resources: number; prompts: number; 
+/**
+ * Restarts after crashes since Oxide started it.
+ */
+restarts: number; 
+/**
+ * Has a stored OAuth sign-in.
+ */
+signedIn: boolean; updatedAt: number }
+/**
+ * Where a server is in its life cycle.
+ */
+export type McpStatus = 
+/**
+ * Turned off in the config.
+ */
+"disabled" | 
+/**
+ * Spawning, connecting or negotiating.
+ */
+"starting" | "running" | 
+/**
+ * Failed; it is retried with backoff until the attempts run out.
+ */
+"error" | 
+/**
+ * The remote server wants the user to sign in (OAuth).
+ */
+"needsAuth" | 
+/**
+ * Stopped by Oxide (e.g. while quitting).
+ */
+"stopped"
+export type McpTool = { server: string; name: string; title: string | null; description: string | null; 
+/**
+ * JSON Schema of the arguments, as a JSON string.
+ */
+inputSchema: string; annotations: McpToolAnnotations }
+/**
+ * Hints a server gives about a tool (all advisory).
+ */
+export type McpToolAnnotations = { title: string | null; readOnlyHint: boolean | null; destructiveHint: boolean | null; idempotentHint: boolean | null; openWorldHint: boolean | null }
+/**
+ * The result of `tools/call`.
+ */
+export type McpToolResult = { content: McpContent[]; 
+/**
+ * `structuredContent` as a JSON string.
+ */
+structured: string | null; 
+/**
+ * The tool ran but failed (the content explains why).
+ */
+isError: boolean; durationMs: number }
+/**
+ * How Oxide talks to a server.
+ */
+export type McpTransport = 
+/**
+ * A local process that speaks JSON-RPC on stdin/stdout.
+ */
+"stdio" | 
+/**
+ * A remote (or local) Streamable HTTP endpoint.
+ */
+"http"
 /**
  * Where the bytes of an image or document live.
  */

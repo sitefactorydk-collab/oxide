@@ -2917,9 +2917,12 @@ name = "oxide"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "futures-util",
  "oxide-agent",
  "oxide-core",
  "oxide-llm",
+ "oxide-mcp",
  "oxide-store",
  "serde",
  "serde_json",
@@ -2989,6 +2992,22 @@ dependencies = [
 [[package]]
 name = "oxide-mcp"
 version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures-util",
+ "oxide-core",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "oxide-pyenv"

@@ -122,7 +122,9 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 **Agentic work ("Cowork-style" tasks):**
 - Folder access grants and a file tools sandbox [P11].
 - Task list widget and a long-running task view [P11].
+- Session side panel (like Claude desktop's): **Progress** (the task list) and **Used in this session** (tools, connectors, searches, files and folders the chat used) [P6 records usage, P11 panel].
 - Code execution in the managed Python venv [P12].
+- Docker sandbox workspace: a container per chat or task where the model can read, write, build and test code without touching the host, with files served by the official filesystem MCP server's Docker image [P12b].
 - Scheduled tasks [P15].
 
 **Browser:** Browser-Use agent [P13], Chrome extension control [P14].
@@ -249,6 +251,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 - **Tool registry:** MCP tools (namespaced `server__tool`) plus built-in tools. JSON-schema normalization so the same tool definition works for both Anthropic and OpenAI formats.
 - **Approval dialog:** inline card with tool name, server, arguments (pretty JSON) and "Allow once" / "Allow always for this chat" / "Deny". Read-only tool annotations can be set to auto-allow in Settings → Permissions.
 - **Tool UI:** collapsible tool-call blocks that show input and result, with images rendered and errors styled.
+- **Session usage log:** every tool call is recorded per chat (tool, server or built-in, a short label such as the search query, file or URL, time, and the message it belongs to), so the Phase 11 side panel can list what the chat used. Until then, the existing right-hand "In this chat" panel shows a simple "Used in this chat" list from this log.
 - **Built-in tools:**
   - `web_search`, with selectable providers: Brave Search API, Tavily, SearXNG URL, or Anthropic's server-side web search when on Anthropic.
   - `web_fetch`: `reqwest` + readability extraction to Markdown, with size caps.
@@ -305,11 +308,14 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 
 ### Phase 11 — Agentic tasks (Cowork-style)
 - **Folder grants:** the user adds folders to a chat (picker). Built-in file tools (`list_dir`, `read_file`, `write_file`, `edit_file`, `search`, `move`) are confined to granted roots after symlink and `..` resolution. Delete needs per-chat permission and moves files to a `_to_delete` folder by default.
-- **Task list widget:** a `task_list` tool (create/update) rendered in a right-hand panel, with progress and live status.
+- **Session side panel** (extends the right-hand "In this chat" panel; requested by the user after Phase 4, modelled on Claude desktop's visible behavior):
+  - **Progress:** a `task_list` tool (create/update) renders the chat's steps with live status (pending / in progress / done) and a "Step n of m" pill in the title bar that opens the panel.
+  - **Used in this session:** a list built from the Phase 6 usage log: web searches (with the query), web fetches, MCP connectors and their tools, files and granted folders, the linked computer or browser. Repeated uses of the same kind collapse into one row with a count or source icons; clicking a row scrolls to the tool call in the transcript.
+  - The panel can be closed and reopened, and remembers its state per chat.
 - Long-running mode: the agent keeps going while the window is hidden, sends a notification on completion or question, and shows a "needs your input" badge.
 - **Shell tool (off by default):** commands run in a granted folder, with an approval per command or an allowlist, a timeout, output capture, and Windows PowerShell vs POSIX sh detection.
 
-**Exit:** "organize this folder by file type and write a summary" runs end-to-end with approvals and a live task list, and path escape attempts are blocked by tests.
+**Exit:** "organize this folder by file type and write a summary" runs end-to-end with approvals and a live task list in the session panel (Progress and Used in this session both fill in), and path escape attempts are blocked by tests.
 
 ### Phase 12 — Managed Python (uv) & code execution
 - `oxide-pyenv`:
@@ -320,6 +326,17 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 - Pre-installed analysis packages: pandas, numpy, matplotlib, openpyxl.
 
 **Exit:** a fresh Windows user profile goes from no Python to working `run_python` without manual steps, and a chart image comes back into the chat.
+
+### Phase 12b — Docker sandbox workspace
+Requested by the user after Phase 5: give Oxide's agent an isolated workspace like the cloud workspace the build agent used, inside a Docker container on the user's machine.
+- **Detection and setup:** check that Docker (Docker Desktop on Windows/macOS, Docker Engine on Linux) is installed and running, with a readable message and an install link if not. Settings → Sandbox: on/off, image, CPU/memory limits, network on/off (off by default), and where workspaces live.
+- **Workspace container per chat or task:** a named volume (or a folder under app data) mounted at `/workspace`, created on first use, kept until the chat is deleted or the user clears it. Containers run without privileges, with resource limits, no host mounts beyond the workspace, and stop when idle.
+- **Files:** the official reference filesystem MCP server, run from its Docker image (`mcp/filesystem` at the time of writing; check the modelcontextprotocol/servers README), launched by Oxide's MCP manager as a stdio server (`docker run -i --rm --mount type=volume,src=<workspace>,dst=/workspace mcp/filesystem /workspace`). It shows in Connectors as a built-in server and its tools go through the normal approvals.
+- **Running code:** a built-in `sandbox_exec` tool runs commands inside the workspace container (`docker exec`), with a timeout, output capture and a size cap, so the model can install packages, build and run tests there. Default image: a small Linux image with common toolchains (configurable).
+- **Moving files in and out:** "Copy into sandbox" from a granted folder (Phase 11), and "Save to folder" / download for results, both with approval. Nothing in the sandbox can reach the host otherwise.
+- **UI:** the session side panel's "Used in this session" lists the sandbox, and a Sandbox tab shows its files, running commands and a Reset button.
+
+**Exit:** with Docker running on Windows, a chat can create a project in its sandbox, build and test it there (including a failing test the model then fixes), and copy the result to a granted folder; with Docker stopped, the user gets a clear message; host paths outside the workspace are unreachable (tested).
 
 ### Phase 13 — Browser agent (Browser-Use)
 - `python/oxide_browser_agent`: an MCP server (official `mcp` Python SDK, stdio) wrapping Browser-Use.

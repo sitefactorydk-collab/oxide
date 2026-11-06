@@ -271,6 +271,7 @@ function ChatView({ id }: { id: string }) {
         <div className="mx-auto w-full max-w-thread px-6 pb-3">
           <Composer
             variant="reply"
+            conversationId={id}
             value={draft}
             onChange={setDraft}
             autoFocus

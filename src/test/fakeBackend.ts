@@ -8,6 +8,7 @@ import type {
   Conversation,
   ConversationChanged,
   GenerateOptions,
+  McpEvent,
   Message,
   PingResponse,
   Project,
@@ -18,6 +19,7 @@ import type {
   StreamEvent,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
+import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import {
   seedConversations,
   seedMessages,
@@ -93,6 +95,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     exports: [],
     opened: [],
   };
+  resetFakeMcp();
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -173,8 +176,14 @@ function fakeEvent<T>(name: string) {
 
 const chatStream = fakeEvent<ChatStreamEvent>("chat-stream");
 const conversationUpdated = fakeEvent<ConversationChanged>("conversation-updated");
+const mcpChanged = fakeEvent<McpEvent>("mcp-changed");
+setMcpEmitter((e) => void mcpChanged.emit(e));
 
-export const fakeEvents = { chatStream, conversationUpdated } as unknown as typeof RealEvents;
+export const fakeEvents = {
+  chatStream,
+  conversationUpdated,
+  mcpChanged,
+} as unknown as typeof RealEvents;
 
 /** Sends a stream event as the backend would. */
 export function emitStream(conversationId: string, event: StreamEvent): void {
@@ -329,6 +338,7 @@ export function setReplyMode(mode: ReplyMode): void {
 }
 
 export const fakeCommands: typeof RealCommands = {
+  ...fakeMcpCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

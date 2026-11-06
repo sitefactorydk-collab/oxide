@@ -16,6 +16,7 @@ import {
   type StartConversation,
 } from "@/bindings";
 import { unwrap } from "@/lib/api";
+import { applyDraftChatTools } from "@/features/mcp/chatTools";
 
 /** Query keys for chat data. */
 export const chatKeys = {
@@ -161,6 +162,8 @@ export function useStartConversation() {
       unwrap(commands.startConversation(v.input, v.options)),
     onSuccess: (c) => {
       patchList(qc, (list) => sortByUpdated([c, ...list.filter((x) => x.id !== c.id)]));
+      // Tool switches chosen before the chat existed.
+      applyDraftChatTools(qc, c.id);
       return qc.invalidateQueries({ queryKey: chatKeys.all });
     },
   });

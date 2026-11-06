@@ -22,6 +22,7 @@ oxide-core.workspace = true
 oxide-store.workspace = true
 oxide-llm.workspace = true
 oxide-agent.workspace = true
+oxide-mcp.workspace = true
 
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
@@ -32,6 +33,8 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
+futures-util.workspace = true
+base64.workspace = true
 
 specta.workspace = true
 specta-typescript.workspace = true

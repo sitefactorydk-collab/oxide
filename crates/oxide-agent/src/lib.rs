@@ -18,6 +18,7 @@ pub mod demo;
 mod error;
 pub mod export;
 mod registry;
+pub mod sampling;
 mod title;
 
 pub use attachments::{AttachmentError, AttachmentStore};
@@ -25,4 +26,5 @@ pub use chat::{ChatService, EventSink, path_to};
 pub use context::{build_messages, plan_request, system_prompt};
 pub use error::AgentError;
 pub use registry::{Connector, ModelRegistry};
+pub use sampling::run_sampling;
 pub use title::{clean_title, pick_title_model};

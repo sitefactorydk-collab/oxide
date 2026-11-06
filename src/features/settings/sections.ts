@@ -50,8 +50,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "connectors",
     label: "Connectors",
     icon: Plug,
-    phase: 5,
-    blurb: "Local and remote MCP servers, with import from an existing desktop config.",
+    blurb:
+      "Local and remote MCP servers: what they offer, whether they're running, and a place to try their tools.",
   },
   {
     id: "extensions",
@@ -92,8 +92,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "developer",
     label: "Developer",
     icon: Terminal,
-    phase: 5,
-    blurb: "Config file, server logs and debug tools.",
+    blurb: "The MCP config file and every server's log.",
   },
   {
     id: "advanced",

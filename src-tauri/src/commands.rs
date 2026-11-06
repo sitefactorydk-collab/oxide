@@ -3,6 +3,7 @@
 
 pub mod attachments;
 pub mod chats;
+pub mod mcp;
 pub mod models;
 pub mod projects;
 pub mod providers;

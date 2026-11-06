@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 4 — Chat UX completeness (`ffa1146`, follow-up fixes `fb6276d`; both confirmed by the user)
-- **Next phase:** Phase 5 — MCP client
+- **In progress:** Phase 5 — MCP client (code done; Windows checks and manual exit check open)
+- **Next phase:** Phase 6 — Agent loop, approvals & built-in tools
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -26,6 +27,61 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - New crates must already be in the vendor bundle. `futures-util` stays `default-features = false` because `futures-macro` isn't vendored.
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 5 — MCP client — 2026-11-05/06
+Status: code done; Linux checks green; the Windows checks (`scripts\win\phase5.cmd`) and the manual exit check are still open.
+
+Exit criteria (manual, in `cargo tauri dev`; paste `docs\mcp-test-servers.json` into Settings → Developer, or add the servers by hand):
+- [ ] The reference "everything" server (`npx`), the filesystem server (`npx`) and a `uvx` Python server (`mcp-server-time`) connect on Windows, list tools, and run calls from the debug panel (Settings → Connectors → a server → Run).
+- [ ] A remote HTTP server connects (`https://mcp.deepwiki.com/mcp`, no sign-in; fallback: `npx @modelcontextprotocol/server-everything streamableHttp` in a terminal, then `http://localhost:3001/mcp`).
+
+Done:
+- **`oxide-core` (`mcp.rs`):** UI types for MCP. Config entry `McpServerConfig` (stdio command/args/env or http url/headers, enabled). `McpServerState` (status disabled|starting|running|error|needsAuth|stopped, era modern|legacy, protocol version, server info, capabilities, counts, restarts, signedIn). `McpTool`/`McpResource`/`McpResourceTemplate`/`McpPrompt`, `McpContent` (text, image, audio, resourceLink, resource), `McpToolResult`, `McpLogLine`, `McpInteraction` + `McpAsk` (elicitation form/URL, sampling) + `McpAnswer`, `McpEvent`, `ChatTools` (per-chat switches, `server/tool`), import preview types. JSON schemas travel as strings (like `ToolUse.inputJson`).
+- **`oxide-mcp`:**
+  - `jsonrpc`: messages, ids, batches, MCP error codes (-32020/-32021/-32022 mark modern servers).
+  - `transport::stdio`: newline-delimited JSON on stdin/stdout, stderr to the server log, non-JSON stdout logged, pending requests failed when the process ends.
+  - `transport::http`: Streamable HTTP. JSON or SSE answers (notifications before the response go to the client). Modern: `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` (encoded), `Mcp-Param-*` from `x-mcp-header` schema annotations (invalid tools hidden). Legacy: `Mcp-Session-Id` from `initialize`, GET stream for server messages, DELETE on close, 404 → session ended → reconnect. 401 / 403 `insufficient_scope` → one token refresh, then "sign-in required".
+  - `client`: dual-era negotiation. `server/discover` first (stdio probe times out after 20 s → legacy; `UnsupportedProtocolVersion` lists → pick a common version or fall back to `initialize`; a process that dies on the probe is retried as legacy and remembered). Modern requests carry `_meta` protocol version, client info, capabilities and log level; multi round-trip (`input_required` → elicitation/sampling/roots answered → retried with `inputResponses` + `requestState`); `subscriptions/listen` for list changes. Legacy: `initialize` (2025-11-25 offered; 2025-06-18, 2025-03-26, 2024-11-05 accepted), `notifications/initialized`, `logging/setLevel info`, server→client requests (ping, roots, sampling, elicitation). Paged lists, progress tokens, cancellation (`notifications/cancelled` when a call is dropped or times out; modern HTTP closes the stream instead), ping. Timeouts: 60 s requests, 10 min tool calls.
+  - `process`: command resolution through PATH + PATHEXT (`npx` → `npx.cmd`, never the extensionless script), usual install folders added to the child's PATH (Program Files\nodejs, %APPDATA%\npm, ~/.local/bin, …), friendly "install Node.js / uv" errors, `CREATE_NO_WINDOW`, Windows Job Object with KILL_ON_JOB_CLOSE (`process/windows.rs`, the only `unsafe`, allowed locally), working folder = home.
+  - `log`: per-server ring buffer (1000 lines) + `<app log dir>\mcp-<name>.log` (restarted above 4 MB), forwarded to the UI.
+  - `config`: `oxide_config.json` in the app config dir. `mcpServers` in Claude desktop's schema (remote: `"type": "http"`, `url`, `headers`); Oxide-only keys under top-level `oxide` (`disabledServers`, `servers.<name>.oauthClientId/oauthClientSecret`); unknown keys kept. Atomic writes; the file is polled every second for outside edits (a broken file keeps the last good servers and shows the error). Claude desktop import reads `%APPDATA%\Claude\…`, the Microsoft Store package folder, `~/Library/Application Support/Claude/…` or `~/.config/Claude/…`, read-only, with new/same/changed per entry.
+  - `oauth`: OAuth 2.1 + PKCE. Protected resource metadata (from `WWW-Authenticate` or well-known), authorization server metadata (RFC 8414 / OIDC paths), dynamic client registration (or a client id from the config), loopback redirect on `127.0.0.1`, `state` + `resource` (RFC 8707), token exchange, refresh with rotation. Tokens in the OS keychain through `TokenStore`.
+  - `manager`: one supervisor per server: start, run, restart with backoff (1 s doubling to 60 s, 6 failed starts in a row → error until Restart), needs-auth waits for sign-in; stop on disable/remove/quit; lists refreshed on start and on change notices; user questions (elicitation, sampling approval) with a 10-minute timeout; sampling runs through the app; config edits applied live (only changed entries restart).
+  - `src/bin/oxide-mcp-mock.rs`: a stdio test server (modern, legacy, legacy that crashes or stays silent before `initialize`).
+- **`oxide-store`:** migration `0004_chat_tools.sql` (`chat_tools` table) with `chat_tools`/`set_chat_tools`; `set_large`/`get_large`/`delete_large` split long secrets over several keychain entries (Windows Credential Manager caps one at 2560 bytes; OAuth tokens can be longer).
+- **`oxide-agent`:** `run_sampling(registry, model, params)`: an MCP `sampling/createMessage` through Oxide's providers (text in/out).
+- **`src-tauri`:** `AppState.mcp` (`McpManager`), started in the background at launch and shut down on exit. `mcp_bridge.rs`: `TauriMcpSink` (event `mcpChanged`), `AppAgent` (sampling with the chosen or first usable model, links via the opener plugin), `KeychainTokens`. Commands: `mcp_servers`, `mcp_server_lists`, `mcp_logs`, `mcp_server_config`, `mcp_save_server`, `mcp_remove_server`, `mcp_set_enabled`, `mcp_restart`, `mcp_config`, `mcp_save_config`, `mcp_open_config`, `mcp_import_preview`, `mcp_import`, `mcp_call_tool`, `mcp_read_resource`, `mcp_get_prompt`, `mcp_attach_prompt`, `mcp_attach_resource` (prompts/resources become text/image/PDF attachments through `AttachmentStore`), `mcp_pending_asks`, `mcp_answer`, `mcp_sign_in`, `mcp_sign_out`, `get_chat_tools`, `set_chat_tools`.
+- **Frontend (`features/mcp/`):**
+  - Settings → **Connectors**: server cards (status dot, summary, counts, protocol, errors), enable switch, Restart, Edit/Remove, Sign in/out, Add server form (local command with one argument per line and `KEY=value` env, or remote URL with `Name: value` headers), **Import from Claude desktop** dialog, details with Tools (debug runner: JSON arguments prefilled from the schema, progress, result incl. images and structured output), Resources (read, templates by URI), Prompts (try with arguments), Log.
+  - Settings → **Developer**: config file editor (validates JSON, Save / Discard / Open in editor) and every server's log.
+  - `McpAskDialog`: elicitation forms (string/number/integer/boolean/enum/multi-select, required checks), URL elicitation (shows the host before opening), sampling approval with model choice.
+  - Composer "+" menu: Connectors submenu with real servers, per-chat switch per server and per tool (`useToolSwitches`; new chats keep a draft that is saved when the chat is created); "Add a prompt" (arguments dialog) and "Add from a connector" (resources) attach as files.
+  - `useMcpEvents` (app-wide) keeps server states and logs current from `mcpChanged`.
+- **Tests:** oxide-mcp 50 on Linux (33 unit, 6 stdio end-to-end against the mock in both eras incl. MRTR, server requests, probe fallback, crash-on-probe retry, cancellation; 5 HTTP against a scripted server: modern headers + SSE, legacy session + DELETE, version fallback, 401, old HTTP+SSE message; 2 OAuth end-to-end with a fake authorization server; 4 manager: start/list/call/stop, asks, live config edits, retry limit). Store 34, core 30, llm 43, agent 33. Vitest: `features/mcp/Mcp.test.tsx` (connectors list, sign-in, add server, URL validation, debug run, import, config editor, logs, elicitation, sampling, per-chat switch, attach prompt) against `src/test/fakeMcp.ts`.
+
+Deviations from PLAN.md (and why):
+- **Config file watching polls** (once a second, by size and modified time) instead of a file-system watcher: the `notify` crate isn't in the offline Linux vendor bundle, and polling one small file is cheap.
+- **Oxide rewrites `oxide_config.json` with keys in alphabetical order** (serde_json without `preserve_order`; that feature needs a crate missing from the vendor bundle). Values and unknown keys are kept.
+- **Process trees on macOS/Linux:** only the direct child is killed. Signalling the process group (`kill -TERM -<pgid>`) killed the shell that ran the tests in the Linux workspace, so it was removed; Windows uses the Job Object as planned.
+- **The deprecated HTTP+SSE transport (2024-11-05 remote servers) isn't supported**; such servers get a message pointing to their Streamable HTTP endpoint.
+- **OAuth Client ID Metadata Documents aren't used** (Oxide has no hosted client metadata URL); dynamic client registration or a configured client id instead.
+- **Roots:** Oxide offers the capability and answers with an empty list until folder grants exist (Phase 11).
+- **Sampling** answers with text only (no images/tools in sampling yet).
+
+Known issues / TODO carried forward:
+- `src-tauri` and the Windows-only code (`process/windows.rs`, `CREATE_NO_WINDOW`) are compiled for the first time by `phase5.cmd`. `src/bindings/index.ts` was extended by hand on the agent side; `cargo test` (export_bindings) regenerates it.
+- Tools aren't given to models yet (Phase 6 builds the tool loop and uses `ChatTools`).
+- Web search in the "+" menu is still a placeholder (Phase 6).
+- A first `npx -y` download can take longer than the 20 s stdio probe; Oxide then treats the server as legacy for that start, and a 2026-07-28-only server fails once and is retried.
+- MCP servers start with no trust prompt; Phase 18 adds a first-launch confirmation.
+
+Notes for Phase 6:
+- `McpManager::call_tool(server, tool, args, progress_token)` runs a tool; `lists(name)` has every tool's JSON schema (as a string); `ChatTools::allows(server, tool)` filters per chat; `get_chat_tools` is in the store.
+- Progress arrives as `McpEvent::Progress { token }` — use the tool call id as the token.
+- `McpToolAnnotations.readOnlyHint` feeds the auto-allow setting in Settings → Permissions.
+- Agent-side workflow: Linux tests that start processes must run in their own session (`setsid cargo test …`), and parallel test builds can exhaust the workspace's memory; use `-j2`.
+
+Verified (Linux workspace): clippy ✅ tests ✅ (library crates) fmt ✅; typecheck ✅ lint ✅ prettier ✅ (on the device). Windows: pending (`scripts\win\phase5.cmd`).
 
 ## Phase 4 — Chat UX completeness — 2026-11-05
 Status: code done and checked on Windows. The first `scripts\win\phase4.cmd` run passed fmt, prettier, clippy, cargo test (including `src-tauri` with both new plugins) and typecheck; lint and 90 of 93 Vitest tests also passed. The 3 failures were test setup only: `Markdown.test.tsx` rendered code blocks (which have tooltip buttons) without `Tooltip.Provider`. The test now wraps them; the second run passed everything (Vitest 93/93) and committed `ffa1146 phase 4: chat UX completeness`. The user tested the app the same evening (results below).

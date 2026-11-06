@@ -98,6 +98,71 @@ impl SecretStore for KeyringSecrets {
     }
 }
 
+/// Largest piece stored in one keychain entry, in characters. Windows Credential Manager
+/// keeps at most 2,560 bytes per entry (1,280 UTF-16 characters).
+const CHUNK_CHARS: usize = 1_000;
+/// Marks an entry whose value is split over `<name>#1` … `<name>#n`.
+const CHUNKED_PREFIX: &str = "oxide-chunked:";
+
+/// Stores a value that may be longer than one keychain entry allows (OAuth tokens), split
+/// over several entries when needed.
+pub fn set_large(store: &dyn SecretStore, name: &str, value: &str) -> Result<(), SecretError> {
+    delete_large(store, name)?;
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= CHUNK_CHARS && !value.starts_with(CHUNKED_PREFIX) {
+        return store.set(name, &Secret::new(value));
+    }
+    let parts: Vec<String> = chars
+        .chunks(CHUNK_CHARS)
+        .map(|c| c.iter().collect())
+        .collect();
+    for (i, part) in parts.iter().enumerate() {
+        store.set(&format!("{name}#{}", i + 1), &Secret::new(part.clone()))?;
+    }
+    store.set(
+        name,
+        &Secret::new(format!("{CHUNKED_PREFIX}{}", parts.len())),
+    )
+}
+
+/// Reads a value written by [`set_large`].
+pub fn get_large(store: &dyn SecretStore, name: &str) -> Result<Option<Secret>, SecretError> {
+    let Some(head) = store.get(name)? else {
+        return Ok(None);
+    };
+    let Some(count) = head
+        .expose()
+        .strip_prefix(CHUNKED_PREFIX)
+        .and_then(|n| n.parse::<usize>().ok())
+    else {
+        return Ok(Some(head));
+    };
+    let mut value = String::new();
+    for i in 1..=count {
+        match store.get(&format!("{name}#{i}"))? {
+            Some(part) => value.push_str(part.expose()),
+            // A missing piece: the value is unusable.
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(Secret::new(value)))
+}
+
+/// Removes a value written by [`set_large`] and all its pieces.
+pub fn delete_large(store: &dyn SecretStore, name: &str) -> Result<(), SecretError> {
+    if let Some(head) = store.get(name)?
+        && let Some(count) = head
+            .expose()
+            .strip_prefix(CHUNKED_PREFIX)
+            .and_then(|n| n.parse::<usize>().ok())
+    {
+        for i in 1..=count {
+            store.delete(&format!("{name}#{i}"))?;
+        }
+    }
+    store.delete(name)
+}
+
 /// In-process secret store for tests.
 #[derive(Debug, Default)]
 pub struct MemorySecrets {
@@ -153,6 +218,29 @@ mod tests {
         );
         store.delete(&name).expect("deletes");
         assert_eq!(store.get(&name).expect("reads"), None);
+    }
+
+    #[test]
+    fn large_values_are_split_and_joined() {
+        let m = MemorySecrets::default();
+        let long: String = "abcdé".repeat(700);
+        set_large(&m, "tok", &long).expect("ok");
+        assert_eq!(
+            m.get("tok#4")
+                .expect("ok")
+                .map(|s| s.expose().chars().count()),
+            Some(500)
+        );
+        assert_eq!(get_large(&m, "tok").expect("ok"), Some(Secret::new(long)));
+        // Rewriting with a short value removes the old pieces.
+        set_large(&m, "tok", "short").expect("ok");
+        assert_eq!(m.get("tok#1").expect("ok"), None);
+        assert_eq!(
+            get_large(&m, "tok").expect("ok"),
+            Some(Secret::new("short"))
+        );
+        delete_large(&m, "tok").expect("ok");
+        assert_eq!(get_large(&m, "tok").expect("ok"), None);
     }
 
     #[test]

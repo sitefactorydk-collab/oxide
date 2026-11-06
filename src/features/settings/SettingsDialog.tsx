@@ -10,6 +10,8 @@ import { useNewChatModel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { type ChatFont, type ThemePref, useUi } from "@/stores/ui";
+import { ConnectorsSection } from "@/features/mcp/ConnectorsSection";
+import { DeveloperSection } from "@/features/mcp/DeveloperSection";
 import { ModelsSection } from "@/features/models/ModelsSection";
 import { ProvidersSection } from "@/features/providers/ProvidersSection";
 import { useSetChatFont, useSetProfileName, useSetTheme } from "./queries";
@@ -93,6 +95,10 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <ProvidersSection />;
     case "models":
       return <ModelsSection />;
+    case "connectors":
+      return <ConnectorsSection />;
+    case "developer":
+      return <DeveloperSection />;
     case "about":
       return <AboutSection />;
     default:

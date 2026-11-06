@@ -44,6 +44,7 @@ export function Composer({
   onStop,
   placeholder,
   autoFocus,
+  conversationId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -56,6 +57,8 @@ export function Composer({
   onStop?: () => void;
   placeholder?: string;
   autoFocus?: boolean;
+  /** The chat this composer writes in (`undefined` on the new chat screens). */
+  conversationId?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,7 +165,12 @@ export function Composer({
 
   const tools = (
     <>
-      <PlusMenu onPickFiles={pickFiles} limits={files.limits} />
+      <PlusMenu
+        onPickFiles={pickFiles}
+        limits={files.limits}
+        conversationId={conversationId}
+        onAttach={files.addPrepared}
+      />
       <ThinkingToggle model={model} />
       <EffortMenu model={model} />
     </>

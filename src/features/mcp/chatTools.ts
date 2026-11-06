@@ -1,0 +1,56 @@
+import type { QueryClient } from "@tanstack/react-query";
+import { commands, type ChatTools } from "@/bindings";
+import { mcpKeys, useChatTools, useSetChatTools } from "./queries";
+import { EMPTY_TOOLS, useMcpUi } from "./store";
+
+/**
+ * The tool switches of the chat being written in: a saved chat's own, or (before the chat
+ * exists) a draft that `applyDraftChatTools` saves once it's created.
+ */
+export function useToolSwitches(conversationId: string | undefined) {
+  const saved = useChatTools(conversationId);
+  const setSaved = useSetChatTools();
+  const draft = useMcpUi((s) => s.draftTools);
+  const setDraft = useMcpUi((s) => s.setDraftTools);
+  const tools = conversationId ? saved.data : draft;
+
+  const set = (next: Required<ChatTools>) => {
+    if (conversationId) setSaved.mutate({ id: conversationId, tools: next });
+    else setDraft(next);
+  };
+
+  const toggleServer = (server: string, on: boolean) =>
+    set({
+      ...tools,
+      disabledServers: on
+        ? tools.disabledServers.filter((s) => s !== server)
+        : [...new Set([...tools.disabledServers, server])],
+    });
+
+  const toggleTool = (server: string, tool: string, on: boolean) => {
+    const key = `${server}/${tool}`;
+    set({
+      ...tools,
+      disabledTools: on
+        ? tools.disabledTools.filter((t) => t !== key)
+        : [...new Set([...tools.disabledTools, key])],
+    });
+  };
+
+  return {
+    tools,
+    serverOn: (server: string) => !tools.disabledServers.includes(server),
+    toolOn: (server: string, tool: string) => !tools.disabledTools.includes(`${server}/${tool}`),
+    toggleServer,
+    toggleTool,
+  };
+}
+
+/** Saves the draft switches to a chat that was just created, then clears the draft. */
+export function applyDraftChatTools(qc: QueryClient, conversationId: string): void {
+  const draft = useMcpUi.getState().draftTools;
+  if (draft.disabledServers.length === 0 && draft.disabledTools.length === 0) return;
+  qc.setQueryData(mcpKeys.chatTools(conversationId), draft);
+  useMcpUi.getState().setDraftTools(EMPTY_TOOLS);
+  void commands.setChatTools(conversationId, draft).catch(() => {});
+}

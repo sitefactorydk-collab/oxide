@@ -71,6 +71,19 @@ impl From<oxide_agent::AttachmentError> for CommandError {
     }
 }
 
+impl From<oxide_mcp::McpError> for CommandError {
+    fn from(e: oxide_mcp::McpError) -> Self {
+        // MCP errors are written for users and never contain secrets.
+        let text = e.to_string();
+        let mut chars = text.chars();
+        let text = match chars.next() {
+            Some(f) => f.to_uppercase().chain(chars).collect(),
+            None => text,
+        };
+        CommandError::Invalid(text)
+    }
+}
+
 pub type CmdResult<T> = Result<T, CommandError>;
 
 #[cfg(test)]

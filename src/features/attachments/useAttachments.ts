@@ -139,6 +139,45 @@ export function useAttachments() {
     [limits, start],
   );
 
+  /**
+   * Attachments the backend makes itself (an MCP prompt or resource): a chip shows `name`
+   * while `run` works, then the attachments it returns.
+   */
+  const addPrepared = useCallback(
+    (name: string, run: () => Promise<Attachment[]>) => {
+      seq += 1;
+      const key = `att-${seq}`;
+      itemsRef.current = [...itemsRef.current, { key, name, status: "loading" }];
+      setItems(itemsRef.current);
+      run()
+        .then((atts) => {
+          if (!alive.current) return;
+          setItems((prev) =>
+            prev.flatMap((i) =>
+              i.key === key
+                ? atts.map((a) => {
+                    seq += 1;
+                    return {
+                      key: `att-${seq}`,
+                      name: a.name,
+                      status: "ready" as const,
+                      attachment: a,
+                    };
+                  })
+                : [i],
+            ),
+          );
+        })
+        .catch((e: unknown) =>
+          update(key, {
+            status: "error",
+            error: e instanceof Error ? e.message : `${name} couldn't be added.`,
+          }),
+        );
+    },
+    [update],
+  );
+
   const remove = useCallback((key: string) => {
     setItems((prev) => prev.filter((i) => i.key !== key));
   }, []);
@@ -147,5 +186,5 @@ export function useAttachments() {
 
   const ready = items.flatMap((i) => (i.status === "ready" && i.attachment ? [i.attachment] : []));
   const busy = items.some((i) => i.status === "loading");
-  return { items, ready, busy, addPaths, addFiles, remove, clear, limits };
+  return { items, ready, busy, addPaths, addFiles, addPrepared, remove, clear, limits };
 }

@@ -1,7 +1,7 @@
 //! Typed events sent to the frontend (registered in `specta_builder`).
 
 use oxide_agent::EventSink;
-use oxide_core::{ChatStreamEvent, Conversation, ConversationChanged};
+use oxide_core::{ChatStreamEvent, Conversation, ConversationChanged, McpEvent};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
@@ -15,6 +15,11 @@ pub struct ChatStream(pub ChatStreamEvent);
 /// (`events.conversationUpdated`).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct ConversationUpdated(pub ConversationChanged);
+
+/// Something changed in the MCP layer: a server's state, its lists, a log line, progress,
+/// or a question for the user (`events.mcpChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct McpChanged(pub McpEvent);
 
 /// Forwards reply events from `oxide-agent` to every window.
 pub struct TauriSink {
