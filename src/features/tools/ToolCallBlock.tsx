@@ -43,7 +43,7 @@ function StatusBadge({ call }: { call: ToolCallView }) {
     case "awaitingApproval":
       return <span className="shrink-0 text-sm text-accent">Needs your approval</span>;
     case "approved":
-      return <span className="shrink-0 text-sm text-fg-subtle">Allowed</span>;
+      return <span className="shrink-0 text-sm text-fg-subtle">Allowed · starting</span>;
     case "error":
       return (
         <span className="inline-flex shrink-0 items-center gap-1 text-sm text-danger">
@@ -109,10 +109,12 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
   const answer = useAnswerApproval();
   const name = request.title ?? request.tool;
   const send = (decision: ApprovalDecision) => {
-    // Close the card at once: the call runs when the step's other calls are answered.
-    useStreams
-      .getState()
-      .markAnswered(request.conversationId, request.toolUseId, decision !== "deny");
+    // Close the card at once; the call starts when the backend hears the answer.
+    const streams = useStreams.getState();
+    streams.markAnswered(request.conversationId, request.toolUseId, decision !== "deny");
+    if (decision === "allowChat") {
+      streams.markToolAllowed(request.conversationId, request.server, request.tool);
+    }
     answer.mutate({
       conversationId: request.conversationId,
       toolUseId: request.toolUseId,

@@ -71,7 +71,7 @@ describe("tool calls in a reply", () => {
 
     // The card closes as soon as it's answered, before the call runs.
     expect(screen.queryByRole("group", { name: "Approve Write file" })).not.toBeInTheDocument();
-    expect(within(live).getByText("Allowed")).toBeInTheDocument();
+    expect(within(live).getByText("Allowed · starting")).toBeInTheDocument();
     act(() => emitStream("c2", { type: "toolRunning", id: "t1" }));
     expect(await within(live).findByText("Running")).toBeInTheDocument();
     act(() => {

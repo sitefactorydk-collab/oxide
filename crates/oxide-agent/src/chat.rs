@@ -184,10 +184,27 @@ impl ChatService {
             Some(p) if p.request.conversation_id == conversation_id => {}
             _ => return false,
         }
-        match map.remove(tool_use_id) {
-            Some(p) => p.answer.send(decision).is_ok(),
-            None => false,
+        let Some(p) = map.remove(tool_use_id) else {
+            return false;
+        };
+        if decision == ApprovalDecision::AllowChat {
+            // "Allow always" also answers the same tool's other waiting cards in this chat.
+            let same: Vec<String> = map
+                .iter()
+                .filter(|(_, o)| {
+                    o.request.conversation_id == conversation_id
+                        && o.request.server == p.request.server
+                        && o.request.tool == p.request.tool
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in same {
+                if let Some(o) = map.remove(&id) {
+                    let _ = o.answer.send(ApprovalDecision::AllowOnce);
+                }
+            }
         }
+        p.answer.send(decision).is_ok()
     }
 
     /// Saves a user message under `parent_id` and starts the reply.
@@ -753,6 +770,11 @@ impl ChatService {
     }
 
     /// Runs the calls of one step. Returns `false` if the user stopped the reply.
+    ///
+    /// Every call goes its own way at once: calls that need approval show their cards
+    /// together and start as soon as they're allowed; the others start right away. Tools
+    /// that only read run side by side; the rest take turns, so two writes never overlap.
+    /// The step ends when every call has a result.
     async fn run_calls(
         &self,
         cid: &str,
@@ -762,12 +784,14 @@ impl ChatService {
         reply: &mut ReplyBuilder,
         cancelled: &mut watch::Receiver<bool>,
     ) -> bool {
-        let mut ready: Vec<(OpenCall, ToolEntry, Value)> = Vec::new();
+        struct Ready {
+            call: OpenCall,
+            entry: ToolEntry,
+            input: Value,
+            ask: bool,
+        }
+        let mut ready: Vec<Ready> = Vec::new();
         for call in calls {
-            let stopped = *cancelled.borrow();
-            if stopped {
-                return false;
-            }
             let Some(entry) = setup.tool_set.find(&call.name).cloned() else {
                 let out = ToolOutput::error(format!(
                     "There's no tool called “{}”. Use one of the tools you were given.",
@@ -804,73 +828,82 @@ impl ChatService {
                 }
             };
             self.emit_call(cid, &call, &entry);
-            if Self::needs_approval(&entry, setup) {
-                match self
-                    .ask(cid, reply_id, &call, &entry, &input, cancelled)
-                    .await
-                {
-                    None => return false,
-                    Some(ApprovalDecision::Deny) => {
-                        let out = ToolOutput::error(DENIED_NOTE);
-                        self.finish_call(cid, reply_id, &call, Some(&entry), &input, out, reply)
-                            .await;
-                        continue;
-                    }
-                    Some(ApprovalDecision::AllowChat) => {
-                        let key = entry.grant_key();
-                        if let Err(e) = self.store.grant_chat_tool(cid, &key).await {
-                            tracing::warn!("couldn't save the approval: {e}");
-                        }
-                        setup.grants.insert(key);
-                    }
-                    Some(ApprovalDecision::AllowOnce) => {}
-                }
-            }
-            ready.push((call, entry, input));
+            let ask = Self::needs_approval(&entry, setup);
+            ready.push(Ready {
+                call,
+                entry,
+                input,
+                ask,
+            });
         }
 
-        // Tools that only read run side by side; anything else runs one at a time.
-        let parallel = ready.len() > 1 && ready.iter().all(|(_, e, _)| e.read_only);
-        if parallel {
-            for (call, _, _) in &ready {
-                self.emit(
-                    cid,
-                    StreamEvent::ToolRunning {
-                        id: call.id.clone(),
-                    },
-                );
-            }
-            let settings = &setup.settings;
-            let runs = join_all(
-                ready
-                    .iter()
-                    .map(|(c, e, i)| self.tools.run(e, i, &c.id, settings)),
-            );
-            let outs = tokio::select! {
-                outs = runs => outs,
-                _ = cancelled.wait_for(|c| *c) => return false,
-            };
-            for ((call, entry, input), out) in ready.iter().zip(outs) {
-                self.finish_call(cid, reply_id, call, Some(entry), input, out, reply)
-                    .await;
-            }
-        } else {
-            for (call, entry, input) in &ready {
-                self.emit(
-                    cid,
-                    StreamEvent::ToolRunning {
-                        id: call.id.clone(),
-                    },
-                );
-                let out = tokio::select! {
-                    out = self.tools.run(entry, input, &call.id, &setup.settings) => out,
-                    _ = cancelled.wait_for(|c| *c) => return false,
+        let grants = Mutex::new(std::mem::take(&mut setup.grants));
+        // Calls that may change something run one at a time.
+        let turns = tokio::sync::Mutex::new(());
+        let done: Mutex<Vec<(usize, ToolOutput)>> = Mutex::new(Vec::new());
+        let settings = &setup.settings;
+        let work = join_all(ready.iter().enumerate().map(|(i, r)| {
+            let mut cancel = cancelled.clone();
+            let (grants, turns, done) = (&grants, &turns, &done);
+            async move {
+                let key = r.entry.grant_key();
+                let granted = lock(grants).contains(&key);
+                if r.ask && !granted {
+                    match self
+                        .ask(cid, reply_id, &r.call, &r.entry, &r.input, &mut cancel)
+                        .await
+                    {
+                        None => return,
+                        Some(ApprovalDecision::Deny) => {
+                            let out = ToolOutput::error(DENIED_NOTE);
+                            self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
+                                .await;
+                            lock(done).push((i, out));
+                            return;
+                        }
+                        Some(ApprovalDecision::AllowChat) => {
+                            if let Err(e) = self.store.grant_chat_tool(cid, &key).await {
+                                tracing::warn!("couldn't save the approval: {e}");
+                            }
+                            lock(grants).insert(key);
+                        }
+                        Some(ApprovalDecision::AllowOnce) => {}
+                    }
+                }
+                let _turn = if r.entry.read_only {
+                    None
+                } else {
+                    Some(turns.lock().await)
                 };
-                self.finish_call(cid, reply_id, call, Some(entry), input, out, reply)
+                self.emit(
+                    cid,
+                    StreamEvent::ToolRunning {
+                        id: r.call.id.clone(),
+                    },
+                );
+                let out = self
+                    .tools
+                    .run(&r.entry, &r.input, &r.call.id, settings)
                     .await;
+                self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
+                    .await;
+                lock(done).push((i, out));
+            }
+        }));
+        let finished = tokio::select! {
+            _ = work => true,
+            _ = cancelled.wait_for(|c| *c) => false,
+        };
+        setup.grants = grants.into_inner().unwrap_or_else(|e| e.into_inner());
+        // Results that arrived (also before a stop) go into the reply in call order.
+        let mut outs = done.into_inner().unwrap_or_else(|e| e.into_inner());
+        outs.sort_by_key(|(i, _)| *i);
+        for (i, out) in outs {
+            if let Some(r) = ready.get(i) {
+                reply.push_result(&r.call.id, out);
             }
         }
-        true
+        finished
     }
 
     fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
@@ -887,16 +920,15 @@ impl ChatService {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn finish_call(
+    /// Sends a call's result to the UI and logs it.
+    async fn report(
         &self,
         cid: &str,
         reply_id: &str,
         call: &OpenCall,
         entry: Option<&ToolEntry>,
         input: &Value,
-        out: ToolOutput,
-        reply: &mut ReplyBuilder,
+        out: &ToolOutput,
     ) {
         self.emit(
             cid,
@@ -920,6 +952,20 @@ impl ChatService {
             )
             .await;
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_call(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        call: &OpenCall,
+        entry: Option<&ToolEntry>,
+        input: &Value,
+        out: ToolOutput,
+        reply: &mut ReplyBuilder,
+    ) {
+        self.report(cid, reply_id, call, entry, input, &out).await;
         reply.push_result(&call.id, out);
     }
 
@@ -2391,6 +2437,69 @@ pub(crate) mod tests {
         let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
         assert_eq!(used[0].kind, ToolUsageKind::WebSearch);
         assert_eq!(used[0].label.as_deref(), Some("oxide"));
+    }
+
+    #[tokio::test]
+    async fn calls_of_a_step_wait_for_approval_side_by_side() {
+        let mut first = call("w1", "fs__write", "{\"path\":\"a\"}");
+        first.extend(call("w2", "fs__write", "{\"path\":\"b\"}"));
+        first.extend(call("r1", "fs__read", "{\"path\":\"c\"}"));
+        let f = fixture_with(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("done")], StopReason::EndTurn),
+                vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))],
+            ],
+            Some(fs_mcp()),
+        )
+        .await;
+        f.store
+            .grant_chat_tool(&f.chat.id, "fs/read")
+            .await
+            .expect("grant");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Both cards wait at once, and the read ran without waiting for them.
+        wait_approval(&f, "w1").await;
+        wait_approval(&f, "w2").await;
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::ToolResult { id, .. } if id == "r1"))
+            })
+            .await;
+        assert_eq!(f.service.pending_approvals().len(), 2);
+        // "Allow always" on the second card answers the first too.
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "w2", ApprovalDecision::AllowChat)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let results: Vec<(String, bool)> = m
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } => Some((tool_use_id.clone(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            results,
+            vec![
+                ("w1".into(), false),
+                ("w2".into(), false),
+                ("r1".into(), false)
+            ]
+        );
+        assert_eq!(m.content.last(), Some(&ContentBlock::text("done")));
     }
 
     #[test]

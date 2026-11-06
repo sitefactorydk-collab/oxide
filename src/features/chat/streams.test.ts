@@ -113,4 +113,32 @@ describe("reduceStream", () => {
     expect(b?.kind === "tool" && b.call.status).toBe("approved");
     expect(b?.kind === "tool" && b.call.approval).toBe(null);
   });
+
+  it("closes every waiting card of a tool on allow-always", () => {
+    resetStreams();
+    const { apply, markToolAllowed } = useStreams.getState();
+    apply(started, 1);
+    for (const id of ["a", "b", "c"]) {
+      apply(ev({ type: "toolUse", id, name: id === "c" ? "fs__read" : "fs__write" }), 2);
+      apply(
+        ev({
+          type: "toolCall",
+          id,
+          name: "x",
+          server: "fs",
+          tool: id === "c" ? "read" : "write",
+          title: null,
+          inputJson: "{}",
+        }),
+        3,
+      );
+      const request = { toolUseId: id, conversationId: "c1" } as ToolApprovalRequest;
+      apply(ev({ type: "toolApproval", request }), 4);
+    }
+    markToolAllowed("c1", "fs", "write");
+    const statuses = useStreams
+      .getState()
+      .live["c1"]?.blocks.map((b) => (b.kind === "tool" ? b.call.status : null));
+    expect(statuses).toEqual(["approved", "approved", "awaitingApproval"]);
+  });
 });

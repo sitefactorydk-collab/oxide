@@ -72,6 +72,8 @@ interface StreamsState {
   clearFailure: (conversationId: string) => void;
   /** Closes an approval card as soon as the user answers it. */
   markAnswered: (conversationId: string, toolUseId: string, allowed: boolean) => void;
+  /** "Allow always": closes every waiting card of the same tool in the chat. */
+  markToolAllowed: (conversationId: string, server: string | null, tool: string) => void;
 }
 
 type Maps = Pick<StreamsState, "live" | "failures">;
@@ -245,6 +247,20 @@ export const useStreams = create<StreamsState>()((set) => ({
         c.status === "awaitingApproval"
           ? { ...c, approval: null, status: allowed ? "approved" : "ready" }
           : c,
+      );
+      return { live: { ...s.live, [id]: { ...live, blocks } } };
+    }),
+  markToolAllowed: (id, server, tool) =>
+    set((s) => {
+      const live = s.live[id];
+      if (!live) return s;
+      const blocks = live.blocks.map((b) =>
+        b.kind === "tool" &&
+        b.call.status === "awaitingApproval" &&
+        b.call.server === server &&
+        b.call.tool === tool
+          ? { ...b, call: { ...b.call, approval: null, status: "approved" as const } }
+          : b,
       );
       return { live: { ...s.live, [id]: { ...live, blocks } } };
     }),

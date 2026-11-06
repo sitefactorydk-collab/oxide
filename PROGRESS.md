@@ -42,7 +42,7 @@ Exit criteria (check by hand in `cargo tauri dev`):
 - [x] A model chains several MCP and web tools with approvals in one turn (Strata; see above). Suggested prompt with the `docs\mcp-test-servers.json` servers: “What time is it in Copenhagen, which files are in C:/AI Apps/Oxide/docs, and what does https://modelcontextprotocol.io say MCP is? Use your tools.” Expect approval cards for `time` and `filesystem`, a web fetch without asking, and a final answer.
   - [x] On **Strata**. [ ] On an **LM Studio** model (not run: its server wasn't started).
   - On **Anthropic** once the account has API credits (the Anthropic path is covered by tests, incl. server-side web search and `pause_turn`).
-- [ ] **Stop mid-loop** while an approval card waits, and while a tool runs: the reply is saved as “Stopped.”, the call shows “Didn’t run”, and the next message works.
+- [x] **Stop mid-loop** (checked by the user on 2026-11-06: “the stop test was a success”) while an approval card waits, and while a tool runs: the reply is saved as “Stopped.”, the call shows “Didn’t run”, and the next message works.
 - [ ] Settings → Permissions: “Run read-only connector tools without asking” skips the card for `readOnlyHint` tools; the step limit stops a reply with a note.
 - [ ] Settings → Web search: pick a service (Brave/Tavily key, or a SearXNG URL), **Test search**, then ask something current. Without a service, models get `web_fetch` only (no `web_search`).
 - [ ] The “+” menu’s Web search switch removes both web tools from that chat; the right-hand panel lists “Used in this chat”.
@@ -76,7 +76,7 @@ Done:
 Deviations from PLAN.md (and why):
 - **web_fetch’s readability is Oxide’s own** (`tools/html.rs`), not a crate: no HTML parser is in the offline Linux vendor bundle, and a small converter tuned for model input is testable here. Pages that need JavaScript come back nearly empty (the tool says so).
 - **Built-in web tools run without asking by default** (Settings → Permissions → “Ask before web search and web fetch”). They only read public pages, like Claude desktop’s web search.
-- **Approvals are asked one call at a time**, in the order the model made the calls, then the approved calls run (read-only ones in parallel).
+- **Approvals, changed after the user's test:** the first build asked one card at a time and ran nothing until every card of the step was answered (the web fetch waited behind two cards). Now every call of a step goes its own way at once: all cards of the step show together and can be answered in any order; calls that need no approval start right away; an allowed call starts when it's allowed. Read-only calls run side by side, others take turns (a `tokio::sync::Mutex`), so two writes never overlap. “Allow always for this chat” also answers that tool's other waiting cards (backend `answer_approval`, frontend `markToolAllowed`). Results go into the reply in call order; results that arrived before a Stop are kept. Test: `calls_of_a_step_wait_for_approval_side_by_side`.
 - **Anthropic web search uses `web_search_20250305`** with `max_uses: 5` (basic search, every model; checked in the docs today). Dynamic filtering (`20260209`+) needs code execution and isn’t used. Earlier replies’ search blocks aren’t sent back (their text is), because the encrypted results and citations must otherwise be sent exactly as received.
 - **Citations on Anthropic text blocks aren’t kept** (`ContentBlock::Text` has no citations yet).
 - **Time zone comes from the window** (`set_client_clock`), since there is no time-zone crate in the backend.
@@ -92,7 +92,7 @@ Notes for Phase 7:
 - The system prompt already has slots: `PromptContext.project_instructions` (filled from the chat’s project) and `memory` (`None` today). Knowledge search can be a built-in tool next to `web_search` in `tools/mod.rs` (`Builtin` enum + `builtin_entry`).
 - Tool calls are logged per chat in `tool_usage`; Phase 11’s session panel reads `tool_usage` and can extend `usageRows`.
 
-Still to check by hand (not in the recording): Stop mid-loop, the read-only auto-allow switch and step limit, Settings → Web search with a real key/SearXNG, the “+” menu switch, LM Studio, and Anthropic once there are API credits.
+Still to check by hand: the read-only auto-allow switch and step limit, Settings → Web search with a real key/SearXNG, the “+” menu switch, LM Studio, and Anthropic once there are API credits.
 
 Verified: clippy ✅ tests ✅ typecheck ✅ lint ✅ (Windows, phase6.cmd) tauri dev on Windows ✅ (Strata tool chain with approvals, by the user).
 
