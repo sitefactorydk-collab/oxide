@@ -3,9 +3,8 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 10 — Extensions (.mcpb) & Skills (`6ccbc48`; exit check passed on Windows on 2026-11-07)
-- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): exit check passed (`f312ced`, `11cbe6b`); `scripts\win\phase11-fix2.cmd` to run and commit
-- **Next phase:** Phase 12 — Managed Python (uv) & code execution (after Phase 11's exit check)
+- **Last completed:** Phase 11 — Agentic tasks (Cowork-style) (`f312ced`, fixes `11cbe6b` and `e5822b0`; exit check passed on Windows on 2026-11-07)
+- **Next phase:** Phase 12 — Managed Python (uv) & code execution
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -30,7 +29,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 11 — Agentic tasks (Cowork-style) — 2026-11-07
-Status: done pending `phase11-fix2`. Committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186), then `11cbe6b` (notification fixes); every exit check passed by hand on Windows. `scripts\win\phase11-fix2.cmd` (deleted chats' approvals, stop race) still to run. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
+Status: done. Committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186), then `11cbe6b` (notification fixes); every exit check passed by hand on Windows. `e5822b0` (deleted chats' approvals, stop race) after the recheck; the user confirmed everything works. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
 
 First Windows run (2026-11-07): fmt, prettier, clippy, cargo test, typecheck, lint and the vite build passed; 4 of 186 Vitest tests failed, all in the new `Workspace.test.tsx` and all test-side:
 - The “+” menu was opened with `pointerDown`, which Radix ignores under jsdom; it now opens with Enter on the trigger, like the other tests.
@@ -55,7 +54,7 @@ Manual check by the user (2026-11-07, `f312ced`, Strata `swift-iq2_xs`): parts 1
 - Settings → Desktop → **Send a test notification** (`test_notification` command) checks whether Windows shows Oxide's notifications at all (a dev build's may be attributed to PowerShell, see Phase 9).
 - Also from the check: a waiting write call read “Wrote … Needs your approval”; waiting calls now use the present tense (“Writing …”).
 
-Recheck (2026-11-07, `11cbe6b`): Windows had notifications turned off; with them on, the test notification and the approval notification both showed. [x] Long-running passed. New bug: after deleting the chat whose card was waiting, every ✕ to the tray still sent “A tool call is waiting…”: deleting a chat didn't stop its reply, so its approval stayed in memory. Fix (`scripts\win\phase11-fix2.cmd`):
+Recheck (2026-11-07, `11cbe6b`): Windows had notifications turned off; with them on, the test notification and the approval notification both showed. [x] Long-running passed. New bug: after deleting the chat whose card was waiting, every ✕ to the tray still sent “A tool call is waiting…”: deleting a chat didn't stop its reply, so its approval stayed in memory. Fix (`scripts\win\phase11-fix2.cmd`, committed `e5822b0`; rechecked by the user: no reminder after deleting the chat):
 - `ChatService::forget` (stop the reply, drop its waiting approvals at once), called by `delete_conversation`. Test: `forgetting_a_chat_drops_its_waiting_approvals`.
 - Found while testing it: **Stop while a card waits could continue the reply.** Stopping ends the waiting call at once, so the step's work and the stop were ready together and `tokio::select!` picked one at random; on “finished” the loop sent another model request. `run_calls` now checks the stop flag after the select. This was the occasional failure of `stop_while_waiting_keeps_a_valid_reply` (about 1 in 6 runs before, 0 in 40 after).
 
