@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 7 — Projects & memory (`402259b`, then fixes from the manual check; exit check passed on Strata on 2026-11-07)
-- **Current phase:** Phase 8 — Artifacts (written; Windows checks and exit check pending)
+- **Last completed:** Phase 8 — Artifacts (`4605170`; exit check passed on Strata on 2026-11-07)
 - **Next phase:** Phase 9 — Desktop integration
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -30,16 +29,20 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 8 — Artifacts — 2026-11-07
-Status: in progress. Code and tests written; `scripts\win\phase8.cmd` (npm install, all checks, `vite build`, commit when green) waits for the Windows run, then the manual exit check below.
+Status: done. `scripts\win\phase8.cmd` committed `4605170 phase 8: artifacts` on the second run (the first failed clippy on an unused `Manager` import in `artifact_frame.rs`, and one Vitest test clicked “Preview” before the next artifact had loaded; both fixed). The user then ran the exit check by hand on Strata `swift-iq2_xs`: everything passed.
 
 Exit criteria (check by hand in `cargo tauri dev`; any model with tools, ideally Anthropic or a larger local model):
-- [ ] **Each type renders.** Ask for each as an artifact, e.g. “Write a short Markdown guide to brewing coffee as an artifact”, “a Python script that renames photos by date”, “an SVG of a sun”, “a Mermaid flowchart of a pull request review”, “a React counter app with a lucide icon, styled with Tailwind”. While the model writes, the panel opens beside the chat and shows the source live (“Writing…”); when it's saved it switches to the preview. Each reply has a card in the thread that reopens the artifact.
-- [ ] **Updates create versions.** “Make the guide's title shorter.” → the same card kind shows “Edited version 2”, the panel says “Version 2 of 2”, ‹ › switches between versions. Code ↔ Preview, Copy, Download (save dialog) and Full screen (Esc leaves) work; the panel's left edge resizes it.
-- [ ] **HTML can't reach Tauri.** Ask: “Create an html artifact with exactly this content:” and paste
+- [x] **Each type renders.** (Checked: React counter with Tailwind + lucide icon and working buttons; Markdown with a table; Python code; SVG; Mermaid flowchart.) Ask for each as an artifact, e.g. “Write a short Markdown guide to brewing coffee as an artifact”, “a Python script that renames photos by date”, “an SVG of a sun”, “a Mermaid flowchart of a pull request review”, “a React counter app with a lucide icon, styled with Tailwind”. While the model writes, the panel opens beside the chat and shows the source live (“Writing…”); when it's saved it switches to the preview. Each reply has a card in the thread that reopens the artifact.
+- [x] **Updates create versions.** “Make the guide's title shorter.” → the same card kind shows “Edited version 2”, the panel says “Version 2 of 2”, ‹ › switches between versions. Code ↔ Preview, Copy, Download (save dialog) and Full screen (Esc leaves) work; the panel's left edge resizes it.
+- [x] **HTML can't reach Tauri.** Ask: “Create an html artifact with exactly this content:” and paste
   `<!doctype html><pre id=o></pre><script>let p;try{p=String(!!parent.document)}catch(e){p='blocked ('+e.name+')'}o.textContent='__TAURI__: '+typeof window.__TAURI__+'\n__TAURI_INTERNALS__: '+typeof window.__TAURI_INTERNALS__+'\nparent.document: '+p;fetch('https://example.com').then(()=>o.textContent+='\nfetch: allowed (bad)',()=>o.textContent+='\nfetch: blocked')</script>`
   Expected: `undefined`, `undefined`, `blocked (SecurityError)`, `fetch: blocked`.
-- [ ] `/artifacts` lists them across chats (filter by type, search); clicking one opens its chat with the panel; delete works.
-- [ ] The “+” menu's **Artifacts** switch turns the tool off for a chat.
+  **Result (2026-11-07):** `__TAURI__: undefined`, `parent.document: blocked (SecurityError)`, `fetch: blocked`, but `__TAURI_INTERNALS__: object`. Follow-up probes:
+  - WebView2 injects Tauri's all-frames scripts into the sandboxed frame. `__TAURI_INTERNALS__` there is non-configurable and non-writable (the frame runtime can't remove it) and holds only `plugins`: no `invoke`. Tauri's IPC script (with the invoke key) is main-frame only.
+  - `window.ipc` and `window.chrome.webview` exist in the frame. A hand-made `add_memory` message posted through `window.ipc.postMessage` (no invoke key) was **ignored**: Settings → Memory stayed at 0 items. The fetch-based IPC (`http://ipc.localhost`) is blocked by the frame's CSP anyway.
+  - Conclusion: the frame can't call Oxide's commands. Passed.
+- [x] `/artifacts` lists them across chats (filter by type, search); clicking one opens its chat with the panel; delete works.
+- [x] The “+” menu's **Artifacts** switch turns the tool off for a chat.
 
 Done:
 - **`oxide-core`:** `artifact.rs`: `ArtifactKind` (markdown, code, html, svg, mermaid, react; forgiving `parse`), `Artifact`, `ArtifactVersion`, `ArtifactDetail`, `ArtifactSummary`, `ARTIFACT_TOOL`, `MAX_ARTIFACT_CHARS` (1M), `clean_key`/`key_from_title`/`clean_title`, `file_name` + extensions per language, `apply_update` (exactly one match; forgives surrounding whitespace and CRLF). `ToolUsageKind::Artifact`. `StreamEvent::ToolInputDelta { id, partialJson }`.
@@ -60,7 +63,7 @@ Deviations from PLAN.md (and why):
 - **Artifacts are on by default in every chat with a tools-capable model**; the “+” menu switches them off per chat. There's no global setting yet.
 
 Known issues / TODO carried forward:
-- `src/bindings/index.ts` was edited by hand on the agent side; `cargo test` (export_bindings) regenerates it on Windows.
+- `__TAURI_INTERNALS__` (with only `plugins`), `window.ipc` and `chrome.webview` are visible inside the artifact frame on Windows (WebView2 injects them into every frame); commands sent through them are rejected (see the exit check). Phase 18's security review should re-test this after Tauri upgrades.
 - React artifacts can import only `react`, `react-dom` and `lucide-react` (the tool description says so). Charts libraries (e.g. Recharts) aren't bundled.
 - Artifacts made in a branch that was later regenerated stay in the chat's list (versions aren't tied to the visible branch).
 - Errors inside HTML artifacts aren't reported back (writing the page replaces the frame's listeners); React errors are.
@@ -68,7 +71,7 @@ Known issues / TODO carried forward:
 Notes for Phase 9:
 - The artifact frame is a pattern for other untrusted content: a URI scheme handler in `src-tauri` with its own CSP, and a sandboxed `<iframe>` without `allow-same-origin`.
 
-Verified: clippy ✅ (library crates, Linux) tests ✅ (library crates, Linux) typecheck ✅ lint ✅ (device, before npm install) — Windows run pending.
+Verified: clippy ✅ tests ✅ (cargo + Vitest 153/153) typecheck ✅ lint ✅ vite build ✅ (Windows, phase8.cmd) tauri dev on Windows ✅ (manual exit check by the user on Strata).
 
 ## Phase 7 — Projects & memory — 2026-11-07
 Status: done. `scripts\win\phase7.cmd` committed `402259b phase 7: projects & memory` on the third run (fixes below); the user then ran the exit check by hand (all five parts passed), and the fixes from that check were committed as `phase 7: fixes from the manual check`.
