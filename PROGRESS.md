@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 8 — Artifacts (`4605170`; exit check passed on Strata on 2026-11-07)
-- **In progress:** Phase 9 — Desktop integration (code written; waiting for `scripts\win\phase9.cmd` and the manual exit check)
+- **Last completed:** Phase 9 — Desktop integration (`5013c0b`; exit check passed on Windows on 2026-11-07)
 - **Next phase:** Phase 10 — Extensions (.mcpb) & Skills
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -30,20 +29,20 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 9 — Desktop integration — 2026-11-07
-Status: partial. Code, Linux-side checks and tests are done; `scripts\win\phase9.cmd` (checks, production build, commit `phase 9: desktop integration`, then `dev.cmd`) and the manual exit check below are next.
+Status: done. `scripts\win\phase9.cmd` committed `5013c0b phase 9: desktop integration` on the second run (fix below); the user then ran the whole exit check by hand on Windows: everything passed.
 
 First Windows run (2026-11-07): all Rust checks passed (the new plugins and xcap compiled first time), the production build passed, and 1 of 167 Vitest tests failed: **Esc while recording a shortcut also closed Settings** (a real bug: Radix's dialog catches Esc in the document capture phase, before the field's handler). The recorder now takes keys through a window capture listener while recording, which runs first and stops them.
 
-Exit criteria (check by hand in `cargo tauri dev`, after `phase9.cmd`):
-- [ ] **Quick entry works system-wide.** With another app in front (Notepad, a browser), press **Alt+Space**: a small box appears centred on that screen, in front, with the cursor in it. Type “What is 17 × 23?” and press Enter: the box hides, Oxide's window comes forward on the new chat and the reply streams. Alt+Space again, then Esc → it hides; Alt+Space, then click elsewhere → it hides; Alt+Space twice → shown, then hidden.
-- [ ] **Screenshot:** Alt+Space → camera button: the box disappears for a moment and comes back with a “Screenshot” chip. Send “What's on my screen?” (with a vision model): the chat shows the image.
-- [ ] **Shortcut setting:** Settings → Desktop → Shortcut → Change → press Ctrl+Shift+Space → “Active”; the new shortcut opens quick entry and Alt+Space no longer does. A shortcut another app holds shows the red “couldn't be registered” line. Reset to Alt + Space.
-- [ ] **Deep links open the right chat.** On a chat, title-bar menu (or the sidebar row's ⋯) → **Copy link**; open another chat; press Win+R, paste the `oxide://chat/<id>` link and run it: Oxide comes forward on that chat. `oxide://new?q=Hello%20there` → a new chat with “Hello there” in the composer. `oxide://settings/desktop` → Settings → Desktop. Close the window (to the tray) and try one again: the window comes back.
-- [ ] **Single instance.** With Oxide running, start `target\debug\oxide.exe` again (or run a deep link): no second window or tray icon; the running one comes forward.
-- [ ] **Tray:** the Oxide icon is in the notification area. Left click shows/hides the window; right click → Show Oxide, New chat, Quick entry, Quit Oxide all work. The window's ✕ hides it (first time: a “still running” notification); with “Keep Oxide in the tray…” off, ✕ quits.
-- [ ] **Notifications:** ask something long, then switch to another app before it finishes: a notification with the chat's title and the start of the reply appears. A tool that needs approval notifies too.
-- [ ] **Window state:** move and resize the window, quit from the tray, start again: same place and size (maximized stays maximized).
-- [ ] **Start at login:** Settings → Desktop → on: Task Manager → Startup apps lists Oxide (the dev binary in this build). Turn it off again.
+Exit criteria (checked by hand in `cargo tauri dev` on 2026-11-07; all passed):
+- [x] **Quick entry works system-wide.** With another app in front (Notepad, a browser), press **Alt+Space**: a small box appears centred on that screen, in front, with the cursor in it. Type “What is 17 × 23?” and press Enter: the box hides, Oxide's window comes forward on the new chat and the reply streams. Alt+Space again, then Esc → it hides; Alt+Space, then click elsewhere → it hides; Alt+Space twice → shown, then hidden.
+- [x] **Screenshot:** Alt+Space → camera button: the box disappears for a moment and comes back with a “Screenshot” chip. Send “What's on my screen?” (with a vision model): the chat shows the image.
+- [x] **Shortcut setting:** Settings → Desktop → Shortcut → Change → press Ctrl+Shift+Space → “Active”; the new shortcut opens quick entry and Alt+Space no longer does. A shortcut another app holds shows the red “couldn't be registered” line. Reset to Alt + Space.
+- [x] **Deep links open the right chat.** On a chat, title-bar menu (or the sidebar row's ⋯) → **Copy link**; open another chat; press Win+R, paste the `oxide://chat/<id>` link and run it: Oxide comes forward on that chat. `oxide://new?q=Hello%20there` → a new chat with “Hello there” in the composer. `oxide://settings/desktop` → Settings → Desktop. Close the window (to the tray) and try one again: the window comes back.
+- [x] **Single instance.** With Oxide running, start `target\debug\oxide.exe` again (or run a deep link): no second window or tray icon; the running one comes forward.
+- [x] **Tray:** the Oxide icon is in the notification area. Left click shows/hides the window; right click → Show Oxide, New chat, Quick entry, Quit Oxide all work. The window's ✕ hides it (first time: a “still running” notification); with “Keep Oxide in the tray…” off, ✕ quits.
+- [x] **Notifications:** ask something long, then switch to another app before it finishes: a notification with the chat's title and the start of the reply appears. A tool that needs approval notifies too.
+- [x] **Window state:** move and resize the window, quit from the tray, start again: same place and size (maximized stays maximized).
+- [x] **Start at login:** Settings → Desktop → on: Task Manager → Startup apps lists Oxide (the dev binary in this build). Turn it off again.
 
 Done:
 - **`oxide-core`:** `desktop.rs`: `DesktopAction` (`openChat`, `newChat { text }`, `openSettings { section }`), `parse_deep_link` (`oxide://chat/<id>`, `oxide://new?q=…`, `oxide://settings[/<section>]`; also `oxide:x` and trailing slashes; ids limited to letters/digits/`-`/`_`, ≤ 64; percent-decoding with `+` as space; text ≤ 10,000 chars), `deep_link_in_args` (skips the program path), `clean_shortcut` (canonical modifier names and order, one key, at least one modifier), `reply_preview` (one line, ≤ 140 chars). Settings: `DesktopSettings { closeToTray (on), quickEntry (on), quickEntryShortcut ("Alt+Space"), launchAtLogin (off), notifications (on) }`; `normalized()` cleans the shortcut and falls back to the default.
@@ -80,7 +79,7 @@ Known issues / TODO carried forward:
 Notes for Phase 10:
 - `desktop::dispatch(app, DesktopAction::…)` is how backend code brings the window forward and navigates; add a variant (and a `useDesktopActions` case) for new targets such as an extension's settings page.
 
-Verified (agent side, Linux): cargo fmt ✅ clippy (library crates) ✅ cargo test (library crates) ✅ typecheck ✅ lint ✅ prettier ✅. Windows: pending (`phase9.cmd`).
+Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest 167/167) typecheck ✅ lint ✅ vite build ✅ (Windows, phase9.cmd) tauri dev on Windows ✅ (manual exit check by the user).
 
 ## Phase 8 — Artifacts — 2026-11-07
 Status: done. `scripts\win\phase8.cmd` committed `4605170 phase 8: artifacts` on the second run (the first failed clippy on an unused `Manager` import in `artifact_frame.rs`, and one Vitest test clicked “Preview” before the next artifact had loaded; both fixed). The user then ran the exit check by hand on Strata `swift-iq2_xs`: everything passed.
