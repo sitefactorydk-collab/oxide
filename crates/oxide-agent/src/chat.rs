@@ -190,6 +190,13 @@ impl ChatService {
         }
     }
 
+    /// The chat is being deleted: stops its reply and drops its waiting tool calls at once,
+    /// so nothing keeps asking for a chat that's gone.
+    pub fn forget(&self, conversation_id: &str) {
+        self.stop(conversation_id);
+        lock(&self.approvals).retain(|_, p| p.request.conversation_id != conversation_id);
+    }
+
     /// Tool calls waiting for the user (all chats), oldest first.
     pub fn pending_approvals(&self) -> Vec<ToolApprovalRequest> {
         let mut v: Vec<ToolApprovalRequest> = lock(&self.approvals)
@@ -1074,6 +1081,9 @@ impl ChatService {
             _ = work => true,
             _ = cancelled.wait_for(|c| *c) => false,
         };
+        // A stop also ends waiting calls at once, so `work` can finish in the same poll;
+        // `select!` picks a ready branch at random, so check the stop itself.
+        let finished = finished && !*cancelled.borrow();
         setup.grants = grants.into_inner().unwrap_or_else(|e| e.into_inner());
         // Results that arrived (also before a stop) go into the reply in call order.
         let mut outs = done.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -2713,6 +2723,25 @@ pub(crate) mod tests {
         ));
         assert!(plain_text(&m.content).contains("stopped the reply"));
         assert!(f.service.pending_approvals().is_empty());
+        assert!(!f.service.is_running(&f.chat.id));
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_chat_drops_its_waiting_approvals() {
+        let f = fixture_with(
+            vec![turn(call("c1", "fs__write", "{}"), StopReason::ToolUse)],
+            Some(fs_mcp()),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_approval(&f, "c1").await;
+        f.service.forget(&f.chat.id);
+        // Gone at once, before the reply has wound down.
+        assert!(f.service.pending_approvals().is_empty());
+        f.sink.wait_finished().await;
         assert!(!f.service.is_running(&f.chat.id));
     }
 

@@ -4,7 +4,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 10 — Extensions (.mcpb) & Skills (`6ccbc48`; exit check passed on Windows on 2026-11-07)
-- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): committed (`f312ced`); manual exit check in progress (part 1 passed)
+- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): exit check passed (`f312ced`, `11cbe6b`); `scripts\win\phase11-fix2.cmd` to run and commit
 - **Next phase:** Phase 12 — Managed Python (uv) & code execution (after Phase 11's exit check)
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -30,7 +30,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 11 — Agentic tasks (Cowork-style) — 2026-11-07
-Status: committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186); exit check by hand in progress. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
+Status: done pending `phase11-fix2`. Committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186), then `11cbe6b` (notification fixes); every exit check passed by hand on Windows. `scripts\win\phase11-fix2.cmd` (deleted chats' approvals, stop race) still to run. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
 
 First Windows run (2026-11-07): fmt, prettier, clippy, cargo test, typecheck, lint and the vite build passed; 4 of 186 Vitest tests failed, all in the new `Workspace.test.tsx` and all test-side:
 - The “+” menu was opened with `pointerDown`, which Radix ignores under jsdom; it now opens with Enter on the trigger, like the other tests.
@@ -46,14 +46,20 @@ Exit criteria (check by hand in `cargo tauri dev`; `phase11.ps1` makes `Document
 - [x] **Delete.** “Delete ideas.md.” → an approval card marked destructive; after Allow, the file is in `_to_delete\` inside the shared folder. Tick **Delete for good** in the panel's Folders section and repeat with another file: it's gone.
 - [x] **Path escapes are blocked.** “Read C:\Windows\win.ini” and “Read ..\..\something” → the tool answers that the path is outside the shared folders (also covered by tests: `escapes_are_refused`, `links_out_of_the_grant_are_refused`, `workspace_tools_stay_in_granted_folders_and_ask_before_changes`).
 - [x] **Shell (off by default).** Settings → Permissions → Shell commands → on; add `Get-ChildItem` to the allowlist. In the sample folder's chat: “List the files with Get-ChildItem, then run `New-Item test.txt`.” → the first runs without asking, the second asks; “Allow always” there allows only that exact command.
-- [ ] **Long-running.** Start the organize prompt, then hide Oxide (✕ to the tray): an approval card notifies (Phase 9), and the sidebar row shows **Needs input** while a card waits and a pulsing dot while it works. A finished reply notifies.
+- [x] **Long-running.** Start the organize prompt, then hide Oxide (✕ to the tray): an approval card notifies (Phase 9), and the sidebar row shows **Needs input** while a card waits and a pulsing dot while it works. A finished reply notifies.
 - [x] The panel's open/closed state is remembered per chat (close it in one chat, open another, come back).
 
-Manual check by the user (2026-11-07, `f312ced`, Strata `swift-iq2_xs`): parts 1–3, the shell and the panel memory passed. **Failed: no notification for a waiting approval card**, although Oxide was already hidden when the card appeared (the sidebar showed “Needs input”). The log had no “couldn't show a notification” warning, and nothing said whether Oxide skipped it or Windows dropped it. Fix (`scripts\win\phase11-fix.cmd`, not yet run):
+Manual check by the user (2026-11-07, `f312ced`, Strata `swift-iq2_xs`): parts 1–3, the shell and the panel memory passed. **Failed: no notification for a waiting approval card**, although Oxide was already hidden when the card appeared (the sidebar showed “Needs input”). The log had no “couldn't show a notification” warning, and nothing said whether Oxide skipped it or Windows dropped it. Fix (`scripts\win\phase11-fix.cmd`, committed `11cbe6b`):
 - `notify.rs` logs each decision (notifications off / Oxide in front / notifying) and each notification shown, so `logs\dev.log` tells which it was.
 - Hiding the window to the tray while approvals wait sends a reminder (“A tool call is waiting for your approval.”), since the card's own notification went out while Oxide was in front.
 - Settings → Desktop → **Send a test notification** (`test_notification` command) checks whether Windows shows Oxide's notifications at all (a dev build's may be attributed to PowerShell, see Phase 9).
 - Also from the check: a waiting write call read “Wrote … Needs your approval”; waiting calls now use the present tense (“Writing …”).
+
+Recheck (2026-11-07, `11cbe6b`): Windows had notifications turned off; with them on, the test notification and the approval notification both showed. [x] Long-running passed. New bug: after deleting the chat whose card was waiting, every ✕ to the tray still sent “A tool call is waiting…”: deleting a chat didn't stop its reply, so its approval stayed in memory. Fix (`scripts\win\phase11-fix2.cmd`):
+- `ChatService::forget` (stop the reply, drop its waiting approvals at once), called by `delete_conversation`. Test: `forgetting_a_chat_drops_its_waiting_approvals`.
+- Found while testing it: **Stop while a card waits could continue the reply.** Stopping ends the waiting call at once, so the step's work and the stop were ready together and `tokio::select!` picked one at random; on “finished” the loop sent another model request. `run_calls` now checks the stop flag after the select. This was the occasional failure of `stop_while_waiting_keeps_a_valid_reply` (about 1 in 6 runs before, 0 in 40 after).
+
+Idea from the user (not planned yet): push notifications to the phone when Oxide needs input (instead of email); a candidate for Phase 15 (scheduled tasks run unattended).
 
 Done:
 - **`oxide-core`:** `workspace.rs`: tool names (`list_dir`, `read_file`, `search_files`, `write_file`, `edit_file`, `move_file`, `delete_file`, `task_list`, `run_command`), `FILES_SWITCH` (`disabledBuiltins: ["files"]` switches all file tools off in a chat), `TO_DELETE_DIR`, limits (20 folders, 50 tasks, 200-character titles); `ChatFolder`, `ChatWorkspace { folders, allowDelete }`, `TaskStatus` (forgiving `parse`), `TaskItem`, `TaskList` (`progress`, `current`), `clean_task_title`, `command_allowed` (allowlist matched word by word; commands with `;`, `&`, `|`, `>`, `<`, backticks, line breaks or `$(` always ask). `StartConversation.folders` (granted before the first reply). Settings: `shell { enabled (off), allowlist, timeoutSecs (120, 1–3600) }`. `ToolUsageKind::File | Shell | Tasks`.
@@ -86,7 +92,7 @@ Known issues / TODO carried forward:
 Notes for Phase 12:
 - `run_python` can reuse `Sandbox` (granted folder as the working dir) and `shell.rs`'s capture/time-limit code; generated files in a granted folder already show in “Used in this session” when written through the file tools.
 
-Verified: fmt ✅ clippy ✅ tests ✅ (Linux) typecheck ✅ lint ✅ prettier ✅ (device VM) — Vitest, vite build and tauri dev on Windows pending (`phase11.cmd`).
+Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest 186/186) typecheck ✅ lint ✅ vite build ✅ (Windows, phase11.cmd) tauri dev on Windows ✅ (manual exit check by the user).
 
 ## Phase 10 — Extensions (.mcpb) & Skills — 2026-11-07
 Status: done. `scripts\win\phase10.cmd` committed `6ccbc48 phase 10: extensions (.mcpb) & skills` on the second run (fixes below); the user then ran the whole exit check by hand on Windows (Strata `swift-iq2_xs`): everything passed.

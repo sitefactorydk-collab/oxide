@@ -103,6 +103,8 @@ pub async fn set_conversation_project(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    // A reply still running (or waiting for approval) in the chat stops with it.
+    state.chat.forget(&id);
     state.store.delete_conversation(&id).await?;
     tracing::debug!(%id, "conversation deleted");
     Ok(())
