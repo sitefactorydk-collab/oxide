@@ -10,6 +10,7 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::WebFetch => "webFetch",
         ToolUsageKind::Connector => "connector",
         ToolUsageKind::ProviderTool => "providerTool",
+        ToolUsageKind::ProjectSearch => "projectSearch",
     }
 }
 
@@ -18,6 +19,7 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "webSearch" => ToolUsageKind::WebSearch,
         "webFetch" => ToolUsageKind::WebFetch,
         "providerTool" => ToolUsageKind::ProviderTool,
+        "projectSearch" => ToolUsageKind::ProjectSearch,
         _ => ToolUsageKind::Connector,
     }
 }

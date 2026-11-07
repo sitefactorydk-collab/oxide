@@ -4,6 +4,7 @@
 pub mod attachments;
 pub mod chats;
 pub mod mcp;
+pub mod memory;
 pub mod models;
 pub mod projects;
 pub mod providers;

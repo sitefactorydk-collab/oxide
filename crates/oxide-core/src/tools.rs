@@ -9,6 +9,8 @@ use crate::Timestamp;
 pub const WEB_SEARCH: &str = "web_search";
 /// Oxide's built-in web page reader.
 pub const WEB_FETCH: &str = "web_fetch";
+/// Oxide's built-in search over a project's knowledge files.
+pub const PROJECT_SEARCH: &str = "project_search";
 /// `server` of tools the model provider runs itself (Anthropic's web search).
 pub const PROVIDER_SERVER: &str = "anthropic";
 
@@ -54,6 +56,8 @@ pub enum ToolUsageKind {
     Connector,
     /// A tool the provider ran (Anthropic web search).
     ProviderTool,
+    /// A search of the project's knowledge.
+    ProjectSearch,
 }
 
 /// One tool call, logged per chat.

@@ -133,6 +133,40 @@ impl Default for WebSearchSettings {
     }
 }
 
+/// Default knowledge budget: projects up to this size go into the prompt in full.
+pub const DEFAULT_KNOWLEDGE_BUDGET: u32 = 40_000;
+/// Smallest and largest knowledge budget Settings accepts.
+pub const MIN_KNOWLEDGE_BUDGET: u32 = 1_000;
+pub const MAX_KNOWLEDGE_BUDGET: u32 = 400_000;
+
+/// Projects (Settings → Projects & memory).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProjectSettings {
+    /// Estimated tokens of knowledge that go into the prompt in full. Larger projects are
+    /// searched instead. A chat also keeps it under a quarter of the model's context window.
+    pub knowledge_budget: u32,
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        Self {
+            knowledge_budget: DEFAULT_KNOWLEDGE_BUDGET,
+        }
+    }
+}
+
+/// Memory across chats (opt-in).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct MemorySettings {
+    /// Learn memory items from chats, and give saved items to models.
+    pub enabled: bool,
+    /// Model that writes memory items (`<providerId>/<model>`). `None` picks a small model
+    /// from the chat's endpoint, like automatic titles.
+    pub model: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
@@ -141,6 +175,8 @@ pub struct AppSettings {
     pub models: ModelSettings,
     pub tools: ToolSettings,
     pub web_search: WebSearchSettings,
+    pub projects: ProjectSettings,
+    pub memory: MemorySettings,
 }
 
 impl AppSettings {
@@ -158,6 +194,15 @@ impl AppSettings {
             .filter(|m| crate::model::split_model_id(m).is_some());
         self.tools.max_steps = self.tools.max_steps.clamp(1, MAX_MAX_STEPS);
         self.web_search.max_results = self.web_search.max_results.clamp(1, 10);
+        self.projects.knowledge_budget = self
+            .projects
+            .knowledge_budget
+            .clamp(MIN_KNOWLEDGE_BUDGET, MAX_KNOWLEDGE_BUDGET);
+        self.memory.model = self
+            .memory
+            .model
+            .map(|m| m.trim().to_owned())
+            .filter(|m| crate::model::split_model_id(m).is_some());
         self.web_search.searxng_url = self
             .web_search
             .searxng_url
@@ -221,5 +266,18 @@ mod tests {
         assert_eq!(s.tools.max_steps, 1);
         assert_eq!(s.web_search.max_results, 10);
         assert_eq!(s.web_search.searxng_url, "http://localhost:8888");
+    }
+
+    #[test]
+    fn project_and_memory_settings() {
+        let s: AppSettings = serde_json::from_str("{}").expect("parses");
+        assert_eq!(s.projects.knowledge_budget, DEFAULT_KNOWLEDGE_BUDGET);
+        assert!(!s.memory.enabled, "memory is opt-in");
+        let mut s = AppSettings::default();
+        s.projects.knowledge_budget = 5;
+        s.memory.model = Some("nope".into());
+        let s = s.normalized();
+        assert_eq!(s.projects.knowledge_budget, MIN_KNOWLEDGE_BUDGET);
+        assert_eq!(s.memory.model, None);
     }
 }

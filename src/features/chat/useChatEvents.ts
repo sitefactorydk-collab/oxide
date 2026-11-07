@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands, events } from "@/bindings";
+import { memoryKeys } from "@/features/memory/queries";
 import { toolKeys } from "@/features/tools/queries";
+import { toast } from "@/lib/toast";
 import { addMessageToCache, chatKeys, replaceConversation } from "@/features/chats/queries";
 import { useStreams } from "./streams";
 
@@ -48,6 +50,12 @@ export function useChatEvents(): void {
           void qc.invalidateQueries({ queryKey: chatKeys.messages(payload.conversationId) });
           void qc.invalidateQueries({ queryKey: [...chatKeys.all, "search"] });
         }
+      }),
+    );
+    keep(
+      events.memoryChanged.listen(({ payload }) => {
+        void qc.invalidateQueries({ queryKey: memoryKeys.all });
+        toast(payload.added === 1 ? "Memory updated" : `Memory updated (${payload.added} items)`);
       }),
     );
     keep(

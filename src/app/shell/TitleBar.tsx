@@ -243,6 +243,7 @@ function ChatBreadcrumb({ id }: { id: string }) {
                 setRenaming(true);
               }}
               onExport={(format) => exportChat(id, format)}
+              conversation={convo}
               onDelete={() => {
                 remove.mutate(id);
                 navigate("/new");

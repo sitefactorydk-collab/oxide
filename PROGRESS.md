@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 6 — Agent loop, approvals & built-in tools (`144a11d`; main exit check passed on Strata on 2026-11-06, see the Phase 6 section for what's still open)
-- **Next phase:** Phase 7 — Projects & memory
+- **Current phase:** Phase 7 — Projects & memory: code done and checked on Linux (2026-11-07); waiting for `scripts\win\phase7.cmd` on Windows and the manual exit check.
+- **Next phase:** Phase 8 — Artifacts
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -26,6 +27,64 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - New crates must already be in the vendor bundle. `futures-util` stays `default-features = false` because `futures-macro` isn't vendored.
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 7 — Projects & memory — 2026-11-07
+Status: partial — code done; Linux checks pass (cargo fmt, clippy `-D warnings` and tests for core/store/llm/mcp/agent; tsc, ESLint and Prettier on the device). `src-tauri`, Vitest and the bindings export run on Windows in `scripts\win\phase7.cmd`, which commits `phase 7: projects & memory` when green. Then the manual exit check below.
+
+Fixes after the first Windows run (2026-11-07): everything passed except 2 of 133 Vitest tests.
+- **“Moved to …” toast never showed** (a real bug): the menu item that started the move unmounts when the menu closes, and TanStack Query skips per-call `mutate` callbacks of unmounted components. `ChatMenuItems` now uses `mutateAsync().then(toast)`. **Don't put `onSuccess` on `mutate()` calls started from menu items.**
+- A test read “No files yet” before the knowledge query had loaded; it now waits (`findByText`). The same test closes the file viewer with its Close button (Escape didn’	 close it under jsdom).
+
+Exit criteria (check by hand in `cargo tauri dev`):
+- [ ] **Instructions change answers:** in a project, Edit instructions → “Always answer in Danish.” A new chat there answers in Danish; a chat outside the project doesn't.
+- [ ] **Knowledge changes answers:** Knowledge → “+” → Add text content: “The office cat is called Ferris.” In a project chat, “What is the office cat called?” → Ferris. Outside the project the model doesn't know. (Upload a `.md`/`.pdf` too; click it to see the stored text.)
+- [ ] **Large knowledge falls back to search:** Settings → Memory → Knowledge budget `1000`; add `PLAN.md` to a project. The card says “Chats search the files…”. Ask “What does Phase 12b add?” → the reply shows “Searched project knowledge · …” (no approval card) and answers from the file.
+- [ ] **Memory can be viewed and deleted:** Settings → Memory → turn on “Remember things across chats”. In a chat: “I'm Mikkel and I build Oxide on Windows.” After the reply a “Memory updated” toast appears and the items show in Settings → Memory. A new chat: “What do you know about me?” uses them. Edit one, delete one, then Delete all.
+- [ ] Move a chat into a project (sidebar or title-bar menu → Move to project) and out again (project page → remove button); archive and unarchive a project.
+
+Done:
+- **`oxide-core`:**
+  - `project.rs`: `Project.archived`, `ProjectPatch.archived`, `MAX_INSTRUCTIONS_CHARS` (20,000). Knowledge types: `KnowledgeKind` (text | pdf | note), `KnowledgeFile` (chars, estimated tokens, pages, note), `KnowledgeText`, `KnowledgeMode` (empty | full | search), `ProjectKnowledge` (files, total, budget, mode), `KnowledgeHit`. `estimate_tokens` (≈ 4 chars per token), `knowledge_mode`.
+  - `memory.rs`: `MemoryItem` (project_id `None` = all chats; the chat it came from), `NewMemory`, `memory_prompt` (bullet list), `clean_memory_text` (one line, ≤ 500 chars).
+  - Settings: `projects.knowledgeBudget` (40,000 tokens, 1,000–400,000), `memory { enabled (off), model }`. `ToolUsageKind::ProjectSearch`; `PROJECT_SEARCH` = `project_search`.
+- **`oxide-store`:** migration `0006_projects_memory.sql`: `projects.archived`; `project_files` (extracted text per file); `knowledge_chunks` + FTS5 table `knowledge_fts` (external content, triggers, `unicode61 remove_diacritics 2`); `memories` (project items cascade with the project).
+  - `knowledge.rs`: `chunk_text` (≈ 1,500-character passages, 200 overlap, breaking at blank lines, lines, sentences or spaces; char-safe), `any_word_query` (quoted words OR-joined, prefix match from 4 letters, English/Danish stop words dropped unless nothing else is left), `add_knowledge_file` (one transaction: file + passages; ≤ 500 files per project, ≤ 2M characters per file), `knowledge_files`, `knowledge_texts`, `knowledge_file`, `delete_knowledge_file`, `search_knowledge` (ranked by `bm25()`, scoped to the project).
+  - `memory.rs`: `list_memory`, `memory_for(project)` (global first, then the project's), `add_memory` (≤ 300 items), `update_memory`, `delete_memory`, `clear_memory`.
+  - `set_conversation_project` (doesn't bump `updatedAt`); `update_project` handles `archived` and the instructions limit.
+- **`oxide-llm`:** `ChatRequest.system_context`: stable text ahead of the system prompt. Anthropic gets it as the first system block carrying the system breakpoint (still 4 breakpoints in total), so knowledge stays cached while the prompt after it (which has the time) changes; OpenAI-compatible servers get it joined before the system prompt.
+- **`oxide-agent`:**
+  - `knowledge.rs`: `read_knowledge_file` (through `AttachmentStore`: text/code as UTF-8, PDFs by their extracted text, images refused; the prepared copy is removed), `chat_budget` (the setting, at most a quarter of the model's context window), `plan_knowledge` → `Full(<project_knowledge> with <document index name>)` or `Search(file names)`, `project_search_entry`, `run_project_search`, `format_hits` (`<passage file part>`).
+  - `memory.rs`: the memory prompt (what's known, project scope, what not to keep: secrets, health, passing details) and a lenient JSON parser (code fences, strings or objects, de-duplicated, ≤ 3 per exchange).
+  - `ChatService`: `setup` loads the project's knowledge (full → `system_context`; search → `project_search` first in the tool list and the file names in the system prompt), and memory items when memory is on. `project_search` runs in the chat service (it knows the project), never asks for approval, and is logged as `projectSearch`. After every reply that ends normally, `learn_memory` asks the memory model (configured, or the same small-model choice as titles; 60 s timeout), saves new items and calls `EventSink::memory_changed(added)` (default no-op). Titles and memory share `quick_text`.
+  - `context.rs`: `PromptContext.project_name`, `knowledge_search`; the memory text now says it's what Oxide remembers from earlier chats.
+- **`src-tauri`:** commands `set_conversation_project`, `project_knowledge`, `add_project_file(projectId, source)`, `add_project_text`, `get_knowledge_file`, `delete_knowledge_file`, `list_memory`, `add_memory`, `update_memory`, `delete_memory`, `clear_memory`; event `MemoryChanged { added }` (`events.memoryChanged`).
+- **Frontend:**
+  - Project page: “← All projects”, options menu (Edit details, Archive/Unarchive, Delete project with confirmation), archived banner, Instructions card with an editor dialog (character count), Knowledge card (budget meter, “in full” vs “searched” line, files with icons and token counts, click to view the text, remove; “+” → Upload files via the native picker or a file input in the browser, Add text content), per-chat “Remove from project”.
+  - Projects page hides archived projects behind “Archived (n)”.
+  - Chat menus (sidebar row and title bar): “Move to project” submenu with a check on the current project and “Remove from project”.
+  - Settings → **Memory** (no longer a placeholder): on/off, memory model, items grouped by All chats / project (edit inline, delete, link to the chat it came from), add with a scope, Delete all; Project knowledge budget.
+  - `useChatEvents` listens to `memoryChanged` (refetch + “Memory updated” toast). Tool lines and “Used in this chat” know `project_search` (“Searched project knowledge · query”, folder-search icon).
+  - Shared dialogs in `features/projects/ProjectDialogs.tsx` (`Modal`, `ConfirmDialog`, …); `readBase64`/`baseName` exported from `useAttachments`.
+- **Tests:** Rust (Linux): core 36, store 39, llm 45, agent 68, mcp 51. New: chunking (paragraph breaks, overlap, dense non-ASCII), stop-word queries, knowledge CRUD/search/cascade, long-file passage search, memory CRUD/scope/cascade, moving chats, archive, knowledge as Anthropic system block / OpenAI join, file reading (text, PDF, image refused), full vs search plans, memory prompt + parsing, and chat-service tests: knowledge in full, search without approval (logged), memory learned and given to the next reply, memory off sends nothing. Vitest: `features/projects/Projects.test.tsx` (instructions, knowledge add/upload/view/remove, search mode, archive, delete, move chats, helpers), `features/memory/Memory.test.tsx` (toggle, add/edit/delete, background items + toast, Delete all, budget clamp, grouping), a `project_search` case in `Tools.test.tsx`. The fake backend implements the new commands (`learnMemory` emits `memoryChanged`).
+
+Deviations from PLAN.md (and why):
+- **BM25 through SQLite FTS5 (`bm25()`), not `tantivy`:** tantivy isn't in the offline Linux vendor bundle, and FTS5 is already in the database (no new crate, one transaction for file + index, cascades on delete). PLAN.md updated.
+- **Memory items are saved directly**, not held as proposals for the user to accept: they're listed (with their source chat) in Settings → Memory for review, editing and deletion, and a toast says when something was learned.
+- **Knowledge files store extracted text only** (no copy of the original file); images aren't accepted as knowledge.
+- **The knowledge budget lives in Settings → Memory** (with memory), and a chat also caps it at a quarter of the model's context window.
+- **Drag and drop onto the Knowledge card isn't supported yet** (the window-wide drop goes to the composer); upload uses the picker.
+
+Known issues / TODO carried forward:
+- Memory learning runs after every reply that ends normally. With a local model (Strata) it uses the chat model, so the server is busy for a moment after each reply. Set a memory model in Settings → Memory to move it elsewhere.
+- The system prompt's time (minutes) still changes the Anthropic cache key of the dynamic prompt each minute; knowledge sits before it in its own cached block, so only the short prompt is re-read.
+- Token counts are estimates (4 characters per token), not the provider's tokenizer.
+- `src/bindings/index.ts` was edited by hand on the agent side; `cargo test` (export_bindings) regenerates it on Windows.
+
+Notes for Phase 8:
+- `Builtin` + a branch in `run_calls` is the pattern for built-in tools that need app state (`project_search` runs in `ChatService`); the artifact tool can follow it.
+- `features/projects/ProjectDialogs.tsx` has a reusable `Modal` and `ConfirmDialog`.
+
+Verified: clippy ✅ tests ✅ (Linux library crates) typecheck ✅ lint ✅ prettier ✅ (device) · Windows `phase7.cmd` ⏳ · tauri dev ⏳
 
 ## Phase 6 — Agent loop, approvals & built-in tools — 2026-11-06
 Status: done. `scripts\win\phase6.cmd` passed every check on Windows on the second run and committed `144a11d phase 6: agent loop, approvals & built-in tools`. The first run failed typecheck only: the generated bindings mark `ToolUse.server`/`tool` optional (`server?: string | null`, from `#[serde(default)]`), unlike the hand-edited copy; `toolView.ts` now uses `b.server ?? null`.

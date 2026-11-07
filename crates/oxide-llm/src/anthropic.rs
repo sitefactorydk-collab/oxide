@@ -167,12 +167,29 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
         json!(req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS)),
     );
     body.insert("stream".into(), json!(true));
-    if let Some(system) = req.system.as_deref().filter(|s| !s.trim().is_empty()) {
-        let mut block = json!({ "type": "text", "text": system });
+    // One breakpoint for the system prompt (Anthropic allows four per request): on the
+    // knowledge block when there is one, since the prompt after it changes every minute.
+    let mut system: Vec<Value> = Vec::new();
+    if let Some(context) = req
+        .system_context
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        let mut block = json!({ "type": "text", "text": context });
         if req.cache {
             block["cache_control"] = ephemeral();
         }
-        body.insert("system".into(), json!([block]));
+        system.push(block);
+    }
+    if let Some(text) = req.system.as_deref().filter(|s| !s.trim().is_empty()) {
+        let mut block = json!({ "type": "text", "text": text });
+        if req.cache && system.is_empty() {
+            block["cache_control"] = ephemeral();
+        }
+        system.push(block);
+    }
+    if !system.is_empty() {
+        body.insert("system".into(), json!(system));
     }
     if !req.tools.is_empty() || !req.server_tools.is_empty() {
         let mut tools: Vec<Value> = req
@@ -893,6 +910,22 @@ mod tests {
         assert_eq!(body["thinking"], json!({"type": "disabled"}));
         assert!(body["system"][0].get("cache_control").is_none());
         assert!(body.get("output_config").is_none());
+
+        // Project knowledge: its own first system block, carrying the breakpoint.
+        req.cache = true;
+        req.system_context = Some("<project_knowledge>…</project_knowledge>".into());
+        let body = request_body(&req).await.expect("builds");
+        let system = body["system"].as_array().expect("blocks");
+        assert_eq!(system.len(), 2);
+        assert_eq!(
+            system[0]["text"],
+            "<project_knowledge>…</project_knowledge>"
+        );
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+        assert!(system[1].get("cache_control").is_none());
+        assert_eq!(system[1]["text"], "Be brief.");
+        req.system_context = None;
+        req.cache = false;
 
         // Effort, and media for a model that can't see images or read PDFs natively.
         req.effort = Some(oxide_core::Effort::Low);

@@ -2,6 +2,7 @@ import {
   AlertCircle,
   ArrowDown,
   FileText,
+  FolderSearch,
   Globe,
   Lightbulb,
   Plug,
@@ -388,7 +389,9 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
         ? FileText
         : kind === "providerTool"
           ? Sparkles
-          : Plug;
+          : kind === "projectSearch"
+            ? FolderSearch
+            : Plug;
   return <Icon aria-hidden className="size-4" />;
 }
 

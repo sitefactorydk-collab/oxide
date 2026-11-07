@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ChevronRight,
   FileText,
+  FolderSearch,
   Globe,
   Loader2,
   Plug,
@@ -20,7 +21,14 @@ import { callHeadline, prettyJson, toolKind } from "./toolView";
 
 function KindIcon({ call }: { call: ToolCallView }) {
   const kind = toolKind(call);
-  const Icon = kind === "search" ? Globe : kind === "fetch" ? FileText : Plug;
+  const Icon =
+    kind === "search"
+      ? Globe
+      : kind === "fetch"
+        ? FileText
+        : kind === "project"
+          ? FolderSearch
+          : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 

@@ -158,6 +158,26 @@ impl Store {
         .await
     }
 
+    /// Moves a chat into a project (`Some`) or out of any project (`None`). Doesn't bump
+    /// `updated_at`, so the chat keeps its place in Recents.
+    pub async fn set_conversation_project(
+        &self,
+        id: &str,
+        project_id: Option<&str>,
+    ) -> Result<Conversation> {
+        let project_id = project_id.filter(|p| !p.is_empty());
+        let done = sqlx::query("UPDATE conversations SET project_id = ? WHERE id = ?")
+            .bind(project_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| map_fk(e, "project"))?;
+        if done.rows_affected() == 0 {
+            return Err(NOT_FOUND);
+        }
+        self.get_conversation(id).await
+    }
+
     /// Deletes a chat and (by cascade) its messages and their search index entries.
     pub async fn delete_conversation(&self, id: &str) -> Result<()> {
         let done = sqlx::query("DELETE FROM conversations WHERE id = ?")

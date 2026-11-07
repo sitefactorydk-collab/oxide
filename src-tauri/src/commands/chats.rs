@@ -80,6 +80,20 @@ pub async fn set_conversation_model(
     Ok(state.store.set_conversation_model(&id, &model).await?)
 }
 
+/// Moves a chat into a project, or out of any project with `projectId: null`.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_project(
+    state: State<'_, AppState>,
+    id: String,
+    project_id: Option<String>,
+) -> CmdResult<Conversation> {
+    Ok(state
+        .store
+        .set_conversation_project(&id, project_id.as_deref())
+        .await?)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> CmdResult<()> {

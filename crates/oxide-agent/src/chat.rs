@@ -31,14 +31,22 @@ use crate::AgentError;
 use crate::context::{
     PromptContext, build_messages, plan_request, request_messages, system_prompt,
 };
+use crate::knowledge::{
+    KnowledgePlan, chat_budget, plan_knowledge, project_search_entry, run_project_search,
+};
+use crate::memory::{MEMORY_SYSTEM, Scope, memory_prompt, parse_proposals};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
-use crate::tools::{ToolEntry, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label};
+use crate::tools::{
+    Builtin, ToolEntry, ToolKind, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label,
+};
 
 /// How often buffered text is sent to the UI while a reply streams.
 const FLUSH_EVERY: Duration = Duration::from_millis(40);
 /// Longest wait for an automatic title.
 const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest wait for memory items after a reply.
+const MEMORY_TIMEOUT: Duration = Duration::from_secs(60);
 
 const STOPPED_NOTE: &str = "The user stopped the reply before this tool ran.";
 const FAILED_NOTE: &str = "The reply ended before this tool ran.";
@@ -50,6 +58,10 @@ pub trait EventSink: Send + Sync + 'static {
     fn stream_event(&self, event: ChatStreamEvent);
     /// A chat changed in the background (its automatic title).
     fn conversation_changed(&self, conversation: Conversation);
+    /// `added` memory items were learned in the background.
+    fn memory_changed(&self, added: u32) {
+        let _ = added;
+    }
 }
 
 struct Running {
@@ -96,6 +108,10 @@ struct Setup {
     settings: AppSettings,
     tool_set: ToolSet,
     system: String,
+    /// Project knowledge that goes ahead of the system prompt (cached on Anthropic).
+    system_context: Option<String>,
+    /// The chat's project (for `project_search`).
+    project_id: Option<String>,
     /// "Allow always for this chat" keys.
     grants: HashSet<String>,
 }
@@ -437,8 +453,15 @@ impl ChatService {
                         message: saved.clone(),
                     },
                 );
-                if first_exchange && let (Some(first), Some(reply)) = (thread.first(), saved) {
-                    self.auto_title(&cid, first, &reply).await;
+                if first_exchange
+                    && let (Some(first), Some(reply)) = (thread.first(), saved.as_ref())
+                {
+                    self.auto_title(&cid, first, reply).await;
+                }
+                if stop_reason == StopReason::EndTurn
+                    && let (Some(user), Some(reply)) = (thread.last(), saved.as_ref())
+                {
+                    self.learn_memory(&cid, user, reply).await;
                 }
             }
         }
@@ -478,7 +501,7 @@ impl ChatService {
         };
         let settings = self.store.app_settings().await?;
         let chat_tools = self.store.chat_tools(&conversation.id).await?;
-        let tool_set = if caps.tools {
+        let mut tool_set = if caps.tools {
             self.tools
                 .tool_set(&chat_tools, &settings, config.kind)
                 .await
@@ -495,6 +518,35 @@ impl ChatService {
             Some(p) => self.store.get_project(p).await.ok(),
             None => None,
         };
+        // Knowledge: in full when it fits the budget, else searched with `project_search`.
+        let mut system_context = None;
+        let mut knowledge_search = Vec::new();
+        if let Some(p) = &project {
+            let files = self.store.knowledge_texts(&p.id).await?;
+            let budget = chat_budget(
+                settings.projects.knowledge_budget,
+                info.as_ref().and_then(|i| i.context_window),
+            );
+            match plan_knowledge(&files, budget) {
+                KnowledgePlan::None => {}
+                KnowledgePlan::Full(block) => system_context = Some(block),
+                KnowledgePlan::Search(names) => {
+                    if caps.tools {
+                        tool_set.entries.insert(0, project_search_entry());
+                    }
+                    knowledge_search = names;
+                }
+            }
+        }
+        let memory = if settings.memory.enabled {
+            let items = self
+                .store
+                .memory_for(conversation.project_id.as_deref())
+                .await?;
+            oxide_core::memory::memory_prompt(&items)
+        } else {
+            None
+        };
         let clock = lock(&self.clock).clone();
         let system = system_prompt(&PromptContext {
             user_name: &settings.profile.name,
@@ -505,8 +557,10 @@ impl ChatService {
             web_search: tool_set.can_search(),
             web_fetch: tool_set.can_fetch(),
             connectors: tool_set.servers(),
+            project_name: project.as_ref().map(|p| p.name.as_str()),
             project_instructions: project.as_ref().map(|p| p.instructions.as_str()),
-            memory: None,
+            knowledge_search,
+            memory: memory.as_deref(),
         });
         Ok(Setup {
             provider,
@@ -517,6 +571,8 @@ impl ChatService {
             settings,
             tool_set,
             system,
+            system_context,
+            project_id: conversation.project_id.clone(),
             grants,
         })
     }
@@ -544,6 +600,7 @@ impl ChatService {
                 request_messages(&history, &reply.blocks),
             );
             request.system = Some(setup.system.clone());
+            request.system_context = setup.system_context.clone();
             plan_request(
                 &mut request,
                 setup.kind,
@@ -724,6 +781,8 @@ impl ChatService {
             return false;
         }
         match entry.server() {
+            // Searching the project's own files never asks.
+            None if entry.kind == ToolKind::Builtin(Builtin::ProjectSearch) => false,
             None => setup.settings.tools.ask_before_web,
             Some(_) => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -842,6 +901,7 @@ impl ChatService {
         let turns = tokio::sync::Mutex::new(());
         let done: Mutex<Vec<(usize, ToolOutput)>> = Mutex::new(Vec::new());
         let settings = &setup.settings;
+        let project_id = setup.project_id.as_deref();
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
@@ -881,10 +941,17 @@ impl ChatService {
                         id: r.call.id.clone(),
                     },
                 );
-                let out = self
-                    .tools
-                    .run(&r.entry, &r.input, &r.call.id, settings)
-                    .await;
+                let out = if r.entry.kind == ToolKind::Builtin(Builtin::ProjectSearch) {
+                    let started = Instant::now();
+                    let mut out = run_project_search(&self.store, project_id, &r.input).await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else {
+                    self.tools
+                        .run(&r.entry, &r.input, &r.call.id, settings)
+                        .await
+                };
                 self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
                     .await;
                 lock(done).push((i, out));
@@ -1040,6 +1107,106 @@ impl ChatService {
         user_text: &str,
         reply_text: &str,
     ) -> Result<Option<String>, AgentError> {
+        let text = self
+            .quick_text(
+                convo,
+                configured,
+                "You name chats. You answer with a short title only.",
+                title_prompt(user_text, reply_text),
+                60,
+            )
+            .await?;
+        Ok(clean_title(&text))
+    }
+
+    /// Learns memory items from the latest exchange, when memory is on.
+    async fn learn_memory(&self, cid: &str, user: &Message, reply: &Message) {
+        let Ok(settings) = self.store.app_settings().await else {
+            return;
+        };
+        if !settings.memory.enabled {
+            return;
+        }
+        let user_text = text_blocks(&user.content);
+        let reply_text = text_blocks(&reply.content);
+        if user_text.trim().is_empty() {
+            return;
+        }
+        let Ok(convo) = self.store.get_conversation(cid).await else {
+            return;
+        };
+        let project = match &convo.project_id {
+            Some(p) => self.store.get_project(p).await.ok(),
+            None => None,
+        };
+        let existing = self
+            .store
+            .memory_for(convo.project_id.as_deref())
+            .await
+            .unwrap_or_default();
+        let prompt = memory_prompt(
+            &existing,
+            project.as_ref().map(|p| p.name.as_str()),
+            &user_text,
+            &reply_text,
+        );
+        let answer = tokio::time::timeout(
+            MEMORY_TIMEOUT,
+            self.quick_text(&convo, &settings.memory.model, MEMORY_SYSTEM, prompt, 400),
+        )
+        .await;
+        let raw = match answer {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => {
+                tracing::info!(conversation = %cid, "no memory update: {e}");
+                return;
+            }
+            Err(_) => {
+                tracing::info!(conversation = %cid, "no memory update: timed out");
+                return;
+            }
+        };
+        let mut added = 0u32;
+        for p in parse_proposals(&raw, &existing, project.is_some()) {
+            let project_id = match p.scope {
+                Scope::Project => convo.project_id.clone(),
+                Scope::Global => None,
+            };
+            match self
+                .store
+                .add_memory(
+                    oxide_core::NewMemory {
+                        project_id,
+                        text: p.text,
+                    },
+                    Some(cid),
+                )
+                .await
+            {
+                Ok(_) => added += 1,
+                Err(e) => {
+                    tracing::info!("memory item not saved: {e}");
+                    break;
+                }
+            }
+        }
+        if added > 0 {
+            tracing::info!(conversation = %cid, "memory: {added} new item(s)");
+            self.sink.memory_changed(added);
+        }
+    }
+
+    /// A short non-streaming job (titles, memory) on a small model: the configured one, or a
+    /// cheap one from the chat's endpoint. `anthropic_max` caps output on Anthropic;
+    /// others get room for reasoning models' thinking.
+    async fn quick_text(
+        &self,
+        convo: &Conversation,
+        configured: &Option<String>,
+        system: &str,
+        prompt: String,
+        anthropic_max: u32,
+    ) -> Result<String, AgentError> {
         let model_id = match configured {
             Some(m) => m.clone(),
             None => {
@@ -1059,13 +1226,10 @@ impl ChatService {
             .await
             .map(|m| m.capabilities)
             .unwrap_or_default();
-        let mut request = ChatRequest::new(
-            model,
-            vec![ChatMessage::user(title_prompt(user_text, reply_text))],
-        );
-        request.system = Some("You name chats. You answer with a short title only.".into());
+        let mut request = ChatRequest::new(model, vec![ChatMessage::user(prompt)]);
+        request.system = Some(system.to_owned());
         request.max_tokens = Some(match config.kind {
-            ProviderKind::Anthropic => 60,
+            ProviderKind::Anthropic => anthropic_max,
             // Reasoning models spend output tokens before the answer.
             _ => 1_024,
         });
@@ -1076,9 +1240,20 @@ impl ChatService {
         {
             request.thinking = Thinking::Off;
         }
-        let text = complete_text(provider.as_ref(), request).await?;
-        Ok(clean_title(&text))
+        Ok(complete_text(provider.as_ref(), request).await?)
     }
+}
+
+/// The text blocks of a message (no tool results or files), joined by blank lines.
+fn text_blocks(content: &[ContentBlock]) -> String {
+    content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } if !text.trim().is_empty() => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// The path from the root to `id`, or `None` if `id` isn't among `messages`.
@@ -1597,6 +1772,7 @@ pub(crate) mod tests {
     pub struct Recorder {
         pub events: Mutex<Vec<ChatStreamEvent>>,
         pub changed: Mutex<Vec<Conversation>>,
+        pub memory_changes: AtomicUsize,
         notify: tokio::sync::Notify,
     }
 
@@ -1607,6 +1783,10 @@ pub(crate) mod tests {
         }
         fn conversation_changed(&self, conversation: Conversation) {
             self.changed.lock().expect("lock").push(conversation);
+            self.notify.notify_waiters();
+        }
+        fn memory_changed(&self, _added: u32) {
+            self.memory_changes.fetch_add(1, Ordering::SeqCst);
             self.notify.notify_waiters();
         }
     }
@@ -2500,6 +2680,270 @@ pub(crate) mod tests {
             ]
         );
         assert_eq!(m.content.last(), Some(&ContentBlock::text("done")));
+    }
+
+    // ---- Projects & memory ---------------------------------------------------------------
+
+    fn knowledge(name: &str, text: &str) -> oxide_store::NewKnowledgeFile {
+        oxide_store::NewKnowledgeFile {
+            name: name.into(),
+            kind: oxide_core::KnowledgeKind::Text,
+            media_type: "text/markdown".into(),
+            pages: None,
+            note: None,
+            text: text.into(),
+        }
+    }
+
+    /// Puts the fixture's chat in a new project with instructions and `files`.
+    async fn in_project(f: &Fixture, files: Vec<oxide_store::NewKnowledgeFile>) -> String {
+        let p = f
+            .store
+            .create_project(oxide_core::NewProject {
+                name: "Launch".into(),
+                description: String::new(),
+            })
+            .await
+            .expect("project");
+        f.store
+            .update_project(
+                &p.id,
+                oxide_core::ProjectPatch {
+                    instructions: Some("Answer like a pirate.".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("instructions");
+        for file in files {
+            f.store.add_knowledge_file(&p.id, file).await.expect("adds");
+        }
+        f.store
+            .set_conversation_project(&f.chat.id, Some(&p.id))
+            .await
+            .expect("moves");
+        p.id
+    }
+
+    fn title_step() -> Vec<Step> {
+        vec![text("T"), ev(ChatEvent::Stop(StopReason::EndTurn))]
+    }
+
+    #[tokio::test]
+    async fn small_project_knowledge_goes_into_the_prompt_in_full() {
+        let f = fixture(vec![
+            turn(vec![text("Arr, tangerine.")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        in_project(
+            &f,
+            vec![knowledge("codes.md", "The launch code is tangerine.")],
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let req = &f.fake.requests()[0];
+        let context = req.system_context.as_deref().expect("knowledge");
+        assert!(context.contains("<document index=\"1\" name=\"codes.md\">"));
+        assert!(context.contains("The launch code is tangerine."));
+        let system = req.system.as_deref().expect("system");
+        assert!(system.contains("project “Launch”"));
+        assert!(system.contains("Answer like a pirate."));
+        assert!(!system.contains("project_search"));
+        assert!(req.tools.iter().all(|t| t.name != "project_search"));
+    }
+
+    #[tokio::test]
+    async fn large_project_knowledge_is_searched_without_asking() {
+        let mut first = vec![text("Let me check the files.")];
+        first.extend(call("k1", "project_search", "{\"query\":\"launch code\"}"));
+        let f = fixture(vec![
+            turn(first, StopReason::ToolUse),
+            turn(
+                vec![text("It's tangerine (codes.md).")],
+                StopReason::EndTurn,
+            ),
+            title_step(),
+        ])
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.projects.knowledge_budget = 1_000;
+        settings.tools.ask_before_web = true; // doesn't apply to project search
+        f.store.save_app_settings(settings).await.expect("saves");
+        let mut big = String::new();
+        for i in 0..300 {
+            big.push_str(&format!("Section {i} describes routine matters.\n\n"));
+        }
+        big.push_str("The launch code is tangerine.\n\n");
+        in_project(
+            &f,
+            vec![knowledge("codes.md", &big), knowledge("b.md", "beta")],
+        )
+        .await;
+
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert_eq!(reqs[0].system_context, None);
+        assert_eq!(reqs[0].tools[0].name, "project_search");
+        let system = reqs[0].system.as_deref().expect("system");
+        assert!(
+            system.contains("too large to include here: codes.md, b.md."),
+            "{system}"
+        );
+        assert!(
+            !f.sink
+                .events()
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolApproval { .. })),
+            "searching the project never asks"
+        );
+        let reply = saved(&f);
+        let result = reply
+            .content
+            .iter()
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => Some((plain_text(content), *is_error)),
+                _ => None,
+            })
+            .expect("a result");
+        assert!(!result.1);
+        assert!(result.0.contains("file=\"codes.md\""), "{}", result.0);
+        assert!(result.0.contains("tangerine"));
+        assert_eq!(
+            reply.content.last(),
+            Some(&ContentBlock::text("It's tangerine (codes.md)."))
+        );
+        let used = f.store.tool_usage(&f.chat.id).await.expect("log");
+        assert_eq!(used[0].kind, ToolUsageKind::ProjectSearch);
+        assert_eq!(used[0].label.as_deref(), Some("launch code"));
+    }
+
+    #[tokio::test]
+    async fn memory_is_learned_after_replies_and_given_to_later_ones() {
+        let f = fixture(vec![
+            turn(
+                vec![text("Rust is a language, Mikkel.")],
+                StopReason::EndTurn,
+            ),
+            title_step(),
+            vec![
+                text("{\"memories\": [{\"text\": \"Is called Mikkel\", \"scope\": \"global\"},"),
+                text(" {\"text\": \"Ships Launch on Windows\", \"scope\": \"project\"}]}"),
+                ev(ChatEvent::Stop(StopReason::EndTurn)),
+            ],
+            turn(vec![text("Hi again.")], StopReason::EndTurn),
+            vec![
+                text("{\"memories\": []}"),
+                ev(ChatEvent::Stop(StopReason::EndTurn)),
+            ],
+        ])
+        .await;
+        let project = in_project(&f, Vec::new()).await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.memory.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink
+            .wait_for(|r| r.memory_changes.load(Ordering::SeqCst) == 1)
+            .await;
+        let items = f.store.list_memory().await.expect("memory");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].text, "Is called Mikkel");
+        assert_eq!(items[0].project_id, None);
+        assert_eq!(
+            items[0].conversation_id.as_deref(),
+            Some(f.chat.id.as_str())
+        );
+        assert_eq!(items[1].project_id.as_deref(), Some(project.as_str()));
+        let reqs = f.fake.requests();
+        assert!(
+            reqs[0]
+                .system
+                .as_deref()
+                .is_some_and(|s| !s.contains("<memory>"))
+        );
+        let memory_req = &reqs[2];
+        assert_eq!(memory_req.system.as_deref(), Some(MEMORY_SYSTEM));
+        assert!(
+            plain_text(&memory_req.messages[0].content).contains("Rust is a language, Mikkel.")
+        );
+
+        // The next reply sees both items.
+        let reply_id = saved(&f).id;
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply_id),
+                vec![ContentBlock::text("Hello")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Done { .. }))
+                    .count()
+                    == 2
+            })
+            .await;
+        let reqs = f.fake.requests();
+        let system = reqs[3].system.as_deref().expect("system");
+        assert!(
+            system.contains("<memory>\n- Is called Mikkel\n- Ships Launch on Windows\n</memory>"),
+            "{system}"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_off_asks_nothing_and_shares_nothing() {
+        let f = fixture(vec![
+            turn(vec![text("Rust is a language.")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        f.store
+            .add_memory(
+                oxide_core::NewMemory {
+                    project_id: None,
+                    text: "Secret preference".into(),
+                },
+                None,
+            )
+            .await
+            .expect("adds");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink
+            .wait_for(|r| !r.changed.lock().expect("lock").is_empty())
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 2, "reply and title only");
+        assert!(
+            reqs[0]
+                .system
+                .as_deref()
+                .is_some_and(|s| !s.contains("Secret preference"))
+        );
+        assert_eq!(f.sink.memory_changes.load(Ordering::SeqCst), 0);
     }
 
     #[test]

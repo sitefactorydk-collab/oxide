@@ -15,7 +15,7 @@ export interface PendingAttachment {
 let seq = 0;
 
 /** Base64 of a browser File (clipboard, file input, HTML5 drop). */
-function readBase64(file: File): Promise<string> {
+export function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error ?? new Error("couldn't read the file"));
@@ -27,7 +27,7 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
-function baseName(path: string): string {
+export function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 

@@ -192,9 +192,14 @@ pub struct PromptContext<'a> {
     pub web_fetch: bool,
     /// MCP servers whose tools are on.
     pub connectors: Vec<String>,
-    /// The chat's project instructions (Phase 7 fills more of this in).
+    /// The chat's project, by name.
+    pub project_name: Option<&'a str>,
+    /// The chat's project instructions.
     pub project_instructions: Option<&'a str>,
-    /// What Oxide remembers about the user (Phase 7).
+    /// Knowledge files too large to include: their names (the model gets `project_search`).
+    /// Knowledge that fits goes in `ChatRequest::system_context` instead.
+    pub knowledge_search: Vec<String>,
+    /// What Oxide remembers about the user, as a bullet list (memory on).
     pub memory: Option<&'a str>,
 }
 
@@ -275,6 +280,31 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
             ));
         }
     }
+    if let Some(name) = ctx.project_name.map(str::trim).filter(|n| !n.is_empty()) {
+        s.push_str(&format!(
+            "\n\nThis chat belongs to the user's project “{name}”."
+        ));
+    }
+    if !ctx.knowledge_search.is_empty() {
+        let shown: Vec<&str> = ctx
+            .knowledge_search
+            .iter()
+            .take(50)
+            .map(String::as_str)
+            .collect();
+        let more = ctx.knowledge_search.len().saturating_sub(shown.len());
+        s.push_str(&format!(
+            " Its knowledge files are too large to include here: {}{}. Search them with the \
+             project_search tool whenever a question may be answered by the user's files, \
+             before answering from general knowledge, and say which file an answer came from.",
+            shown.join(", "),
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        ));
+    }
     if let Some(p) = ctx
         .project_instructions
         .map(str::trim)
@@ -287,8 +317,9 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
     }
     if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
         s.push_str(&format!(
-            "\n\n<memory>\n{mem}\n</memory>\nThese are things the user asked Oxide to remember. \
-             Use them when relevant; don't mention them otherwise."
+            "\n\n<memory>\n{mem}\n</memory>\nThis is what Oxide remembers about the user from \
+             earlier chats. Use it when relevant, without mentioning it otherwise; the user's \
+             current messages take precedence."
         ));
     }
     s
@@ -585,7 +616,9 @@ mod tests {
             web_search: true,
             web_fetch: true,
             connectors: vec!["fs".into(), "time".into()],
+            project_name: None,
             project_instructions: Some("Answer in Danish."),
+            knowledge_search: Vec::new(),
             memory: None,
         });
         assert!(
@@ -603,6 +636,29 @@ mod tests {
         });
         assert!(neg.contains("(UTC-05:30)"), "{neg}");
         assert!(!neg.contains("You can"));
+    }
+
+    #[test]
+    fn system_prompt_carries_project_search_and_memory() {
+        let p = system_prompt(&PromptContext {
+            project_name: Some("Oxide"),
+            knowledge_search: vec!["PLAN.md".into(), "PROGRESS.md".into()],
+            memory: Some("- Prefers Danish"),
+            ..PromptContext::default()
+        });
+        assert!(p.contains("project “Oxide”"), "{p}");
+        assert!(
+            p.contains("too large to include here: PLAN.md, PROGRESS.md."),
+            "{p}"
+        );
+        assert!(p.contains("project_search"));
+        assert!(p.contains("<memory>\n- Prefers Danish\n</memory>"));
+        let many = system_prompt(&PromptContext {
+            knowledge_search: (0..60).map(|i| format!("f{i}")).collect(),
+            ..PromptContext::default()
+        });
+        assert!(many.contains("f49 and 10 more."), "{many}");
+        assert!(!system_prompt(&PromptContext::default()).contains("project_search"));
     }
 
     #[test]

@@ -163,7 +163,7 @@ describe("tool calls in a reply", () => {
 
 function usage(
   id: string,
-  kind: "webSearch" | "webFetch" | "connector",
+  kind: "webSearch" | "webFetch" | "connector" | "projectSearch",
   server: string | null,
   tool: string,
   label: string,
@@ -214,6 +214,29 @@ describe("tool helpers", () => {
     });
     expect(callHeadline(fetch.call)).toEqual({ action: "Read", detail: "o.example" });
     expect(fetch.call.status).toBe("error");
+  });
+
+  it("labels project knowledge searches", () => {
+    const call = {
+      id: "k1",
+      name: "project_search",
+      server: null,
+      tool: "project_search",
+      title: "Search project knowledge",
+      inputJson: '{"query":"launch code"}',
+      status: "done" as const,
+      approval: null,
+      result: null,
+      isError: false,
+      durationMs: 3,
+      provider: false,
+    };
+    expect(callHeadline(call)).toEqual({
+      action: "Searched project knowledge",
+      detail: "launch code",
+    });
+    const rows = usageRows([usage("p", "projectSearch", null, "project_search", "launch code")]);
+    expect(rows.map((r) => [r.title, r.details])).toEqual([["Project knowledge", ["launch code"]]]);
   });
 
   it("collapses repeated uses", () => {

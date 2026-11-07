@@ -4,7 +4,9 @@ import {
   commands,
   type AppSettings,
   type ChatFont,
+  type MemorySettings,
   type ModelSettings,
+  type ProjectSettings,
   type ThemePref,
   type ToolSettings,
   type WebSearchSettings,
@@ -20,6 +22,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
   tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
   webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
+  projects: { knowledgeBudget: 40000 },
+  memory: { enabled: false, model: null },
 };
 
 export function useSettings() {
@@ -116,6 +120,18 @@ export function useSetToolSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ToolSettings>) =>
     update((s) => ({ ...s, tools: { ...s.tools, ...patch } }));
+}
+
+export function useSetProjectSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ProjectSettings>) =>
+    update((s) => ({ ...s, projects: { ...s.projects, ...patch } }));
+}
+
+export function useSetMemorySettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<MemorySettings>) =>
+    update((s) => ({ ...s, memory: { ...s.memory, ...patch } }));
 }
 
 export function useSetWebSearchSettings() {

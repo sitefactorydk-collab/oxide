@@ -68,6 +68,17 @@ async setConversationModel(id: string, model: string) : Promise<Result<Conversat
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Moves a chat into a project, or out of any project with `projectId: null`.
+ */
+async setConversationProject(id: string, projectId: string | null) : Promise<Result<Conversation, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_conversation_project", { id, projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteConversation(id: string) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_conversation", { id }) };
@@ -587,6 +598,9 @@ async createProject(input: NewProject) : Promise<Result<Project, CommandError>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Renames, edits the description or instructions, or archives / unarchives a project.
+ */
 async updateProject(id: string, patch: ProjectPatch) : Promise<Result<Project, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_project", { id, patch }) };
@@ -596,11 +610,110 @@ async updateProject(id: string, patch: ProjectPatch) : Promise<Result<Project, C
 }
 },
 /**
- * Deletes a project; its chats stay, outside any project.
+ * Deletes a project and its knowledge; its chats stay, outside any project.
  */
 async deleteProject(id: string) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_project", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A project's knowledge files (without their text), their size and how chats use them.
+ */
+async projectKnowledge(projectId: string) : Promise<Result<ProjectKnowledge, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_knowledge", { projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Adds a file (a path from the picker or drop, or pasted bytes) to a project's knowledge.
+ * Text and code files and PDFs are accepted; their text is stored and indexed.
+ */
+async addProjectFile(projectId: string, source: AttachmentSource) : Promise<Result<KnowledgeFile, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_project_file", { projectId, source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Adds typed or pasted text to a project's knowledge ("Add text content").
+ */
+async addProjectText(projectId: string, name: string, text: string) : Promise<Result<KnowledgeFile, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_project_text", { projectId, name, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * One knowledge file with its text (the viewer).
+ */
+async getKnowledgeFile(id: string) : Promise<Result<KnowledgeText, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_knowledge_file", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteKnowledgeFile(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_knowledge_file", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every memory item, global and per project, oldest first.
+ */
+async listMemory() : Promise<Result<MemoryItem[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_memory") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addMemory(input: NewMemory) : Promise<Result<MemoryItem, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_memory", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateMemory(id: string, text: string) : Promise<Result<MemoryItem, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_memory", { id, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteMemory(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_memory", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes every item (`projectId`: only that project's). Returns how many went.
+ */
+async clearMemory(projectId: string | null) : Promise<Result<number, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_memory", { projectId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -694,11 +807,13 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 export const events = __makeEvents__<{
 chatStream: ChatStream,
 conversationUpdated: ConversationUpdated,
-mcpChanged: McpChanged
+mcpChanged: McpChanged,
+memoryChanged: MemoryChanged
 }>({
 chatStream: "chat-stream",
 conversationUpdated: "conversation-updated",
-mcpChanged: "mcp-changed"
+mcpChanged: "mcp-changed",
+memoryChanged: "memory-changed"
 })
 
 /** user-defined constants **/
@@ -707,7 +822,7 @@ mcpChanged: "mcp-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -928,6 +1043,58 @@ export type ImportStatus =
  * Oxide has a different entry under that name; importing replaces it.
  */
 "changed"
+/**
+ * One file in a project's knowledge. Its text lives in the database.
+ */
+export type KnowledgeFile = { id: string; projectId: string; name: string; kind: KnowledgeKind; mediaType: string; 
+/**
+ * Characters of stored text.
+ */
+chars: number; 
+/**
+ * Estimated tokens of the text (see [`estimate_tokens`]).
+ */
+tokens: number; pages: number | null; 
+/**
+ * Something the user should know (lossy text, few words found).
+ */
+note: string | null; createdAt: number }
+/**
+ * Where a knowledge file's text came from.
+ */
+export type KnowledgeKind = 
+/**
+ * A text or code file.
+ */
+"text" | 
+/**
+ * A PDF; its extracted text is stored.
+ */
+"pdf" | 
+/**
+ * Text typed or pasted into the project ("Add text content").
+ */
+"note"
+/**
+ * How a project's knowledge reaches the model.
+ */
+export type KnowledgeMode = 
+/**
+ * No files.
+ */
+"empty" | 
+/**
+ * Every file goes into the prompt in full.
+ */
+"full" | 
+/**
+ * Too large for the budget: the model searches it with `project_search`.
+ */
+"search"
+/**
+ * A knowledge file with its text (the file viewer).
+ */
+export type KnowledgeText = { file: KnowledgeFile; text: string }
 /**
  * The user's answer to an [`McpInteraction`].
  */
@@ -1201,6 +1368,31 @@ export type MediaSource =
  */
 { kind: "path"; path: string }
 /**
+ * Memory items were learned in the background (`events.memoryChanged`).
+ */
+export type MemoryChanged = { added: number }
+/**
+ * One remembered item. `project_id = None` means it applies to every chat.
+ */
+export type MemoryItem = { id: string; projectId: string | null; text: string; 
+/**
+ * The chat it was learned from (`None` when the user wrote it).
+ */
+conversationId: string | null; createdAt: number; updatedAt: number }
+/**
+ * Memory across chats (opt-in).
+ */
+export type MemorySettings = { 
+/**
+ * Learn memory items from chats, and give saved items to models.
+ */
+enabled: boolean; 
+/**
+ * Model that writes memory items (`<providerId>/<model>`). `None` picks a small model
+ * from the chat's endpoint, like automatic titles.
+ */
+model: string | null }
+/**
  * One message in a conversation.
  * 
  * `parent_id` makes the messages a tree: editing a message adds a sibling under the same
@@ -1281,6 +1473,7 @@ titleModel: string | null;
  * Extended-thinking budget in tokens, for models that take one.
  */
 thinkingBudget: number }
+export type NewMemory = { projectId: string | null; text: string }
 export type NewProject = { name: string; description: string }
 /**
  * Response of [`ping`]: proves the IPC round trip and the generated bindings work.
@@ -1291,11 +1484,32 @@ export type ProfileSettings = {
  * What Oxide calls the user (greeting, avatar initials).
  */
 name: string }
-export type Project = { id: string; name: string; description: string; instructions: string; createdAt: number; updatedAt: number }
+export type Project = { id: string; name: string; description: string; instructions: string; 
+/**
+ * Archived projects are hidden from the main list; their chats keep working.
+ */
+archived: boolean; createdAt: number; updatedAt: number }
+/**
+ * A project's knowledge files and how they're used.
+ */
+export type ProjectKnowledge = { files: KnowledgeFile[]; totalTokens: number; 
+/**
+ * The knowledge budget from Settings (the model's context can lower it in a chat).
+ */
+budgetTokens: number; mode: KnowledgeMode }
 /**
  * Partial update: `None` leaves a field as it is.
  */
-export type ProjectPatch = { name: string | null; description: string | null; instructions: string | null }
+export type ProjectPatch = { name: string | null; description: string | null; instructions: string | null; archived: boolean | null }
+/**
+ * Projects (Settings → Projects & memory).
+ */
+export type ProjectSettings = { 
+/**
+ * Estimated tokens of knowledge that go into the prompt in full. Larger projects are
+ * searched instead. A chat also keeps it under a quarter of the model's context window.
+ */
+knowledgeBudget: number }
 /**
  * A configured endpoint as the UI sees it.
  */
@@ -1524,7 +1738,11 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * A tool the provider ran (Anthropic web search).
  */
-"providerTool"
+"providerTool" | 
+/**
+ * A search of the project's knowledge.
+ */
+"projectSearch"
 /**
  * Token counts for one reply.
  */

@@ -21,6 +21,13 @@ pub struct ConversationUpdated(pub ConversationChanged);
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct McpChanged(pub McpEvent);
 
+/// Memory items were learned in the background (`events.memoryChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryChanged {
+    pub added: u32,
+}
+
 /// Forwards reply events from `oxide-agent` to every window.
 pub struct TauriSink {
     app: AppHandle,
@@ -42,6 +49,12 @@ impl EventSink for TauriSink {
     fn conversation_changed(&self, conversation: Conversation) {
         if let Err(e) = ConversationUpdated(ConversationChanged { conversation }).emit(&self.app) {
             tracing::warn!("couldn't send a conversation update: {e}");
+        }
+    }
+
+    fn memory_changed(&self, added: u32) {
+        if let Err(e) = (MemoryChanged { added }).emit(&self.app) {
+            tracing::warn!("couldn't send a memory update: {e}");
         }
     }
 }

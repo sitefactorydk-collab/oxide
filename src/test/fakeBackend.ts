@@ -8,7 +8,11 @@ import type {
   Conversation,
   ConversationChanged,
   GenerateOptions,
+  KnowledgeFile,
+  KnowledgeText,
   McpEvent,
+  MemoryChanged,
+  MemoryItem,
   Message,
   PingResponse,
   Project,
@@ -54,6 +58,9 @@ interface FakeState {
   conversations: Conversation[];
   messages: Message[];
   projects: Project[];
+  /** Knowledge files with their text. */
+  knowledge: KnowledgeText[];
+  memory: MemoryItem[];
   providers: ProviderConfig[];
   keys: Map<string, string>;
   settings: AppSettings;
@@ -92,6 +99,8 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     conversations: seed.empty ? [] : seedConversations(now),
     messages: seed.empty ? [] : seedMessages(now),
     projects: seed.empty ? [] : seedProjects(now),
+    knowledge: [],
+    memory: [],
     providers: seedProviders(now),
     keys: new Map(),
     settings: {
@@ -100,6 +109,8 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
       models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
       tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
       webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
+      projects: { knowledgeBudget: 40000 },
+      memory: { enabled: false, model: null },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -197,13 +208,55 @@ function fakeEvent<T>(name: string) {
 const chatStream = fakeEvent<ChatStreamEvent>("chat-stream");
 const conversationUpdated = fakeEvent<ConversationChanged>("conversation-updated");
 const mcpChanged = fakeEvent<McpEvent>("mcp-changed");
+const memoryChanged = fakeEvent<MemoryChanged>("memory-changed");
 setMcpEmitter((e) => void mcpChanged.emit(e));
 
 export const fakeEvents = {
   chatStream,
   conversationUpdated,
   mcpChanged,
+  memoryChanged,
 } as unknown as typeof RealEvents;
+
+/** Memory items learned "in the background", announced like the backend does. */
+export function learnMemory(items: Array<{ text: string; projectId?: string | null }>): void {
+  const now = Date.now();
+  for (const i of items) {
+    state.memory.push({
+      id: nextId("mem"),
+      projectId: i.projectId ?? null,
+      text: i.text,
+      conversationId: "c1",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  void memoryChanged.emit({ added: items.length });
+}
+
+function addKnowledge(
+  projectId: string,
+  name: string,
+  kind: KnowledgeFile["kind"],
+  text: string,
+): Promise<Result<KnowledgeFile, CommandError>> {
+  if (!state.projects.some((p) => p.id === projectId)) return fail("notFound", "project not found");
+  if (!text.trim()) return fail("invalid", `“${name}” has no text to add`);
+  const file: KnowledgeFile = {
+    id: nextId("kf"),
+    projectId,
+    name: name.trim() || "Untitled",
+    kind,
+    mediaType: kind === "pdf" ? "application/pdf" : "text/plain",
+    chars: text.trim().length,
+    tokens: Math.ceil(text.trim().length / 4),
+    pages: kind === "pdf" ? 3 : null,
+    note: null,
+    createdAt: Date.now() + state.knowledge.length,
+  };
+  state.knowledge.push({ file, text: text.trim() });
+  return ok(file);
+}
 
 /** Sends a stream event as the backend would. */
 export function emitStream(conversationId: string, event: StreamEvent): void {
@@ -569,6 +622,7 @@ export const fakeCommands: typeof RealCommands = {
       name: input.name.trim(),
       description: input.description.trim(),
       instructions: "",
+      archived: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -580,14 +634,95 @@ export const fakeCommands: typeof RealCommands = {
     if (!p) return fail("notFound", "project not found");
     if (patch.name !== null) p.name = patch.name;
     if (patch.description !== null) p.description = patch.description;
-    if (patch.instructions !== null) p.instructions = patch.instructions;
+    if (patch.instructions !== null) p.instructions = patch.instructions.trim();
+    if (patch.archived !== null) p.archived = patch.archived;
     p.updatedAt = Date.now();
-    return ok(p);
+    return ok({ ...p });
   },
   deleteProject: (id) => {
     state.projects = state.projects.filter((p) => p.id !== id);
+    state.knowledge = state.knowledge.filter((k) => k.file.projectId !== id);
+    state.memory = state.memory.filter((m) => m.projectId !== id);
     for (const c of state.conversations) if (c.projectId === id) c.projectId = null;
     return ok(null);
+  },
+  setConversationProject: (id, projectId) => {
+    const c = state.conversations.find((x) => x.id === id);
+    if (!c) return fail("notFound", "conversation not found");
+    if (projectId !== null && !state.projects.some((p) => p.id === projectId)) {
+      return fail("notFound", "project not found");
+    }
+    c.projectId = projectId;
+    return ok({ ...c });
+  },
+  projectKnowledge: (projectId) => {
+    const files = state.knowledge.filter((k) => k.file.projectId === projectId).map((k) => k.file);
+    const totalTokens = files.reduce((n, f) => n + f.tokens, 0);
+    const budgetTokens = state.settings.projects.knowledgeBudget;
+    return ok({
+      files,
+      totalTokens,
+      budgetTokens,
+      mode: files.length === 0 ? "empty" : totalTokens <= budgetTokens ? "full" : "search",
+    });
+  },
+  addProjectFile: (projectId, source) => {
+    const name =
+      source.kind === "path" ? (source.path.split(/[\\/]/).pop() ?? "file") : source.name;
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
+      return fail(
+        "invalid",
+        `${name} is an image. Project knowledge takes text, code and PDF files.`,
+      );
+    }
+    const text =
+      source.kind === "bytes"
+        ? atob(source.data)
+        : `Contents of ${name}. `.repeat(ext === "pdf" ? 40 : 10);
+    return addKnowledge(projectId, name, ext === "pdf" ? "pdf" : "text", text);
+  },
+  addProjectText: (projectId, name, text) => addKnowledge(projectId, name, "note", text),
+  getKnowledgeFile: (id) => {
+    const k = state.knowledge.find((x) => x.file.id === id);
+    return k ? ok(k) : fail("notFound", "knowledge file not found");
+  },
+  deleteKnowledgeFile: (id) => {
+    state.knowledge = state.knowledge.filter((k) => k.file.id !== id);
+    return ok(null);
+  },
+  listMemory: () => ok([...state.memory]),
+  addMemory: (input) => {
+    const text = input.text.trim();
+    if (!text) return fail("invalid", "the memory is empty");
+    const now = Date.now();
+    const m: MemoryItem = {
+      id: nextId("mem"),
+      projectId: input.projectId,
+      text,
+      conversationId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.memory.push(m);
+    return ok(m);
+  },
+  updateMemory: (id, text) => {
+    const m = state.memory.find((x) => x.id === id);
+    if (!m) return fail("notFound", "memory not found");
+    if (!text.trim()) return fail("invalid", "the memory is empty");
+    m.text = text.trim();
+    m.updatedAt = Date.now();
+    return ok({ ...m });
+  },
+  deleteMemory: (id) => {
+    state.memory = state.memory.filter((m) => m.id !== id);
+    return ok(null);
+  },
+  clearMemory: (projectId) => {
+    const before = state.memory.length;
+    state.memory = projectId === null ? [] : state.memory.filter((m) => m.projectId !== projectId);
+    return ok(before - state.memory.length);
   },
 
   answerToolApproval: (conversationId, toolUseId, decision) => {

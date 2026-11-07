@@ -251,8 +251,13 @@ impl Provider for OpenAiCompatProvider {
 /// Builds the Chat Completions request body.
 pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::new();
-    if let Some(system) = req.system.as_deref().filter(|s| !s.trim().is_empty()) {
-        messages.push(json!({ "role": "system", "content": system }));
+    let system: Vec<&str> = [req.system_context.as_deref(), req.system.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if !system.is_empty() {
+        messages.push(json!({ "role": "system", "content": system.join("\n\n") }));
     }
     for m in &req.messages {
         match m.role {
@@ -768,6 +773,20 @@ mod tests {
         assert_eq!(events.len(), 1);
         let err = events[0].as_ref().expect_err("fails").to_string();
         assert!(err.contains("model crashed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn project_knowledge_goes_before_the_system_prompt() {
+        let mut req = ChatRequest::new("m", vec![ChatMessage::user("hi")]);
+        req.system = Some("sys".into());
+        req.system_context = Some("<project_knowledge>k</project_knowledge>".into());
+        let body = request_body(ProviderKind::Strata, &req)
+            .await
+            .expect("builds");
+        assert_eq!(
+            body["messages"][0],
+            json!({"role": "system", "content": "<project_knowledge>k</project_knowledge>\n\nsys"})
+        );
     }
 
     #[tokio::test]

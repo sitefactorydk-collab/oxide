@@ -8,6 +8,7 @@ pub mod attachment;
 pub mod chat;
 pub mod conversation;
 pub mod mcp;
+pub mod memory;
 pub mod message;
 pub mod model;
 pub mod project;
@@ -29,13 +30,17 @@ pub use mcp::{
     McpResourceTemplate, McpServerConfig, McpServerLists, McpServerState, McpStatus, McpTool,
     McpToolAnnotations, McpToolResult, McpTransport,
 };
+pub use memory::{MemoryItem, NewMemory};
 pub use message::{ContentBlock, Feedback, MediaSource, Message, Rating, Role};
 pub use model::{Effort, ModelCapabilities, ModelInfo, ProviderModels, ThinkingStyle};
-pub use project::{NewProject, Project, ProjectPatch};
+pub use project::{
+    KnowledgeFile, KnowledgeHit, KnowledgeKind, KnowledgeMode, KnowledgeText, NewProject, Project,
+    ProjectKnowledge, ProjectPatch,
+};
 pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
 pub use settings::{
-    AppSettings, AppearanceSettings, ChatFont, ModelSettings, ProfileSettings, ThemePref,
-    ToolSettings, WebSearchProvider, WebSearchSettings,
+    AppSettings, AppearanceSettings, ChatFont, MemorySettings, ModelSettings, ProfileSettings,
+    ProjectSettings, ThemePref, ToolSettings, WebSearchProvider, WebSearchSettings,
 };
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,

@@ -55,6 +55,10 @@ pub struct ChatRequest {
     /// The model's id at the provider.
     pub model: String,
     pub system: Option<String>,
+    /// Long, stable context sent ahead of `system` (project knowledge). Anthropic gets it as
+    /// its own system block with the prompt-cache breakpoint, so it stays cached while the
+    /// rest of the system prompt (which carries the time) changes. Others get it joined.
+    pub system_context: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<ToolSpec>,
     /// Tools the provider runs itself, as the provider's JSON definitions (Anthropic's
@@ -80,6 +84,7 @@ impl ChatRequest {
         Self {
             model: model.into(),
             system: None,
+            system_context: None,
             messages,
             tools: Vec::new(),
             server_tools: Vec::new(),

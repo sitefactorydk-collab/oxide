@@ -1,5 +1,7 @@
-//! Project repository (instructions and chats; knowledge files arrive in Phase 7).
+//! Project repository: name, description, instructions and archiving. Knowledge files are in
+//! `knowledge.rs`.
 
+use oxide_core::project::MAX_INSTRUCTIONS_CHARS;
 use oxide_core::{NewProject, Project, ProjectPatch};
 
 use crate::{Result, Store, StoreError, new_id, now_ms};
@@ -10,6 +12,7 @@ struct ProjectRow {
     name: String,
     description: String,
     instructions: String,
+    archived: bool,
     created_at: i64,
     updated_at: i64,
 }
@@ -21,13 +24,14 @@ impl From<ProjectRow> for Project {
             name: r.name,
             description: r.description,
             instructions: r.instructions,
+            archived: r.archived,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
     }
 }
 
-const COLUMNS: &str = "id, name, description, instructions, created_at, updated_at";
+const COLUMNS: &str = "id, name, description, instructions, archived, created_at, updated_at";
 
 fn clean_name(name: &str) -> Result<String> {
     let n = name.trim();
@@ -65,6 +69,7 @@ impl Store {
             name: clean_name(&input.name)?,
             description: input.description.trim().to_owned(),
             instructions: String::new(),
+            archived: false,
             created_at: now,
             updated_at: now,
         };
@@ -92,16 +97,26 @@ impl Store {
             p.description = d.trim().to_owned();
         }
         if let Some(i) = patch.instructions {
-            p.instructions = i.trim().to_owned();
+            let i = i.trim();
+            if i.chars().count() > MAX_INSTRUCTIONS_CHARS {
+                return Err(StoreError::Invalid(format!(
+                    "instructions are limited to {MAX_INSTRUCTIONS_CHARS} characters"
+                )));
+            }
+            p.instructions = i.to_owned();
+        }
+        if let Some(a) = patch.archived {
+            p.archived = a;
         }
         p.updated_at = now_ms();
         sqlx::query(
-            "UPDATE projects SET name = ?, description = ?, instructions = ?, updated_at = ?
-             WHERE id = ?",
+            "UPDATE projects SET name = ?, description = ?, instructions = ?, archived = ?,
+             updated_at = ? WHERE id = ?",
         )
         .bind(&p.name)
         .bind(&p.description)
         .bind(&p.instructions)
+        .bind(p.archived)
         .bind(p.updated_at)
         .bind(&p.id)
         .execute(&self.pool)
@@ -151,7 +166,30 @@ mod tests {
             .expect("updates");
         assert_eq!(p2.instructions, "Be terse.");
         assert_eq!(p2.name, "Oxide");
-        assert_eq!(s.list_projects().await.expect("ok"), vec![p2]);
+        assert_eq!(s.list_projects().await.expect("ok"), vec![p2.clone()]);
+        let archived = s
+            .update_project(
+                &p.id,
+                ProjectPatch {
+                    archived: Some(true),
+                    ..ProjectPatch::default()
+                },
+            )
+            .await
+            .expect("archives");
+        assert!(archived.archived);
+        assert_eq!(archived.instructions, "Be terse.");
+        assert!(matches!(
+            s.update_project(
+                &p.id,
+                ProjectPatch {
+                    instructions: Some("x".repeat(MAX_INSTRUCTIONS_CHARS + 1)),
+                    ..ProjectPatch::default()
+                },
+            )
+            .await,
+            Err(StoreError::Invalid(_))
+        ));
         assert!(matches!(
             s.create_project(NewProject {
                 name: " ".into(),
@@ -182,6 +220,22 @@ mod tests {
             .await
             .expect("creates");
         assert_eq!(c.project_id.as_deref(), Some(p.id.as_str()));
+        // Out of the project and back in.
+        let out = s
+            .set_conversation_project(&c.id, None)
+            .await
+            .expect("moves");
+        assert_eq!(out.project_id, None);
+        assert_eq!(out.updated_at, c.updated_at);
+        let back = s
+            .set_conversation_project(&c.id, Some(&p.id))
+            .await
+            .expect("moves");
+        assert_eq!(back.project_id.as_deref(), Some(p.id.as_str()));
+        assert!(matches!(
+            s.set_conversation_project(&c.id, Some("missing")).await,
+            Err(StoreError::NotFound { what: "project" })
+        ));
         s.delete_project(&p.id).await.expect("deletes");
         assert_eq!(
             s.get_conversation(&c.id).await.expect("ok").project_id,

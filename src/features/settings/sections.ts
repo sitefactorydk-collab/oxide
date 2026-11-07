@@ -85,8 +85,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "memory",
     label: "Memory",
     icon: Brain,
-    phase: 7,
-    blurb: "What Oxide remembers across chats. Off by default.",
+    blurb:
+      "What Oxide remembers across chats (off by default), and how much project knowledge goes into a chat in full.",
   },
   {
     id: "data",

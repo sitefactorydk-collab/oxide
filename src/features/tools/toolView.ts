@@ -157,6 +157,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   };
   if (call.tool === "web_search") return str("query") ?? "";
   if (call.tool === "web_fetch") return str("url") ?? "";
+  if (call.tool === "project_search") return str("query") ?? "";
   for (const k of LABEL_KEYS) {
     const v = str(k);
     if (v) return v;
@@ -165,13 +166,14 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   return typeof first === "string" ? first : "";
 }
 
-export type ToolKind = "search" | "fetch" | "connector";
+export type ToolKind = "search" | "fetch" | "project" | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
   if (call.tool === "web_search" && (call.server === null || call.server === "anthropic")) {
     return "search";
   }
   if (call.tool === "web_fetch" && call.server === null) return "fetch";
+  if (call.tool === "project_search" && call.server === null) return "project";
   return "connector";
 }
 
@@ -188,6 +190,11 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       return { action: busy ? "Searching the web" : "Searched the web", detail };
     case "fetch":
       return { action: busy ? "Reading" : "Read", detail: detail ? hostOf(detail) : "a web page" };
+    case "project":
+      return {
+        action: busy ? "Searching project knowledge" : "Searched project knowledge",
+        detail,
+      };
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -224,7 +231,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
           ? "Web pages"
           : u.kind === "providerTool"
             ? u.tool
-            : (u.server ?? "Connector");
+            : u.kind === "projectSearch"
+              ? "Project knowledge"
+              : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

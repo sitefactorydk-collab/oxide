@@ -8,6 +8,8 @@
 //!
 //! - [`AttachmentStore`]: checks, converts and stores attached files.
 //! - [`export`]: conversations as Markdown or JSON.
+//! - [`knowledge`]: project knowledge files, full or searched (`project_search`).
+//! - [`memory`]: learning memory items from chats (opt-in).
 //!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
@@ -17,6 +19,8 @@ mod context;
 pub mod demo;
 mod error;
 pub mod export;
+pub mod knowledge;
+pub mod memory;
 mod registry;
 pub mod sampling;
 mod title;

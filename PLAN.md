@@ -31,7 +31,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Python | Oxide manages its own `uv` (shipped as a Tauri sidecar per target) and creates a venv in app data on first run |
 | Browser agent | Browser-Use wrapped as a local MCP server (`oxide-browser-agent`, Python, runs in the uv venv) |
 | Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
-| Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring` |
+| Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring`. Project knowledge search uses SQLite FTS5 with BM25 ranking (Phase 7) |
 | OS dialogs and links | `tauri-plugin-dialog` (file picker, save dialog) and `tauri-plugin-opener` (links open in the system browser), called from Rust commands so the frontend still only uses `@/bindings` (Phase 4) |
 | IPC typing | `tauri-specta` generates TS bindings from Rust commands and events. No hand-written IPC types |
 | Frontend state | Zustand for UI state, TanStack Query for backend data |
@@ -261,7 +261,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 
 ### Phase 7 — Projects & memory
 - Projects: Phase 2 already stores projects (table, CRUD commands, "New project" dialog). This phase adds editing, archive, instructions editing, knowledge files (upload; text extracted and stored), and a project page listing its chats and knowledge.
-- Context strategy: knowledge that fits the budget is included in full with cache breakpoints. Above the budget, a local BM25 index (`tantivy`) and a `project_search` tool are used.
+- Context strategy: knowledge that fits the budget is included in full with cache breakpoints. Above the budget, a local BM25 index (SQLite FTS5's `bm25()` over passages of the files; changed from `tantivy` in Phase 7, see PROGRESS.md) and a `project_search` tool are used.
 - Chats can be moved into and out of projects.
 - **Memory (opt-in):**
   - After a conversation, a summarizer model proposes memory items.

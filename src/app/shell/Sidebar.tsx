@@ -238,6 +238,7 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
               setRenaming(true);
             }}
             onExport={(format) => exportChat(convo.id, format)}
+            conversation={convo}
             onDelete={() => {
               remove.mutate(convo.id);
               if (active) navigate("/new");

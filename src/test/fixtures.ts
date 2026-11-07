@@ -24,6 +24,7 @@ export function seedProjects(now: number): Project[] {
       description: "A Rust remake of a desktop AI assistant.",
       instructions:
         "Answer as a senior Rust + TypeScript engineer. Prefer small, verifiable steps and keep crate boundaries from CLAUDE.md.",
+      archived: false,
       createdAt: now - 30 * DAY,
       updatedAt: now - 20 * MIN,
     },
@@ -32,6 +33,7 @@ export function seedProjects(now: number): Project[] {
       name: "Garden planner",
       description: "Planting calendar and soil notes for the allotment.",
       instructions: "Use metric units and Danish growing seasons.",
+      archived: false,
       createdAt: now - 30 * DAY,
       updatedAt: now - 3 * DAY,
     },

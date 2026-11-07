@@ -6,6 +6,8 @@
 
 mod chat_tools;
 mod conversations;
+mod knowledge;
+mod memory;
 mod messages;
 mod probes;
 mod projects;
@@ -22,6 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
+pub use knowledge::{CHUNK_CHARS, MAX_FILE_CHARS, NewKnowledgeFile, any_word_query, chunk_text};
 pub use messages::NewReply;
 pub use search::fts_query;
 pub use secrets::{

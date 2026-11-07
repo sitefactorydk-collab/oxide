@@ -26,12 +26,15 @@ const BINDINGS_HEADER: &str =
 
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{attachments, chats, mcp, models, projects, providers, settings, system, tools};
+    use commands::{
+        attachments, chats, mcp, memory, models, projects, providers, settings, system, tools,
+    };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::ChatStream,
             events::ConversationUpdated,
-            events::McpChanged
+            events::McpChanged,
+            events::MemoryChanged
         ])
         .commands(collect_commands![
             commands::ping,
@@ -42,6 +45,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             chats::rename_conversation,
             chats::set_conversation_starred,
             chats::set_conversation_model,
+            chats::set_conversation_project,
             chats::delete_conversation,
             chats::list_messages,
             chats::send_message,
@@ -102,6 +106,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projects::create_project,
             projects::update_project,
             projects::delete_project,
+            projects::project_knowledge,
+            projects::add_project_file,
+            projects::add_project_text,
+            projects::get_knowledge_file,
+            projects::delete_knowledge_file,
+            // Memory
+            memory::list_memory,
+            memory::add_memory,
+            memory::update_memory,
+            memory::delete_memory,
+            memory::clear_memory,
             // Settings
             settings::get_settings,
             settings::save_settings,

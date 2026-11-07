@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::future::BoxFuture;
-use oxide_core::tools::{PROVIDER_SERVER, WEB_FETCH, WEB_SEARCH};
+use oxide_core::tools::{PROJECT_SEARCH, PROVIDER_SERVER, WEB_FETCH, WEB_SEARCH};
 use oxide_core::{
     AppSettings, AttachmentSource, ChatTools, ContentBlock, McpContent, McpStatus, McpTool,
     McpToolResult, MediaSource, ProviderKind, ToolUsageKind,
@@ -72,6 +72,8 @@ impl McpTools for oxide_mcp::McpManager {
 pub enum Builtin {
     WebSearch,
     WebFetch,
+    /// Search the chat's project knowledge (run by the chat service, which knows the project).
+    ProjectSearch,
 }
 
 impl Builtin {
@@ -79,6 +81,7 @@ impl Builtin {
         match self {
             Builtin::WebSearch => WEB_SEARCH,
             Builtin::WebFetch => WEB_FETCH,
+            Builtin::ProjectSearch => PROJECT_SEARCH,
         }
     }
 }
@@ -128,6 +131,7 @@ impl ToolEntry {
         match self.kind {
             ToolKind::Builtin(Builtin::WebSearch) => ToolUsageKind::WebSearch,
             ToolKind::Builtin(Builtin::WebFetch) => ToolUsageKind::WebFetch,
+            ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -310,6 +314,9 @@ impl Tools {
         let mut out = match &entry.kind {
             ToolKind::Builtin(Builtin::WebSearch) => self.web_search(input, settings).await,
             ToolKind::Builtin(Builtin::WebFetch) => self.web_fetch(input).await,
+            ToolKind::Builtin(Builtin::ProjectSearch) => {
+                ToolOutput::error("Project search runs in the chat, not here.")
+            }
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp
@@ -513,6 +520,7 @@ impl ToolOutput {
 
 fn builtin_entry(b: Builtin) -> ToolEntry {
     let (title, description, schema) = match b {
+        Builtin::ProjectSearch => return crate::knowledge::project_search_entry(),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \
@@ -673,6 +681,7 @@ pub fn usage_label(entry_tool: &str, input: &Value) -> Option<String> {
     match entry_tool {
         WEB_SEARCH => s("query"),
         WEB_FETCH => s("url"),
+        PROJECT_SEARCH => s("query"),
         _ => [
             "path", "file", "filename", "url", "uri", "query", "q", "name", "title", "command",
             "repoName",
