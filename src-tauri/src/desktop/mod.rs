@@ -213,6 +213,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                 if !state.told_about_tray.swap(true, Ordering::SeqCst) {
                     notify::tray_hint(app);
                 }
+                notify::waiting_reminder(app);
             } else {
                 // Quick entry is a hidden window too; without this the app would keep running.
                 api.prevent_close();

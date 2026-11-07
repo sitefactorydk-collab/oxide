@@ -231,6 +231,7 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
     call.status === "streaming" ||
     call.status === "ready" ||
     call.status === "approved" ||
+    call.status === "awaitingApproval" ||
     call.status === "running";
   switch (toolKind(call)) {
     case "search":

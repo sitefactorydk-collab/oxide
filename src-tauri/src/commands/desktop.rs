@@ -37,6 +37,14 @@ pub fn desktop_status(app: AppHandle, state: State<'_, DesktopState>) -> Desktop
     }
 }
 
+/// Shows a notification now, so the user can check that the system lets Oxide's through.
+#[tauri::command]
+#[specta::specta]
+pub fn test_notification(app: AppHandle) -> CmdResult<()> {
+    desktop::notify::test(&app)
+        .map_err(|e| CommandError::Internal(format!("The notification couldn't be shown: {e}")))
+}
+
 /// The main window is listening: returns actions that arrived before (e.g. the deep link
 /// Oxide was started with). Later ones come as `desktopRequest` events.
 #[tauri::command]

@@ -4,7 +4,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 10 — Extensions (.mcpb) & Skills (`6ccbc48`; exit check passed on Windows on 2026-11-07)
-- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): implemented; `scripts\win\phase11.cmd` and the manual exit check on Windows are pending
+- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): committed (`f312ced`); manual exit check in progress (part 1 passed)
 - **Next phase:** Phase 12 — Managed Python (uv) & code execution (after Phase 11's exit check)
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -30,7 +30,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 11 — Agentic tasks (Cowork-style) — 2026-11-07
-Status: implemented; waiting for `scripts\win\phase11.cmd` (checks, Vitest, build, commit) and the exit check by hand on Windows. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
+Status: committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186); exit check by hand in progress. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
 
 First Windows run (2026-11-07): fmt, prettier, clippy, cargo test, typecheck, lint and the vite build passed; 4 of 186 Vitest tests failed, all in the new `Workspace.test.tsx` and all test-side:
 - The “+” menu was opened with `pointerDown`, which Radix ignores under jsdom; it now opens with Enter on the trigger, like the other tests.
@@ -38,16 +38,22 @@ First Windows run (2026-11-07): fmt, prettier, clippy, cargo test, typecheck, li
 - The shell approval test didn't send the `toolUse` event that opens a tool block, and didn't wait for the held reply; both added.
 
 Exit criteria (check by hand in `cargo tauri dev`; `phase11.ps1` makes `Documents\Oxide sample folder` with ten mixed files the first time it runs):
-- [ ] **Organize a folder end to end.** New chat → “+” → **Add folder** → `Documents\Oxide sample folder` (a folder chip shows above the text). Ask: “Organize this folder by file type and write a summary.md of what's in it.”
+- [x] **Organize a folder end to end.** (2026-11-07, Strata `swift-iq2_xs`: a 4-step plan ticked off live with the pill at “4 of 4 done”; files sorted into `data/`, `documents/`, `images/`, `code/`, `config/`, `logs/` with a `summary.md`; Used in this session showed Files ×22; Allowed in this chat listed move file and write file. The model also tried the Phase 5 `filesystem` connector's `list_directory_with_sizes` once, which failed (probably outside that server's allowed directories; not checked); it went on with Oxide's own tools.) New chat → “+” → **Add folder** → `Documents\Oxide sample folder` (a folder chip shows above the text). Ask: “Organize this folder by file type and write a summary.md of what's in it.”
   - The title bar shows a **Step n of m** pill and the right-hand panel opens on **Progress** with the plan; steps tick off live (in progress → done).
   - `list_dir`/`read_file`/`search_files` run without cards. Every `move_file` and `write_file` shows an approval card (“Allow always for this chat” then covers the rest of that tool's moves).
   - **Used in this session** fills in: files and folders (with a count), the task list; clicking a row scrolls to the call. **Allowed in this chat** lists the “Allow always” choices; ✕ takes one back.
   - The folder ends up sorted into subfolders with a `summary.md`.
-- [ ] **Delete.** “Delete ideas.md.” → an approval card marked destructive; after Allow, the file is in `_to_delete\` inside the shared folder. Tick **Delete for good** in the panel's Folders section and repeat with another file: it's gone.
-- [ ] **Path escapes are blocked.** “Read C:\Windows\win.ini” and “Read ..\..\something” → the tool answers that the path is outside the shared folders (also covered by tests: `escapes_are_refused`, `links_out_of_the_grant_are_refused`, `workspace_tools_stay_in_granted_folders_and_ask_before_changes`).
-- [ ] **Shell (off by default).** Settings → Permissions → Shell commands → on; add `Get-ChildItem` to the allowlist. In the sample folder's chat: “List the files with Get-ChildItem, then run `New-Item test.txt`.” → the first runs without asking, the second asks; “Allow always” there allows only that exact command.
+- [x] **Delete.** “Delete ideas.md.” → an approval card marked destructive; after Allow, the file is in `_to_delete\` inside the shared folder. Tick **Delete for good** in the panel's Folders section and repeat with another file: it's gone.
+- [x] **Path escapes are blocked.** “Read C:\Windows\win.ini” and “Read ..\..\something” → the tool answers that the path is outside the shared folders (also covered by tests: `escapes_are_refused`, `links_out_of_the_grant_are_refused`, `workspace_tools_stay_in_granted_folders_and_ask_before_changes`).
+- [x] **Shell (off by default).** Settings → Permissions → Shell commands → on; add `Get-ChildItem` to the allowlist. In the sample folder's chat: “List the files with Get-ChildItem, then run `New-Item test.txt`.” → the first runs without asking, the second asks; “Allow always” there allows only that exact command.
 - [ ] **Long-running.** Start the organize prompt, then hide Oxide (✕ to the tray): an approval card notifies (Phase 9), and the sidebar row shows **Needs input** while a card waits and a pulsing dot while it works. A finished reply notifies.
-- [ ] The panel's open/closed state is remembered per chat (close it in one chat, open another, come back).
+- [x] The panel's open/closed state is remembered per chat (close it in one chat, open another, come back).
+
+Manual check by the user (2026-11-07, `f312ced`, Strata `swift-iq2_xs`): parts 1–3, the shell and the panel memory passed. **Failed: no notification for a waiting approval card**, although Oxide was already hidden when the card appeared (the sidebar showed “Needs input”). The log had no “couldn't show a notification” warning, and nothing said whether Oxide skipped it or Windows dropped it. Fix (`scripts\win\phase11-fix.cmd`, not yet run):
+- `notify.rs` logs each decision (notifications off / Oxide in front / notifying) and each notification shown, so `logs\dev.log` tells which it was.
+- Hiding the window to the tray while approvals wait sends a reminder (“A tool call is waiting for your approval.”), since the card's own notification went out while Oxide was in front.
+- Settings → Desktop → **Send a test notification** (`test_notification` command) checks whether Windows shows Oxide's notifications at all (a dev build's may be attributed to PowerShell, see Phase 9).
+- Also from the check: a waiting write call read “Wrote … Needs your approval”; waiting calls now use the present tense (“Writing …”).
 
 Done:
 - **`oxide-core`:** `workspace.rs`: tool names (`list_dir`, `read_file`, `search_files`, `write_file`, `edit_file`, `move_file`, `delete_file`, `task_list`, `run_command`), `FILES_SWITCH` (`disabledBuiltins: ["files"]` switches all file tools off in a chat), `TO_DELETE_DIR`, limits (20 folders, 50 tasks, 200-character titles); `ChatFolder`, `ChatWorkspace { folders, allowDelete }`, `TaskStatus` (forgiving `parse`), `TaskItem`, `TaskList` (`progress`, `current`), `clean_task_title`, `command_allowed` (allowlist matched word by word; commands with `;`, `&`, `|`, `>`, `<`, backticks, line breaks or `$(` always ask). `StartConversation.folders` (granted before the first reply). Settings: `shell { enabled (off), allowlist, timeoutSecs (120, 1–3600) }`. `ToolUsageKind::File | Shell | Tasks`.

@@ -75,6 +75,13 @@ describe("Settings → Desktop", () => {
     expect(screen.queryByRole("button", { name: "Quick entry shortcut" })).not.toBeInTheDocument();
   });
 
+  it("sends a test notification", async () => {
+    renderApp("/settings/desktop");
+    fireEvent.click(await screen.findByRole("button", { name: "Send a test notification" }));
+    await waitFor(() => expect(fakeState().desktop.testNotifications).toBe(1));
+    expect(await screen.findByText(/Test notification sent/)).toBeInTheDocument();
+  });
+
   it("records a new shortcut, shows when it can't be registered, and resets it", async () => {
     renderApp("/settings/desktop");
     const box = await screen.findByRole("button", { name: "Quick entry shortcut" });

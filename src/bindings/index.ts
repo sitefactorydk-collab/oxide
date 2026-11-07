@@ -859,6 +859,17 @@ async desktopStatus() : Promise<DesktopStatus> {
     return await TAURI_INVOKE("desktop_status");
 },
 /**
+ * Shows a notification now, so the user can check that the system lets Oxide's through.
+ */
+async testNotification() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_notification") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * The main window is listening: returns actions that arrived before (e.g. the deep link
  * Oxide was started with). Later ones come as `desktopRequest` events.
  */

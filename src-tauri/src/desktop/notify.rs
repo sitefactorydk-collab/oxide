@@ -20,12 +20,23 @@ pub fn on_stream_event(app: &AppHandle, event: &ChatStreamEvent) {
         ),
         _ => return,
     };
+    let kind = match &event.event {
+        StreamEvent::Done { .. } => "reply finished",
+        StreamEvent::Failed { .. } => "reply failed",
+        _ => "approval needed",
+    };
     let Some(state) = app.try_state::<DesktopState>() else {
         return;
     };
-    if !state.prefs().notifications || main_in_front(app) {
+    if !state.prefs().notifications {
+        tracing::debug!(kind, "no notification: notifications are off");
         return;
     }
+    if main_in_front(app) {
+        tracing::debug!(kind, "no notification: Oxide is in front");
+        return;
+    }
+    tracing::debug!(kind, conversation = %event.conversation_id, "notifying");
     let app = app.clone();
     let id = event.conversation_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -57,8 +68,45 @@ pub fn tray_hint(app: &AppHandle) {
     }
 }
 
+/// The main window was just hidden while tool calls wait for approval: say so, since the
+/// cards' own notifications went out while Oxide was in front.
+pub fn waiting_reminder(app: &AppHandle) {
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    if !state.prefs().notifications {
+        return;
+    }
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let waiting = app_state.chat.pending_approvals().len();
+    if waiting == 0 {
+        return;
+    }
+    tracing::debug!(waiting, "hidden with approvals waiting: notifying");
+    let body = if waiting == 1 {
+        "A tool call is waiting for your approval.".to_owned()
+    } else {
+        format!("{waiting} tool calls are waiting for your approval.")
+    };
+    show(app, "Oxide needs your input", &body);
+}
+
+/// Settings → Desktop → “Send a test notification”.
+pub fn test(app: &AppHandle) -> Result<(), String> {
+    tracing::info!("sending a test notification");
+    app.notification()
+        .builder()
+        .title("Oxide")
+        .body("Notifications work. You'll see these when a reply finishes or needs you.")
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 fn show(app: &AppHandle, title: &str, body: &str) {
-    if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        tracing::warn!("couldn't show a notification: {e}");
+    match app.notification().builder().title(title).body(body).show() {
+        Ok(()) => tracing::debug!("notification shown: {title}"),
+        Err(e) => tracing::warn!("couldn't show a notification: {e}"),
     }
 }

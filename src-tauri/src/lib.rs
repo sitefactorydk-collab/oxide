@@ -137,6 +137,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             system::open_external,
             // Desktop integration
             desktop::desktop_status,
+            desktop::test_notification,
             desktop::take_desktop_actions,
             desktop::show_quick_entry,
             desktop::hide_quick_entry,

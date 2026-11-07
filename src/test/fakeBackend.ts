@@ -104,6 +104,8 @@ interface FakeState {
     /** Times quick entry was shown / hidden, and chats it opened. */
     quickShown: number;
     quickHidden: number;
+    /** Test notifications sent from Settings → Desktop. */
+    testNotifications: number;
     quickChats: string[];
     screenshots: number;
     /** Makes the shortcut fail to register (as if another app had it). */
@@ -171,6 +173,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
       pending: seed.desktopActions ?? [],
       quickShown: 0,
       quickHidden: 0,
+      testNotifications: 0,
       quickChats: [],
       screenshots: 0,
       shortcutTaken: false,
@@ -759,6 +762,10 @@ export const fakeCommands: typeof RealCommands = {
     return ok(null);
   },
   desktopStatus: () => Promise.resolve(desktopStatus()),
+  testNotification: () => {
+    state.desktop.testNotifications += 1;
+    return ok(null);
+  },
   takeDesktopActions: () => {
     const pending = state.desktop.pending;
     state.desktop.pending = [];

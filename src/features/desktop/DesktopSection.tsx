@@ -1,10 +1,12 @@
 import { Check, Keyboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ShortcutStatus } from "@/bindings";
+import { commands, type ShortcutStatus } from "@/bindings";
 import { Toggle } from "@/features/models/ModelsSection";
 import { DEFAULT_SETTINGS, useSetDesktopSettings, useSettings } from "@/features/settings/queries";
+import { errorMessage, unwrap } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { isMacLike } from "@/lib/platform";
+import { toast } from "@/lib/toast";
 import { useDesktopStatus } from "./queries";
 import { DEFAULT_QUICK_ENTRY_SHORTCUT, formatShortcut, shortcutFromKeys } from "./shortcut";
 
@@ -51,12 +53,31 @@ export function DesktopSection() {
           </p>
         )}
       </div>
-      <Toggle
-        label="Notifications"
-        hint="Tell me when a reply finishes or a tool needs my approval while Oxide isn’t in front."
-        checked={desktop.notifications}
-        onChange={(notifications) => set({ notifications })}
-      />
+      <div className="flex flex-col gap-2">
+        <Toggle
+          label="Notifications"
+          hint="Tell me when a reply finishes or a tool needs my approval while Oxide isn’t in front."
+          checked={desktop.notifications}
+          onChange={(notifications) => set({ notifications })}
+        />
+        <div>
+          <button
+            type="button"
+            onClick={() =>
+              void unwrap(commands.testNotification()).then(
+                () =>
+                  toast(
+                    "Test notification sent. Don’t see it? Check Windows’ notification settings.",
+                  ),
+                (e: unknown) => toast(errorMessage(e), "error"),
+              )
+            }
+            className="h-8 rounded-lg border border-line px-3 text-sm text-fg hover:bg-hover"
+          >
+            Send a test notification
+          </button>
+        </div>
+      </div>
       <LinksNote scheme={status?.deepLinkScheme ?? "oxide"} devBuild={status?.devBuild ?? false} />
     </div>
   );
