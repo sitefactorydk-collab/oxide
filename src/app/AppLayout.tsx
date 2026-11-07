@@ -1,6 +1,7 @@
 import { matchPath, useLocation, useNavigate } from "react-router";
 import { Toaster } from "@/components/ui/Toaster";
 import { useChatEvents } from "@/features/chat/useChatEvents";
+import { useDesktopActions } from "@/features/desktop/useDesktopActions";
 import { McpAskDialog } from "@/features/mcp/McpAskDialog";
 import { useMcpEvents } from "@/features/mcp/useMcpEvents";
 import { SearchDialog } from "@/features/search/SearchDialog";
@@ -30,6 +31,7 @@ export function AppLayout() {
   useGlobalShortcuts();
   useChatEvents();
   useMcpEvents();
+  useDesktopActions();
 
   const settingsOpen = isSettingsPath(location.pathname);
   const settingsSection = settingsOpen ? location.pathname.split("/")[2] : undefined;

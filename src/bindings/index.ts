@@ -614,6 +614,40 @@ async openExternal(url: string) : Promise<Result<null, CommandError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async desktopStatus() : Promise<DesktopStatus> {
+    return await TAURI_INVOKE("desktop_status");
+},
+/**
+ * The main window is listening: returns actions that arrived before (e.g. the deep link
+ * Oxide was started with). Later ones come as `desktopRequest` events.
+ */
+async takeDesktopActions() : Promise<DesktopAction[]> {
+    return await TAURI_INVOKE("take_desktop_actions");
+},
+async showQuickEntry() : Promise<void> {
+    await TAURI_INVOKE("show_quick_entry");
+},
+async hideQuickEntry() : Promise<void> {
+    await TAURI_INVOKE("hide_quick_entry");
+},
+/**
+ * Quick entry started a chat: hide it and open the chat in the main window.
+ */
+async openQuickEntryChat(conversationId: string) : Promise<void> {
+    await TAURI_INVOKE("open_quick_entry_chat", { conversationId });
+},
+/**
+ * Takes a screenshot of the screen quick entry is on (with quick entry hidden) and prepares
+ * it as an attachment.
+ */
+async captureScreenshot() : Promise<Result<Attachment, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("capture_screenshot") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Models of every enabled endpoint, with capabilities. Endpoints that can't be reached come
  * back with `error` set. `refresh` skips the cache and re-checks tool support where it had
@@ -781,7 +815,8 @@ async getSettings() : Promise<Result<AppSettings, CommandError>> {
 }
 },
 /**
- * Replaces the settings; returns them as stored (trimmed).
+ * Replaces the settings; returns them as stored (trimmed). Desktop settings (shortcut,
+ * start at login) take effect at once.
  */
 async saveSettings(settings: AppSettings) : Promise<Result<AppSettings, CommandError>> {
     try {
@@ -860,11 +895,13 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 export const events = __makeEvents__<{
 chatStream: ChatStream,
 conversationUpdated: ConversationUpdated,
+desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
 memoryChanged: MemoryChanged
 }>({
 chatStream: "chat-stream",
 conversationUpdated: "conversation-updated",
+desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
 memoryChanged: "memory-changed"
 })
@@ -875,7 +912,7 @@ memoryChanged: "memory-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -1089,6 +1126,68 @@ export type ConversationChanged = { conversation: Conversation }
  * (`events.conversationUpdated`).
  */
 export type ConversationUpdated = ConversationChanged
+/**
+ * Something the main window should do, sent by the tray, a menu, quick entry or a deep link
+ * (`events.desktopRequest`).
+ */
+export type DesktopAction = 
+/**
+ * Open this chat.
+ */
+{ type: "openChat"; conversationId: string } | 
+/**
+ * Open a new chat, with `text` in the composer when given.
+ */
+{ type: "newChat"; text: string | null } | 
+/**
+ * Open Settings, at `section` when given.
+ */
+{ type: "openSettings"; section: string | null }
+/**
+ * The tray, a menu, quick entry or a deep link asks the main window to do something
+ * (`events.desktopRequest`; sent to the main window only).
+ */
+export type DesktopRequest = DesktopAction
+/**
+ * Tray, quick entry, start at login and notifications (Settings → Desktop).
+ */
+export type DesktopSettings = { 
+/**
+ * The window's close button hides Oxide to the tray instead of quitting.
+ */
+closeToTray: boolean; 
+/**
+ * The global quick entry shortcut is on.
+ */
+quickEntry: boolean; 
+/**
+ * The quick entry shortcut (`Alt+Space`, `Ctrl+Shift+Space`, …).
+ */
+quickEntryShortcut: string; 
+/**
+ * Start Oxide (hidden, in the tray) when the user logs in.
+ */
+launchAtLogin: boolean; 
+/**
+ * Notify when a reply finishes or a tool needs approval while Oxide isn't in front.
+ */
+notifications: boolean }
+/**
+ * What Settings → Desktop shows besides the saved settings.
+ */
+export type DesktopStatus = { shortcut: ShortcutStatus; 
+/**
+ * Start at login as the operating system reports it.
+ */
+launchAtLogin: boolean; launchAtLoginError: string | null; 
+/**
+ * The deep-link scheme (`oxide`).
+ */
+deepLinkScheme: string; 
+/**
+ * A development build: start at login and deep links point at the dev binary.
+ */
+devBuild: boolean }
 /**
  * How much effort a model puts into an answer (thinking, length, tool use). The names match
  * Anthropic's `output_config.effort`; OpenAI-compatible servers get the nearest
@@ -1670,6 +1769,22 @@ export type SearchHit = { conversation: Conversation; messageId: string | null; 
  * A web search service whose key lives in the keychain.
  */
 export type SearchKeyKind = "brave" | "tavily"
+/**
+ * What happened when Oxide last tried to register the shortcut.
+ */
+export type ShortcutStatus = { 
+/**
+ * The shortcut that should be registered (`None` when quick entry is off).
+ */
+wanted: string | null; 
+/**
+ * The shortcut that is registered.
+ */
+active: string | null; 
+/**
+ * Why `wanted` couldn't be registered, for Settings.
+ */
+error: string | null }
 /**
  * Creates a chat together with its first user message.
  */

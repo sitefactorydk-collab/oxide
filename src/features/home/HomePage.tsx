@@ -1,9 +1,10 @@
 import { BookOpen, Code, ListChecks, PenLine, ScrollText, type LucideIcon } from "lucide-react";
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { OxideMark } from "@/components/OxideMark";
 import { Composer } from "@/features/composer/Composer";
 import { useStartConversation } from "@/features/chats/queries";
+import type { NewChatState } from "@/features/desktop/keys";
 import { useGenerateOptions } from "@/features/composer/options";
 import { useNewChatModel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
@@ -24,7 +25,13 @@ export function HomePage() {
   const options = useGenerateOptions();
   const start = useStartConversation();
   const navigate = useNavigate();
-  const [draft, setDraft] = useState("");
+  const location = useLocation();
+  const incoming = (location.state as NewChatState | null)?.draft;
+  const [draft, setDraft] = useState(incoming ?? "");
+  // A deep link (`oxide://new?q=…`) or the tray can fill the composer while this page is open.
+  useEffect(() => {
+    if (incoming !== undefined) setDraft(incoming);
+  }, [incoming, location.key]);
   const [hour] = useState(() => new Date().getHours());
 
   const name = userName.trim();

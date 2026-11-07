@@ -167,6 +167,34 @@ pub struct MemorySettings {
     pub model: Option<String>,
 }
 
+/// Tray, quick entry, start at login and notifications (Settings → Desktop).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DesktopSettings {
+    /// The window's close button hides Oxide to the tray instead of quitting.
+    pub close_to_tray: bool,
+    /// The global quick entry shortcut is on.
+    pub quick_entry: bool,
+    /// The quick entry shortcut (`Alt+Space`, `Ctrl+Shift+Space`, …).
+    pub quick_entry_shortcut: String,
+    /// Start Oxide (hidden, in the tray) when the user logs in.
+    pub launch_at_login: bool,
+    /// Notify when a reply finishes or a tool needs approval while Oxide isn't in front.
+    pub notifications: bool,
+}
+
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self {
+            close_to_tray: true,
+            quick_entry: true,
+            quick_entry_shortcut: crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into(),
+            launch_at_login: false,
+            notifications: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
@@ -177,6 +205,7 @@ pub struct AppSettings {
     pub web_search: WebSearchSettings,
     pub projects: ProjectSettings,
     pub memory: MemorySettings,
+    pub desktop: DesktopSettings,
 }
 
 impl AppSettings {
@@ -209,6 +238,9 @@ impl AppSettings {
             .trim()
             .trim_end_matches('/')
             .to_owned();
+        self.desktop.quick_entry_shortcut =
+            crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
+                .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());
         self
     }
 }
@@ -279,5 +311,23 @@ mod tests {
         let s = s.normalized();
         assert_eq!(s.projects.knowledge_budget, MIN_KNOWLEDGE_BUDGET);
         assert_eq!(s.memory.model, None);
+    }
+
+    #[test]
+    fn desktop_settings() {
+        let s: AppSettings = serde_json::from_str("{}").expect("parses");
+        assert!(s.desktop.close_to_tray);
+        assert!(s.desktop.quick_entry);
+        assert!(!s.desktop.launch_at_login, "start at login is opt-in");
+        assert_eq!(s.desktop.quick_entry_shortcut, "Alt+Space");
+        let mut s = AppSettings::default();
+        s.desktop.quick_entry_shortcut = "shift+ctrl+space".into();
+        assert_eq!(
+            s.normalized().desktop.quick_entry_shortcut,
+            "Ctrl+Shift+Space"
+        );
+        let mut s = AppSettings::default();
+        s.desktop.quick_entry_shortcut = "K".into();
+        assert_eq!(s.normalized().desktop.quick_entry_shortcut, "Alt+Space");
     }
 }

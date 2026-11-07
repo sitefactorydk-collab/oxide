@@ -29,6 +29,12 @@ export async function onWindowResized(cb: () => void): Promise<Unlisten> {
   return getCurrentWindow().onResized(() => cb());
 }
 
+/** Calls `cb` when this window gains (`true`) or loses (`false`) focus. */
+export async function onWindowFocusChanged(cb: (focused: boolean) => void): Promise<Unlisten> {
+  if (!inTauri) return () => {};
+  return getCurrentWindow().onFocusChanged(({ payload }) => cb(payload));
+}
+
 /** Keeps native window chrome (macOS/Linux decorations) in step with the app theme. */
 export async function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
   if (inTauri) await getCurrentWindow().setTheme(theme);

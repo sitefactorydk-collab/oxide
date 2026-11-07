@@ -10,6 +10,8 @@ import type {
   CommandError,
   Conversation,
   ConversationChanged,
+  DesktopAction,
+  DesktopStatus,
   GenerateOptions,
   KnowledgeFile,
   KnowledgeText,
@@ -90,12 +92,26 @@ interface FakeState {
   artifactVersions: ArtifactVersion[];
   /** Downloads asked for: artifact id and version. */
   artifactDownloads: Array<{ id: string; version: number | null }>;
+  desktop: {
+    /** Actions waiting for the main window (`takeDesktopActions`). */
+    pending: DesktopAction[];
+    /** Times quick entry was shown / hidden, and chats it opened. */
+    quickShown: number;
+    quickHidden: number;
+    quickChats: string[];
+    screenshots: number;
+    /** Makes the shortcut fail to register (as if another app had it). */
+    shortcutTaken: boolean;
+    screenshotFails: boolean;
+  };
 }
 
 export interface FakeSeed {
   settings?: Partial<{ name: string; theme: AppSettings["appearance"]["theme"] }>;
   empty?: boolean;
   replies?: ReplyMode;
+  /** Desktop actions that arrived before the window was listening (e.g. a start-up link). */
+  desktopActions?: DesktopAction[];
 }
 
 let state: FakeState;
@@ -118,6 +134,13 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
       webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
       projects: { knowledgeBudget: 40000 },
       memory: { enabled: false, model: null },
+      desktop: {
+        closeToTray: true,
+        quickEntry: true,
+        quickEntryShortcut: "Alt+Space",
+        launchAtLogin: false,
+        notifications: true,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -135,6 +158,15 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     artifacts: [],
     artifactVersions: [],
     artifactDownloads: [],
+    desktop: {
+      pending: seed.desktopActions ?? [],
+      quickShown: 0,
+      quickHidden: 0,
+      quickChats: [],
+      screenshots: 0,
+      shortcutTaken: false,
+      screenshotFails: false,
+    },
   };
   resetFakeMcp();
 }
@@ -219,6 +251,7 @@ const chatStream = fakeEvent<ChatStreamEvent>("chat-stream");
 const conversationUpdated = fakeEvent<ConversationChanged>("conversation-updated");
 const mcpChanged = fakeEvent<McpEvent>("mcp-changed");
 const memoryChanged = fakeEvent<MemoryChanged>("memory-changed");
+const desktopRequest = fakeEvent<DesktopAction>("desktop-request");
 setMcpEmitter((e) => void mcpChanged.emit(e));
 
 export const fakeEvents = {
@@ -226,7 +259,37 @@ export const fakeEvents = {
   conversationUpdated,
   mcpChanged,
   memoryChanged,
+  desktopRequest,
 } as unknown as typeof RealEvents;
+
+/** The tray, a menu or a deep link asks the main window to do something. */
+export function emitDesktopRequest(action: DesktopAction): void {
+  void desktopRequest.emit(action);
+}
+
+/** Makes the desktop backend misbehave for a test. */
+export function setDesktopFaults(faults: { shortcutTaken?: boolean; screenshotFails?: boolean }) {
+  Object.assign(state.desktop, faults);
+}
+
+function desktopStatus(): DesktopStatus {
+  const d = state.settings.desktop;
+  const wanted = d.quickEntry ? d.quickEntryShortcut : null;
+  const taken = wanted !== null && state.desktop.shortcutTaken;
+  return {
+    shortcut: {
+      wanted,
+      active: taken ? null : wanted,
+      error: taken
+        ? `${wanted} couldn't be registered. Another app may already use it: pick another shortcut.`
+        : null,
+    },
+    launchAtLogin: d.launchAtLogin,
+    launchAtLoginError: null,
+    deepLinkScheme: "oxide",
+    devBuild: false,
+  };
+}
 
 /** Memory items learned "in the background", announced like the backend does. */
 export function learnMemory(items: Array<{ text: string; projectId?: string | null }>): void {
@@ -645,6 +708,49 @@ export const fakeCommands: typeof RealCommands = {
   openExternal: (url) => {
     state.opened.push(url);
     return ok(null);
+  },
+  desktopStatus: () => Promise.resolve(desktopStatus()),
+  takeDesktopActions: () => {
+    const pending = state.desktop.pending;
+    state.desktop.pending = [];
+    return Promise.resolve(pending);
+  },
+  showQuickEntry: () => {
+    state.desktop.quickShown += 1;
+    return Promise.resolve();
+  },
+  hideQuickEntry: () => {
+    state.desktop.quickHidden += 1;
+    return Promise.resolve();
+  },
+  openQuickEntryChat: (conversationId) => {
+    state.desktop.quickHidden += 1;
+    state.desktop.quickChats.push(conversationId);
+    void desktopRequest.emit({ type: "openChat", conversationId });
+    return Promise.resolve();
+  },
+  captureScreenshot: () => {
+    if (state.desktop.screenshotFails) {
+      return fail<Attachment>("invalid", "The screenshot couldn't be taken: no screen");
+    }
+    state.desktop.screenshots += 1;
+    const path = `/data/attachments/shot-${state.desktop.screenshots}.jpg`;
+    const a: Attachment = {
+      id: nextId("att"),
+      name: "Screenshot.png",
+      kind: "image",
+      mediaType: "image/jpeg",
+      path,
+      size: 120_000,
+      originalSize: 900_000,
+      width: 1568,
+      height: 882,
+      pages: null,
+      thumbnail: "data:image/png;base64,iVBORw0KGgo=",
+      note: null,
+    };
+    state.attachments.set(path, a);
+    return ok(a);
   },
   searchConversations: (query, limit) => {
     const needle = query.trim().toLowerCase();

@@ -6,18 +6,37 @@ import "@/styles/index.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createHashRouter } from "react-router";
-import App from "@/app/App";
-import { AppLayout } from "@/app/AppLayout";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root element missing from index.html");
 
-// Hash history: works from Tauri's asset protocol without server-side fallbacks.
-const router = createHashRouter([{ path: "*", element: <AppLayout /> }]);
+/** `index.html?window=quick` is the quick entry window; anything else is the app. */
+const isQuickEntry = new URLSearchParams(window.location.search).get("window") === "quick";
 
-createRoot(root).render(
-  <StrictMode>
-    <App router={router} />
-  </StrictMode>,
-);
+async function start(el: HTMLElement) {
+  if (isQuickEntry) {
+    // Loaded on its own, so the small window doesn't parse the whole app.
+    const { QuickEntryRoot } = await import("@/features/quick-entry/QuickEntryRoot");
+    document.documentElement.dataset.window = "quick";
+    createRoot(el).render(
+      <StrictMode>
+        <QuickEntryRoot />
+      </StrictMode>,
+    );
+    return;
+  }
+  const [{ createHashRouter }, { default: App }, { AppLayout }] = await Promise.all([
+    import("react-router"),
+    import("@/app/App"),
+    import("@/app/AppLayout"),
+  ]);
+  // Hash history: works from Tauri's asset protocol without server-side fallbacks.
+  const router = createHashRouter([{ path: "*", element: <AppLayout /> }]);
+  createRoot(el).render(
+    <StrictMode>
+      <App router={router} />
+    </StrictMode>,
+  );
+}
+
+void start(root);

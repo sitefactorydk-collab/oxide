@@ -8,6 +8,7 @@ pub mod artifact;
 pub mod attachment;
 pub mod chat;
 pub mod conversation;
+pub mod desktop;
 pub mod mcp;
 pub mod memory;
 pub mod message;
@@ -27,6 +28,7 @@ pub use chat::{
     ChatStreamEvent, ConversationChanged, GenerateOptions, StopReason, StreamEvent, Usage,
 };
 pub use conversation::{Conversation, SearchHit, StartConversation};
+pub use desktop::DesktopAction;
 pub use mcp::{
     ChatTools, ImportCandidate, ImportPreview, ImportStatus, McpAnswer, McpAsk, McpCapabilities,
     McpConfigFile, McpContent, McpEra, McpEvent, McpInteraction, McpLogLine, McpLogSource,
@@ -43,8 +45,9 @@ pub use project::{
 };
 pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
 pub use settings::{
-    AppSettings, AppearanceSettings, ChatFont, MemorySettings, ModelSettings, ProfileSettings,
-    ProjectSettings, ThemePref, ToolSettings, WebSearchProvider, WebSearchSettings,
+    AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,
+    ProfileSettings, ProjectSettings, ThemePref, ToolSettings, WebSearchProvider,
+    WebSearchSettings,
 };
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,

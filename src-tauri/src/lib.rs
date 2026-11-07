@@ -6,6 +6,7 @@
 
 mod artifact_frame;
 mod commands;
+mod desktop;
 mod error;
 mod events;
 mod mcp_bridge;
@@ -28,15 +29,16 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, chats, mcp, memory, models, projects, providers, settings, system,
-        tools,
+        artifacts, attachments, chats, desktop, mcp, memory, models, projects, providers, settings,
+        system, tools,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::ChatStream,
             events::ConversationUpdated,
             events::McpChanged,
-            events::MemoryChanged
+            events::MemoryChanged,
+            events::DesktopRequest
         ])
         .commands(collect_commands![
             commands::ping,
@@ -106,6 +108,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             tools::test_web_search,
             // System
             system::open_external,
+            // Desktop integration
+            desktop::desktop_status,
+            desktop::take_desktop_actions,
+            desktop::show_quick_entry,
+            desktop::hide_quick_entry,
+            desktop::open_quick_entry_chat,
+            desktop::capture_screenshot,
             // Models
             models::list_models,
             // Projects
@@ -150,6 +159,32 @@ pub fn export_bindings() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Registers the `oxide://` scheme (Windows and Linux; macOS takes it from the bundle) and
+/// handles links: the one Oxide was started with and any that arrive while it runs.
+fn setup_deep_links(app: &tauri::AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt as _;
+    let links = app.deep_link();
+    #[cfg(any(windows, target_os = "linux"))]
+    if let Err(e) = links.register(oxide_core::desktop::DEEP_LINK_SCHEME) {
+        tracing::warn!("couldn't register oxide:// links: {e}");
+    }
+    let handle = app.clone();
+    links.on_open_url(move |event| {
+        for url in event.urls() {
+            desktop::open_url(&handle, url.as_str());
+        }
+    });
+    match links.get_current() {
+        Ok(Some(urls)) => {
+            for url in urls {
+                desktop::open_url(app, url.as_str());
+            }
+        }
+        Ok(None) => {}
+        Err(e) => tracing::debug!("start-up link: {e}"),
+    }
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,oxide=debug,oxide_lib=debug"));
@@ -168,10 +203,38 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     let builder = specta_builder();
+    // Started at login: stay in the tray.
+    let start_hidden = std::env::args().any(|a| a == desktop::HIDDEN_ARG);
 
     let app = tauri::Builder::default()
+        // First, so a second launch hands its arguments (a deep link) over and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            match oxide_core::desktop::deep_link_in_args(&args) {
+                Some(action) => desktop::dispatch(app, action),
+                None => desktop::show_main(app),
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([desktop::HIDDEN_ARG])
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(desktop::shortcut::handle)
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(desktop::window_state_flags())
+                .with_denylist(&[desktop::quick::QUICK_LABEL])
+                .build(),
+        )
+        .on_window_event(desktop::on_window_event)
         // The sandboxed frame for HTML and React artifacts (see artifact_frame.rs).
         .register_asynchronous_uri_scheme_protocol(
             artifact_frame::SCHEME,
@@ -187,9 +250,17 @@ pub fn run() -> anyhow::Result<()> {
                 });
             },
         )
-        .invoke_handler(builder.invoke_handler())
+        .invoke_handler(builder.invoke_handler());
+
+    #[cfg(target_os = "macos")]
+    let app = app
+        .menu(desktop::menu::build)
+        .on_menu_event(desktop::menu::on_menu_event);
+
+    let app = app
         .setup(move |app| {
             builder.mount_events(app);
+            app.manage(desktop::DesktopState::default());
             let dirs = state::AppDirs {
                 data: app.path().app_data_dir()?,
                 config: app.path().app_config_dir()?,
@@ -209,6 +280,11 @@ pub fn run() -> anyhow::Result<()> {
                 },
             ))?;
             let mcp = state.mcp.clone();
+            let settings = tauri::async_runtime::block_on(state.store.app_settings())
+                .unwrap_or_else(|e| {
+                    tracing::warn!("settings: {e}");
+                    oxide_core::AppSettings::default()
+                });
             app.manage(state);
             // Servers start in the background; the window doesn't wait for them.
             tauri::async_runtime::spawn(async move {
@@ -216,13 +292,22 @@ pub fn run() -> anyhow::Result<()> {
                     tracing::warn!("MCP config: {e}");
                 }
             });
+
+            let handle = app.handle().clone();
+            desktop::apply_settings(&handle, &settings.desktop);
+            desktop::tray::build(&handle)?;
+            desktop::quick::create(&handle)?;
+            setup_deep_links(&handle);
+            if !start_hidden {
+                desktop::show_main(&handle);
+            }
             tracing::info!("{} {} started", oxide_core::APP_NAME, oxide_core::version());
             Ok(())
         })
         .build(tauri::generate_context!())?;
 
-    app.run(|handle, event| {
-        if let tauri::RunEvent::Exit = event {
+    app.run(|handle, event| match event {
+        tauri::RunEvent::Exit => {
             // Stop MCP servers cleanly. On Windows their process trees also end with Oxide
             // (job objects) if this is cut short.
             if let Some(state) = handle.try_state::<state::AppState>() {
@@ -230,6 +315,10 @@ pub fn run() -> anyhow::Result<()> {
                 tauri::async_runtime::block_on(mcp.shutdown());
             }
         }
+        // Clicking the Dock icon brings the hidden window back.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => desktop::show_main(handle),
+        _ => {}
     });
 
     Ok(())

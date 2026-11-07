@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Brain,
   Database,
   Globe,
@@ -60,6 +61,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Globe,
     blurb:
       "The service Oxide’s web search tool uses. Anthropic models can use Anthropic’s own search instead. Keys live in the system keychain.",
+  },
+  {
+    id: "desktop",
+    label: "Desktop",
+    icon: AppWindow,
+    blurb: "The tray, quick entry and its shortcut, starting at login, and notifications.",
   },
   {
     id: "extensions",

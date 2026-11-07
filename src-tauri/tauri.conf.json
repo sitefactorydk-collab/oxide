@@ -18,7 +18,8 @@
         "height": 800,
         "minWidth": 760,
         "minHeight": 520,
-        "center": true
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
@@ -36,5 +37,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["oxide"]
+      }
+    }
   }
 }

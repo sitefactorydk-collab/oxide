@@ -4,6 +4,7 @@ import {
   FileDown,
   FolderInput,
   FolderMinus,
+  Link,
   Pencil,
   Star,
   StarOff,
@@ -21,7 +22,25 @@ import { useProjects, useSetConversationProject } from "@/features/projects/quer
 import { errorMessage } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
-/** Star / Rename / Move / Export / Delete items shared by the sidebar row menu and the title bar. */
+/** An `oxide://` link that opens this chat from anywhere (Win+R, a note, another app). */
+function chatLink(id: string): string {
+  return `oxide://chat/${id}`;
+}
+
+function copyChatLink(id: string) {
+  const text = chatLink(id);
+  const done = navigator.clipboard?.writeText(text);
+  if (!done) {
+    toast("Couldn’t copy the link", "error");
+    return;
+  }
+  done.then(
+    () => toast("Link copied"),
+    () => toast("Couldn’t copy the link", "error"),
+  );
+}
+
+/** Star / Rename / Move / Copy link / Export / Delete items shared by the sidebar row menu and the title bar. */
 export function ChatMenuItems({
   starred,
   onStar,
@@ -49,6 +68,12 @@ export function ChatMenuItems({
         Rename
       </MenuItem>
       {conversation && <MoveToProject conversation={conversation} />}
+      {conversation && (
+        <MenuItem onSelect={() => copyChatLink(conversation.id)}>
+          <Link />
+          Copy link
+        </MenuItem>
+      )}
       {onExport && (
         <>
           <MenuSeparator />

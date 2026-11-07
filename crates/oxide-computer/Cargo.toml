@@ -9,6 +9,10 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+thiserror.workspace = true
+image.workspace = true
+# Screen capture (Windows: DXGI/GDI, macOS: ScreenCaptureKit, Linux: X11/PipeWire).
+xcap = "0.9"
 
 [lints]
 workspace = true

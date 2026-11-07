@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 8 — Artifacts (`4605170`; exit check passed on Strata on 2026-11-07)
-- **Next phase:** Phase 9 — Desktop integration
+- **In progress:** Phase 9 — Desktop integration (code written; waiting for `scripts\win\phase9.cmd` and the manual exit check)
+- **Next phase:** Phase 10 — Extensions (.mcpb) & Skills
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -27,6 +28,59 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Syncing many files into the linked folder** (added in Phase 8): without delete permission, `tar x` fails on existing files (it unlinks first); `tar xzf <file> --overwrite` writes them in place.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 9 — Desktop integration — 2026-11-07
+Status: partial. Code, Linux-side checks and tests are done; `scripts\win\phase9.cmd` (checks, production build, commit `phase 9: desktop integration`, then `dev.cmd`) and the manual exit check below are next.
+
+First Windows run (2026-11-07): all Rust checks passed (the new plugins and xcap compiled first time), the production build passed, and 1 of 167 Vitest tests failed: **Esc while recording a shortcut also closed Settings** (a real bug: Radix's dialog catches Esc in the document capture phase, before the field's handler). The recorder now takes keys through a window capture listener while recording, which runs first and stops them.
+
+Exit criteria (check by hand in `cargo tauri dev`, after `phase9.cmd`):
+- [ ] **Quick entry works system-wide.** With another app in front (Notepad, a browser), press **Alt+Space**: a small box appears centred on that screen, in front, with the cursor in it. Type “What is 17 × 23?” and press Enter: the box hides, Oxide's window comes forward on the new chat and the reply streams. Alt+Space again, then Esc → it hides; Alt+Space, then click elsewhere → it hides; Alt+Space twice → shown, then hidden.
+- [ ] **Screenshot:** Alt+Space → camera button: the box disappears for a moment and comes back with a “Screenshot” chip. Send “What's on my screen?” (with a vision model): the chat shows the image.
+- [ ] **Shortcut setting:** Settings → Desktop → Shortcut → Change → press Ctrl+Shift+Space → “Active”; the new shortcut opens quick entry and Alt+Space no longer does. A shortcut another app holds shows the red “couldn't be registered” line. Reset to Alt + Space.
+- [ ] **Deep links open the right chat.** On a chat, title-bar menu (or the sidebar row's ⋯) → **Copy link**; open another chat; press Win+R, paste the `oxide://chat/<id>` link and run it: Oxide comes forward on that chat. `oxide://new?q=Hello%20there` → a new chat with “Hello there” in the composer. `oxide://settings/desktop` → Settings → Desktop. Close the window (to the tray) and try one again: the window comes back.
+- [ ] **Single instance.** With Oxide running, start `target\debug\oxide.exe` again (or run a deep link): no second window or tray icon; the running one comes forward.
+- [ ] **Tray:** the Oxide icon is in the notification area. Left click shows/hides the window; right click → Show Oxide, New chat, Quick entry, Quit Oxide all work. The window's ✕ hides it (first time: a “still running” notification); with “Keep Oxide in the tray…” off, ✕ quits.
+- [ ] **Notifications:** ask something long, then switch to another app before it finishes: a notification with the chat's title and the start of the reply appears. A tool that needs approval notifies too.
+- [ ] **Window state:** move and resize the window, quit from the tray, start again: same place and size (maximized stays maximized).
+- [ ] **Start at login:** Settings → Desktop → on: Task Manager → Startup apps lists Oxide (the dev binary in this build). Turn it off again.
+
+Done:
+- **`oxide-core`:** `desktop.rs`: `DesktopAction` (`openChat`, `newChat { text }`, `openSettings { section }`), `parse_deep_link` (`oxide://chat/<id>`, `oxide://new?q=…`, `oxide://settings[/<section>]`; also `oxide:x` and trailing slashes; ids limited to letters/digits/`-`/`_`, ≤ 64; percent-decoding with `+` as space; text ≤ 10,000 chars), `deep_link_in_args` (skips the program path), `clean_shortcut` (canonical modifier names and order, one key, at least one modifier), `reply_preview` (one line, ≤ 140 chars). Settings: `DesktopSettings { closeToTray (on), quickEntry (on), quickEntryShortcut ("Alt+Space"), launchAtLogin (off), notifications (on) }`; `normalized()` cleans the shortcut and falls back to the default.
+- **`oxide-computer`:** `capture_screen_png(point)`: the screen containing a point (else the primary one) via `xcap` 0.9, re-encoded as PNG with the workspace `image` crate.
+- **`src-tauri`:** new `desktop/` module:
+  - `mod.rs`: `DesktopState` (prefs the window handlers read synchronously, shortcut status, start-at-login error, queued actions until the main window is listening), `apply_settings` (shortcut + start at login; at startup and on every `save_settings`), `show_main`/`toggle_main`/`main_in_front`, `dispatch` (shows the main window, then emits `DesktopRequest` to it or queues the action), `open_url`, `quit` (saves window state, exits), `on_window_event` (main ✕ → hide to tray, or quit when that's off; quick entry hides on blur and on Alt+F4).
+  - `quick.rs`: the quick entry window (`quick`, `index.html?window=quick`, 680×148, frameless, shadow, always on top, no taskbar button), created hidden at startup; `show` (centred), `hide`, `toggle`, blur with a 400 ms grace, `begin_capture`/`end_capture`.
+  - `shortcut.rs`: the global-shortcut handler (pressed → toggle), `apply` (unregister, parse, register; errors kept for Settings; skipped when nothing changed).
+  - `tray.rs`: tray icon (the app icon) with Show Oxide / New chat / Quick entry / Quit Oxide; left click toggles the window.
+  - `notify.rs`: notifications for `done` (chat title + reply preview), `failed` and `toolApproval` when the main window isn't visible, unminimized and focused; a one-time “still running” hint when ✕ first hides to the tray.
+  - `menu.rs` (macOS only): Oxide (About, Settings… ⌘,, Services, Hide, Quit), File (New Chat ⇧⌘O, Quick Entry, Close), Edit (undo … select all), View (full screen), Window.
+  - Plugins: single-instance (first; a second launch's deep link is dispatched, otherwise the window comes forward), deep-link (`oxide` scheme in `tauri.conf.json`; registered at runtime on Windows/Linux; the start-up link via `get_current`, later ones via `on_open_url`), notification, autostart (`--hidden` argument → Oxide starts in the tray), global-shortcut, window-state (size, position, maximized, full screen; not visibility or decorations; quick entry excluded). `tauri` gains the `tray-icon` feature. The main window is `visible: false` in the configs and shown by setup unless started with `--hidden`. macOS: Dock click (`RunEvent::Reopen`) shows the window.
+  - Commands (`commands/desktop.rs`): `desktop_status`, `take_desktop_actions`, `show_quick_entry`, `hide_quick_entry`, `open_quick_entry_chat`, `capture_screenshot` (hides quick entry, waits 250 ms, captures the screen it was on in `spawn_blocking`, brings it back, prepares the PNG as an attachment). Event `DesktopRequest` (`events.desktopRequest`). `save_settings` applies desktop settings. Capabilities cover `main` and `quick`.
+- **Frontend:**
+  - `main.tsx` loads either the app or `QuickEntryRoot` (`?window=quick`) with dynamic imports, so the small window doesn't parse the whole app.
+  - `features/quick-entry/`: `QuickEntryRoot` (query client, theme, tooltips; no router and no settings sync, so it never writes the main window's UI cache; it re-reads it on focus), `QuickEntry` (serif textarea, Enter sends / Shift+Enter new line / Esc hides, screenshot button and chip, model line, errors; sends with the new-chat model and composer options, then `openQuickEntryChat`). The bottom bar is a drag region.
+  - `features/desktop/`: `useDesktopActions` (in `AppLayout`: listens to `desktopRequest`, then fetches queued actions; opens chats (refreshing chat lists), new chats with text (`/new` location state → `HomePage` fills its composer, also when already open), Settings), `DesktopSection` (Settings → Desktop: tray, quick entry + shortcut recorder with Active/error/Reset, start at login (+ error), notifications, the link formats, a dev-build note), `shortcut.ts` (`shortcutFromKeys` from `KeyboardEvent.code`, `formatShortcut` with ⌃⌥⇧⌘ on macOS), `queries.ts` (`useDesktopStatus`; refreshed after every settings save).
+  - Chat menus (sidebar row and title bar): **Copy link** copies `oxide://chat/<id>`.
+  - `lib/window.ts`: `onWindowFocusChanged`.
+- **Tests:** Rust (Linux): core 48 (new: chat/new/settings links, links in arguments, shortcut cleaning, previews, action JSON, desktop settings), store 43, llm 45, agent 72, mcp 51; `oxide-computer` has a PNG round-trip test (Windows only: xcap isn't in the Linux vendor bundle). Vitest (new, run on Windows): `shortcut.test.ts`, `Desktop.test.tsx` (actions from outside, a queued start-up link, Copy link, Settings switches, recording a shortcut with a taken-shortcut error and reset, Esc cancels recording without closing Settings), `QuickEntry.test.tsx` (Enter starts a chat and hands it over, Shift+Enter, screenshot attach/send/remove/error, Esc hides). The fake backend implements the desktop commands and event (`emitDesktopRequest`, `setDesktopFaults`, `desktopActions` seed).
+
+Deviations from PLAN.md (and why):
+- **The quick entry window is created hidden at startup**, not on first use: creating a webview from the shortcut handler can deadlock on Windows, and a ready window shows instantly.
+- **Screen capture only** (the screen quick entry is on); no single-window capture yet.
+- **Notifications don't open the chat when clicked**: `tauri-plugin-notification` has no click callback on desktop. They show the chat title and the reply's start.
+- **`oxide://new?q=` fills the composer** rather than sending at once, so a link can't send messages on the user's behalf.
+- Quick entry uses the model and thinking options last picked in the main window; it has no model picker of its own.
+
+Known issues / TODO carried forward:
+- `menu.rs` and the `Reopen` handler compile only on macOS and haven't been built yet (Phase 17's CI matrix will).
+- In a dev build, start at login and `oxide://` links point at `target\debug\oxide.exe`, which needs the Vite dev server; Windows notifications from a dev build may be attributed to PowerShell (no installed app id). Installers (Phase 17) register both properly.
+- Alt+Space is Windows' own window-menu shortcut; Oxide's registration takes it over while Oxide runs.
+
+Notes for Phase 10:
+- `desktop::dispatch(app, DesktopAction::…)` is how backend code brings the window forward and navigates; add a variant (and a `useDesktopActions` case) for new targets such as an extension's settings page.
+
+Verified (agent side, Linux): cargo fmt ✅ clippy (library crates) ✅ cargo test (library crates) ✅ typecheck ✅ lint ✅ prettier ✅. Windows: pending (`phase9.cmd`).
 
 ## Phase 8 — Artifacts — 2026-11-07
 Status: done. `scripts\win\phase8.cmd` committed `4605170 phase 8: artifacts` on the second run (the first failed clippy on an unused `Manager` import in `artifact_frame.rs`, and one Vitest test clicked “Preview” before the next artifact had loaded; both fixed). The user then ran the exit check by hand on Strata `swift-iq2_xs`: everything passed.

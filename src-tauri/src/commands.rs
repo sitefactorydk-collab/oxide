@@ -4,6 +4,7 @@
 pub mod artifacts;
 pub mod attachments;
 pub mod chats;
+pub mod desktop;
 pub mod mcp;
 pub mod memory;
 pub mod models;

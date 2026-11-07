@@ -4,6 +4,7 @@ import {
   commands,
   type AppSettings,
   type ChatFont,
+  type DesktopSettings,
   type MemorySettings,
   type ModelSettings,
   type ProjectSettings,
@@ -11,6 +12,7 @@ import {
   type ToolSettings,
   type WebSearchSettings,
 } from "@/bindings";
+import { desktopKeys } from "@/features/desktop/keys";
 import { projectKeys } from "@/features/projects/queries";
 import { unwrap } from "@/lib/api";
 import { useUi } from "@/stores/ui";
@@ -25,6 +27,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
   projects: { knowledgeBudget: 40000 },
   memory: { enabled: false, model: null },
+  desktop: {
+    closeToTray: true,
+    quickEntry: true,
+    quickEntryShortcut: "Alt+Space",
+    launchAtLogin: false,
+    notifications: true,
+  },
 };
 
 export function useSettings() {
@@ -46,7 +55,12 @@ export function useUpdateSettings() {
     onError: () => qc.invalidateQueries({ queryKey: settingsKeys.app }),
     // Whether a project's knowledge is used in full or searched depends on the budget.
     // (On the mutation, not on `mutate`, so it runs even after Settings has closed.)
-    onSuccess: () => qc.invalidateQueries({ queryKey: projectKeys.allKnowledge() }),
+    // The shortcut and start at login are applied when saved; Settings → Desktop shows the outcome.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: projectKeys.allKnowledge() }),
+        qc.invalidateQueries({ queryKey: desktopKeys.status }),
+      ]),
   });
   return (change: (s: AppSettings) => AppSettings) => {
     const current = qc.getQueryData<AppSettings>(settingsKeys.app) ?? DEFAULT_SETTINGS;
@@ -142,4 +156,10 @@ export function useSetWebSearchSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<WebSearchSettings>) =>
     update((s) => ({ ...s, webSearch: { ...s.webSearch, ...patch } }));
+}
+
+export function useSetDesktopSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<DesktopSettings>) =>
+    update((s) => ({ ...s, desktop: { ...s.desktop, ...patch } }));
 }

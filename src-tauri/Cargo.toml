@@ -23,10 +23,18 @@ oxide-store.workspace = true
 oxide-llm.workspace = true
 oxide-agent.workspace = true
 oxide-mcp.workspace = true
+oxide-computer.workspace = true
 
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# Desktop integration (Phase 9).
+tauri-plugin-autostart = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
