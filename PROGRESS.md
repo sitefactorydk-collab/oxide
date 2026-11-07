@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 9 — Desktop integration (`5013c0b`; exit check passed on Windows on 2026-11-07)
-- **In progress:** Phase 10 — Extensions (.mcpb) & Skills (built; Windows checks and the exit check pending)
+- **Last completed:** Phase 10 — Extensions (.mcpb) & Skills (`6ccbc48`; exit check passed on Windows on 2026-11-07)
 - **Next phase:** Phase 11 — Agentic tasks (Cowork-style)
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -30,7 +29,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 10 — Extensions (.mcpb) & Skills — 2026-11-07
-Status: built and tested on Linux; `scripts\win\phase10.cmd` runs the Windows checks and commits `phase 10: extensions (.mcpb) & skills` when they pass. The exit check below is by hand.
+Status: done. `scripts\win\phase10.cmd` committed `6ccbc48 phase 10: extensions (.mcpb) & skills` on the second run (fixes below); the user then ran the whole exit check by hand on Windows (Strata `swift-iq2_xs`): everything passed.
 
 First Windows run (2026-11-07): every Rust check, typecheck, lint and the production build passed; 3 of 175 Vitest tests failed, all in the new `Extensions.test.tsx`:
 - The out-of-range number never reached the backend: the number field's `min`/`max` made the browser's own form validation block the submit (jsdom does the same). The install and settings forms are now `noValidate`, so Oxide's own message (“Days” must be at most 7) shows, like every other error.
@@ -38,18 +37,23 @@ First Windows run (2026-11-07): every Rust check, typecheck, lint and the produc
 - A test expected “This extension has no settings.” in the install dialog, which leaves the settings section out when there are none; it now checks that the section is absent.
 
 Exit criteria (check by hand in `cargo tauri dev`; samples are in `docs\samples`, see its README):
-- [ ] **A sample `.mcpb` installs, configures and runs.**
+- [x] **A sample `.mcpb` installs, configures and runs.**
   1. Settings → **Extensions** → **Install extension…** → `C:\AI Apps\Oxide\docs\samples\oxide-dice.mcpb` (or drag the file onto Oxide's window). The dialog shows the icon, “Version 1.0.0 · by Oxide contributors · 4 files”, the trust note, the three tools and four settings. **Install** stays disabled (“Fill in: API token”) until a token is typed. Type `my-test-token`, set Lucky number `3`, turn **Shout** on → Install. The card shows “Running · 3 tools”.
   2. Settings → **Connectors**: `oxide-dice` has an “Extension · Oxide Dice” chip and **Manage** (no Edit); Settings → **Developer**: `oxide_config.json` has `oxide.extensions.oxide-dice` with the values but no token. Windows Credential Manager → Generic credentials has the token (`extension:oxide-dice:api_token`).
   3. A chat with a tools model: “Use Oxide Dice: check its settings, roll 5 dice and greet Mikkel.” → `settings_check` says `token: set (13 characters)`, `shout: true`, `lucky number: 3`, and the folder under `…\dev.oxide.app\extensions\oxide-dice`; `greet` says `HELLO, MIKKEL!`.
   4. The card's **Settings**: the token field is empty with “Saved in the keychain…”; change Greeting to `Hej` → Save → the server restarts; greet again → `HEJ, MIKKEL!`.
   5. The switch turns it off (Connectors: Off) and on again. **Install extension…** with the same file again → “Update Oxide Dice”, “Version 1.0.0 → 1.0.0”, the settings kept → Update.
   6. **Uninstall** → it leaves Extensions and Connectors, and its folder is gone (**Open extensions folder**).
-- [ ] **A sample skill is discovered and used by the model.**
+- [x] **A sample skill is discovered and used by the model.**
   1. Settings → **Skills** → **Add .zip or .skill…** → `docs\samples\release-notes.skill` (or **Add folder…** → `docs\samples\skills\release-notes`). It's listed with “+ 1 file”; **View and edit** shows the instructions and `template.md`.
   2. A new chat: “Write release notes for Oxide 0.10.0: added desktop extensions and skills; fixed Esc closing Settings while recording a shortcut; removed the old placeholder pages.” → a “Loaded skill · release-notes” line without an approval card (often a second one for `template.md`), and the notes end with `— Brewed in Oxide.`. The right-hand panel's “Used in this chat” lists Skills.
   3. Switch the skill off; the same prompt in a new chat loads nothing and has no sign-off.
   4. **New skill**: name `pirate`, description “Use when the user greets with ahoy”, instructions “Answer like a pirate.” → “Ahoy! What's 2 + 2?” loads it.
+
+Manual check by the user (2026-11-07, `6ccbc48`, Strata `swift-iq2_xs`):
+- Part 1 (extension): all steps passed. In step 4 the first “greet Mikkel again” failed: the 2-bit model wrote its tool call in its own tag format and the server passed it on as broken JSON (`{"name":"Mikkel\n</parameter>\n</APSHOT>…`). Oxide refused the arguments and asked the model to retry, which it then typed as text. A retry called `greet` correctly and got `HEJ, MIKKEL!` (the new greeting, Shout still on). Model behaviour, not an Oxide bug.
+- Part 2 (skills): all steps passed. The model loaded `release-notes` and then `template.md` without approval cards and ended the notes with “— Brewed in Oxide.” (it put them in a document artifact). Switched off, nothing loaded; the `pirate` skill written in Settings was loaded on “Ahoy!”.
+- The user didn't find “Used in this chat” at first: the details panel opens from the title bar's panel button (“Show chat details”, left of minimize). Worth making easier to find in Phase 11's session panel.
 
 Done:
 - **`oxide-core`:** `extension.rs`: `ExtensionServerType` (node, python, binary, uv), `ExtensionFieldType`, `ExtensionValue` (untagged bool | number | list | text), `ExtensionField`, `ExtensionItem`, `ExtensionInfo` (manifest details, fields, icon as a data URL), `ExtensionStatus` (ready, needsSetup, unsupported, broken), `Extension`, `ExtensionPreview`; `Skill`, `SkillDetail`, `SkillInput`, `LOAD_SKILL`, `skill_slug`, `platform_name`. `McpServerState.extension` (display name of the extension a server comes from). `ToolUsageKind::Skill`.
@@ -78,12 +82,13 @@ Known issues / TODO carried forward:
 - `pick_paths` and the Tauri glue compile only on Windows here; the Vitest suite also runs only there.
 - An extension server's first start after install can take a moment (Node start-up); the card shows “Starting…”.
 - Phase 18's trust prompt should also cover extensions (today the install dialog's note is the only warning).
+- Small local models (Strata `swift-iq2_xs`) sometimes send malformed tool-call arguments; Oxide returns an error the model can recover from, but it may give up. A retry usually works.
 
 Notes for Phase 11:
 - `Extensions::refresh` is the way to rebuild extension servers after anything changes; the MCP manager treats them like any other server, so folder grants (roots) apply to them too.
 - `Skills::load` already confines paths to a folder; the same `archive::safe_path` check is a start for the file tools' sandbox.
 
-Verified: Linux: fmt ✅ clippy ✅ cargo test ✅ (library crates) · tsc ✅ eslint ✅ prettier ✅ (device). Windows (phase10.cmd): pending.
+Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest 175/175) typecheck ✅ lint ✅ vite build ✅ (Windows, phase10.cmd) tauri dev on Windows ✅ (manual exit check by the user).
 
 ## Phase 9 — Desktop integration — 2026-11-07
 Status: done. `scripts\win\phase9.cmd` committed `5013c0b phase 9: desktop integration` on the second run (fix below); the user then ran the whole exit check by hand on Windows: everything passed.
