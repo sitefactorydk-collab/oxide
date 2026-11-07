@@ -51,6 +51,11 @@ describe("Settings → Memory", () => {
 
     fireEvent.click(within(list).getByRole("button", { name: "Delete all" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete all memory?" });
+    // It opens on Cancel, not on the ✕ (whose tooltip would pop up).
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete all" }));
     await waitFor(() => expect(fakeState().memory).toHaveLength(0));
   });
@@ -61,6 +66,22 @@ describe("Settings → Memory", () => {
     fireEvent.change(field, { target: { value: "50" } });
     fireEvent.blur(field);
     await waitFor(() => expect(fakeState().settings.projects.knowledgeBudget).toBe(1000));
+  });
+
+  it("shows a Save button while the budget has an unsaved change", async () => {
+    renderApp("/settings/memory");
+    const field = await screen.findByRole("spinbutton", { name: /Knowledge budget/ });
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "25000" } });
+    expect(screen.getByText(/Unsaved change/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fakeState().settings.projects.knowledgeBudget).toBe(25000));
+    expect(screen.queryByText(/Unsaved change/)).not.toBeInTheDocument();
+    // Esc undoes an edit.
+    fireEvent.change(field, { target: { value: "9" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(field).toHaveValue(25000);
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });
 

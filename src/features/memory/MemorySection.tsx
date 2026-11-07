@@ -2,6 +2,7 @@ import { Check, MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { MemoryItem } from "@/bindings";
+import { NumberSetting } from "@/components/NumberSetting";
 import { IconButton } from "@/components/ui/IconButton";
 import { allModels, isUsable } from "@/features/models/models";
 import { useModels } from "@/features/models/queries";
@@ -252,36 +253,15 @@ function AddMemory({ projects }: { projects: Array<{ id: string; name: string }>
 }
 
 function BudgetField({ value, onChange }: { value: number; onChange: (n: number) => void }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
-  const commit = () => {
-    const n = Math.round(Number(text));
-    const next = Number.isFinite(n) ? Math.min(MAX_BUDGET, Math.max(MIN_BUDGET, n)) : value;
-    setText(String(next));
-    if (next !== value) onChange(next);
-  };
   return (
-    <label className="flex flex-col gap-2">
-      <span className="text-sm text-fg-muted">Knowledge budget (tokens)</span>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={MIN_BUDGET}
-        max={MAX_BUDGET}
-        step={1000}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-        }}
-        className="h-10 w-40 rounded-lg border border-line bg-raised px-3 text-md text-fg outline-none focus:border-accent"
-      />
-      <span className="text-sm text-fg-subtle">
-        A project whose files fit this many tokens goes into every chat in full (cached on
-        Anthropic). Larger projects are searched instead. A chat also keeps it under a quarter of
-        the model’s context window.
-      </span>
-    </label>
+    <NumberSetting
+      label="Knowledge budget (tokens)"
+      hint="A project whose files fit this many tokens goes into every chat in full (cached on Anthropic). Larger projects are searched instead. A chat also keeps it under a quarter of the model’s context window."
+      value={value}
+      min={MIN_BUDGET}
+      max={MAX_BUDGET}
+      step={1000}
+      onChange={onChange}
+    />
   );
 }

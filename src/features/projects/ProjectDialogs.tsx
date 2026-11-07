@@ -36,6 +36,16 @@ export function Modal({
         <Dialog.Content
           // Without a description, tell Radix there's none (it warns otherwise).
           {...(description ? {} : { "aria-describedby": undefined })}
+          // Radix focuses the first button (the ✕) when nothing inside takes focus, which
+          // pops its tooltip open. Keep a field or button that asked for focus, else focus
+          // the dialog itself.
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            const dialog = e.currentTarget as HTMLElement;
+            const wanted = dialog.querySelector<HTMLElement>("[data-autofocus]");
+            if (wanted) wanted.focus();
+            else if (!dialog.contains(document.activeElement)) dialog.focus();
+          }}
           className={cn(
             "ox-pop fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line bg-app p-6 shadow-lg outline-none",
             wide ? "w-[min(760px,calc(100vw-48px))]" : "w-[min(520px,calc(100vw-48px))]",
@@ -81,6 +91,8 @@ export function DialogButtons({
       <button
         type="button"
         onClick={onCancel}
+        // A destructive confirmation starts on Cancel.
+        data-autofocus={danger ? "" : undefined}
         className="h-9 rounded-lg px-3.5 text-base text-fg-muted hover:bg-hover"
       >
         Cancel

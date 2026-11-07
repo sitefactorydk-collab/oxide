@@ -87,6 +87,16 @@ describe("project page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add content" }));
     expect(await within(card).findByText(/Chats search the files/)).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: /^Untitled/ })).toBeInTheDocument();
+
+    // Raising the budget in Settings updates the card.
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Memory" }));
+    const field = await screen.findByRole("spinbutton", { name: /Knowledge budget/ });
+    // (The page still shows 40,000: the 5 above was set behind its back.)
+    fireEvent.change(field, { target: { value: "30000" } });
+    fireEvent.blur(field);
+    expect(await within(card).findByText(/of the knowledge budget/)).toBeInTheDocument();
+    expect(fakeState().settings.projects.knowledgeBudget).toBe(30000);
   });
 
   it("archives a project, hiding it from the list until shown", async () => {

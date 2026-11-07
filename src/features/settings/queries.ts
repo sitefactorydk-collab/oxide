@@ -11,6 +11,7 @@ import {
   type ToolSettings,
   type WebSearchSettings,
 } from "@/bindings";
+import { projectKeys } from "@/features/projects/queries";
 import { unwrap } from "@/lib/api";
 import { useUi } from "@/stores/ui";
 
@@ -43,6 +44,9 @@ export function useUpdateSettings() {
     mutationFn: (next: AppSettings) => unwrap(commands.saveSettings(next)),
     // Don't write the response back: a slower earlier save could overwrite a newer edit.
     onError: () => qc.invalidateQueries({ queryKey: settingsKeys.app }),
+    // Whether a project's knowledge is used in full or searched depends on the budget.
+    // (On the mutation, not on `mutate`, so it runs even after Settings has closed.)
+    onSuccess: () => qc.invalidateQueries({ queryKey: projectKeys.allKnowledge() }),
   });
   return (change: (s: AppSettings) => AppSettings) => {
     const current = qc.getQueryData<AppSettings>(settingsKeys.app) ?? DEFAULT_SETTINGS;

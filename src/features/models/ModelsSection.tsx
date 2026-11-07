@@ -1,6 +1,7 @@
 import { Loader2, RefreshCw } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { ModelInfo, ProviderModels } from "@/bindings";
+import { NumberSetting } from "@/components/NumberSetting";
 import { useSetModelSettings, useSettings, DEFAULT_SETTINGS } from "@/features/settings/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -184,35 +185,15 @@ export function Toggle({
 
 /** Number field that saves a clamped value when the user leaves it. */
 function BudgetField({ value, onChange }: { value: number; onChange: (n: number) => void }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
-  const commit = () => {
-    const n = Math.round(Number(text));
-    const next = Number.isFinite(n) ? Math.min(MAX_BUDGET, Math.max(MIN_BUDGET, n)) : value;
-    setText(String(next));
-    if (next !== value) onChange(next);
-  };
   return (
-    <label className="flex flex-col gap-2">
-      <span className="text-md font-medium text-fg">Thinking budget (tokens)</span>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={MIN_BUDGET}
-        max={MAX_BUDGET}
-        step={1024}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-        }}
-        className="h-10 w-40 rounded-lg border border-line bg-raised px-3 text-md text-fg outline-none focus:border-accent"
-      />
-      <span className="text-sm text-fg-subtle">
-        For models that take a budget when extended thinking is on. Models that decide for
-        themselves ignore it. {MIN_BUDGET.toLocaleString("en")}–{MAX_BUDGET.toLocaleString("en")}.
-      </span>
-    </label>
+    <NumberSetting
+      label="Thinking budget (tokens)"
+      hint={`For models that take a budget when extended thinking is on. Models that decide for themselves ignore it. ${MIN_BUDGET.toLocaleString("en")}–${MAX_BUDGET.toLocaleString("en")}.`}
+      value={value}
+      min={MIN_BUDGET}
+      max={MAX_BUDGET}
+      step={1024}
+      onChange={onChange}
+    />
   );
 }

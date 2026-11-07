@@ -305,21 +305,26 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
             }
         ));
     }
+    if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
+        s.push_str(&format!(
+            "\n\n<memory>\n{mem}\n</memory>\nThis is what Oxide remembers about the user from \
+             earlier chats. Use it when relevant, without mentioning it otherwise; the user's \
+             current messages take precedence."
+        ));
+    }
+    // Last, so they're the freshest thing in the prompt: small local models without thinking
+    // otherwise tend to drop them (seen with Qwen on Strata in the Phase 7 check).
     if let Some(p) = ctx
         .project_instructions
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
         s.push_str(&format!(
-            "\n\n<project_instructions>\n{p}\n</project_instructions>\nFollow the project \
-             instructions above in this chat."
-        ));
-    }
-    if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
-        s.push_str(&format!(
-            "\n\n<memory>\n{mem}\n</memory>\nThis is what Oxide remembers about the user from \
-             earlier chats. Use it when relevant, without mentioning it otherwise; the user's \
-             current messages take precedence."
+            "\n\n<project_instructions>\n{p}\n</project_instructions>\nThe user set these \
+             instructions for every chat in this project. Follow them in every reply, including \
+             the language, tone and format they ask for. They take priority over the general \
+             guidance above. Only an explicit request from the user in this chat overrides \
+             them; the language a message is written in is not such a request."
         ));
     }
     s
@@ -629,6 +634,7 @@ mod tests {
         assert!(p.contains("search the web, read web pages by URL, and use tools from these connectors: fs, time"), "{p}");
         assert!(p.contains("include the year (2026)"));
         assert!(p.contains("<project_instructions>\nAnswer in Danish.\n</project_instructions>"));
+        assert!(p.ends_with("the language a message is written in is not such a request."));
         assert!(!p.contains("<memory>"));
         let neg = system_prompt(&PromptContext {
             utc_offset_minutes: Some(-330),
@@ -653,6 +659,13 @@ mod tests {
         );
         assert!(p.contains("project_search"));
         assert!(p.contains("<memory>\n- Prefers Danish\n</memory>"));
+        // Project instructions come after memory, at the very end.
+        let with_both = system_prompt(&PromptContext {
+            project_instructions: Some("Answer in Danish."),
+            memory: Some("- Likes Rust"),
+            ..PromptContext::default()
+        });
+        assert!(with_both.find("<memory>") < with_both.find("<project_instructions>"));
         let many = system_prompt(&PromptContext {
             knowledge_search: (0..60).map(|i| format!("f{i}")).collect(),
             ..PromptContext::default()

@@ -3,8 +3,7 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 6 — Agent loop, approvals & built-in tools (`144a11d`; main exit check passed on Strata on 2026-11-06, see the Phase 6 section for what's still open)
-- **Current phase:** Phase 7 — Projects & memory: code done and checked on Linux (2026-11-07); waiting for `scripts\win\phase7.cmd` on Windows and the manual exit check.
+- **Last completed:** Phase 7 — Projects & memory (`402259b`, then fixes from the manual check; exit check passed on Strata on 2026-11-07)
 - **Next phase:** Phase 8 — Artifacts
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -29,18 +28,27 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 7 — Projects & memory — 2026-11-07
-Status: partial — code done; Linux checks pass (cargo fmt, clippy `-D warnings` and tests for core/store/llm/mcp/agent; tsc, ESLint and Prettier on the device). `src-tauri`, Vitest and the bindings export run on Windows in `scripts\win\phase7.cmd`, which commits `phase 7: projects & memory` when green. Then the manual exit check below.
+Status: done. `scripts\win\phase7.cmd` committed `402259b phase 7: projects & memory` on the third run (fixes below); the user then ran the exit check by hand (all five parts passed), and the fixes from that check were committed as `phase 7: fixes from the manual check`.
 
 Fixes after the first Windows run (2026-11-07): everything passed except 2 of 133 Vitest tests.
 - **“Moved to …” toast never showed** (a real bug): the menu item that started the move unmounts when the menu closes, and TanStack Query skips per-call `mutate` callbacks of unmounted components. `ChatMenuItems` now uses `mutateAsync().then(toast)`. **Don't put `onSuccess` on `mutate()` calls started from menu items.**
 - A test read “No files yet” before the knowledge query had loaded; it now waits (`findByText`). The same test closes the file viewer with its Close button (Escape didn’	 close it under jsdom).
 
+Manual check by the user (2026-11-07, `402259b`, Strata `swift-iq2_xs`):
+- Part 1 (instructions): the project chat answered in Danish **with thinking on**, but in English **with thinking off** (twice each); the chat outside the project answered in English. Small local models without thinking drop instructions buried mid-prompt. Fix: `<project_instructions>` moved to the very end of the system prompt (after memory), with firmer wording (every reply, including language/tone/format; only the user's own messages override them). Test: `system_prompt_carries_project_search_and_memory` checks the order.
+  - Recheck with thinking off: still English with “Always answer in Danish.”; always Danish (thinking on and off) with “Regardless of the language in which the user's message is written always answer in Danish”. The model treated the English question as a reason to switch, which the first fix's wording (“only the user's own messages … can override them”) may have encouraged. The closing line now says only an *explicit* request overrides the instructions, and the language a message is written in isn't one. Rechecked after that change: the short “Always answer in Danish.” still gets English with thinking off, so this model (2-bit Qwen) needs the explicit wording; no further prompt changes. Takeaway: small local models without thinking need explicit instructions. [x] Part 1 passed.
+- Part 2 (knowledge in full): all steps OK. [x] Part 2 passed.
+- Part 3 (search fallback): all steps OK. **Bug:** after setting the budget back to 40,000 the Knowledge card still said “More than the knowledge budget (8.7k of 1k tokens)” (chats already used the new budget; only the card's cached query was stale). Fix: saving settings invalidates every project's knowledge query (`projectKeys.allKnowledge`, in the settings mutation's own `onSuccess` so it also runs after Settings closes). Test: the search-mode test raises the budget in Settings and checks the card. [x] Part 3 passed; card fix rechecked by the user.
+- **UX (user feedback):** it wasn't clear that the budget saves on Enter. New `components/NumberSetting.tsx`: a number field that saves on Enter, blur or a **Save** button that appears with “Unsaved change · Enter saves, Esc undoes” as soon as the value is edited. Used for the knowledge budget, the thinking budget (Settings → Models) and the tool step limit (Settings → Permissions). Test in `Memory.test.tsx`.
+- Part 4 (memory): all steps OK. **Glitch:** opening “Delete all memory?” showed the ✕ button's “Close” tooltip at once: Radix focuses the first tabbable element (the ✕) when nothing inside takes focus, and tooltips open on focus. Fix in `ProjectDialogs.tsx` `Modal`: `onOpenAutoFocus` focuses an element marked `data-autofocus` (Cancel in destructive confirmations), keeps a field that focused itself, else focuses the dialog. Test: the confirm opens on Cancel with no tooltip. [x] Part 4 passed.
+- Part 5 (moving, archiving): all OK. [x] Part 5 passed.
+
 Exit criteria (check by hand in `cargo tauri dev`):
-- [ ] **Instructions change answers:** in a project, Edit instructions → “Always answer in Danish.” A new chat there answers in Danish; a chat outside the project doesn't.
-- [ ] **Knowledge changes answers:** Knowledge → “+” → Add text content: “The office cat is called Ferris.” In a project chat, “What is the office cat called?” → Ferris. Outside the project the model doesn't know. (Upload a `.md`/`.pdf` too; click it to see the stored text.)
-- [ ] **Large knowledge falls back to search:** Settings → Memory → Knowledge budget `1000`; add `PLAN.md` to a project. The card says “Chats search the files…”. Ask “What does Phase 12b add?” → the reply shows “Searched project knowledge · …” (no approval card) and answers from the file.
-- [ ] **Memory can be viewed and deleted:** Settings → Memory → turn on “Remember things across chats”. In a chat: “I'm Mikkel and I build Oxide on Windows.” After the reply a “Memory updated” toast appears and the items show in Settings → Memory. A new chat: “What do you know about me?” uses them. Edit one, delete one, then Delete all.
-- [ ] Move a chat into a project (sidebar or title-bar menu → Move to project) and out again (project page → remove button); archive and unarchive a project.
+- [x] **Instructions change answers:** in a project, Edit instructions → “Always answer in Danish.” A new chat there answers in Danish; a chat outside the project doesn't.
+- [x] **Knowledge changes answers:** Knowledge → “+” → Add text content: “The office cat is called Ferris.” In a project chat, “What is the office cat called?” → Ferris. Outside the project the model doesn't know. (Upload a `.md`/`.pdf` too; click it to see the stored text.)
+- [x] **Large knowledge falls back to search:** Settings → Memory → Knowledge budget `1000`; add `PLAN.md` to a project. The card says “Chats search the files…”. Ask “What does Phase 12b add?” → the reply shows “Searched project knowledge · …” (no approval card) and answers from the file.
+- [x] **Memory can be viewed and deleted:** Settings → Memory → turn on “Remember things across chats”. In a chat: “I'm Mikkel and I build Oxide on Windows.” After the reply a “Memory updated” toast appears and the items show in Settings → Memory. A new chat: “What do you know about me?” uses them. Edit one, delete one, then Delete all.
+- [x] Move a chat into a project (sidebar or title-bar menu → Move to project) and out again (project page → remove button); archive and unarchive a project.
 
 Done:
 - **`oxide-core`:**
@@ -84,7 +92,7 @@ Notes for Phase 8:
 - `Builtin` + a branch in `run_calls` is the pattern for built-in tools that need app state (`project_search` runs in `ChatService`); the artifact tool can follow it.
 - `features/projects/ProjectDialogs.tsx` has a reusable `Modal` and `ConfirmDialog`.
 
-Verified: clippy ✅ tests ✅ (Linux library crates) typecheck ✅ lint ✅ prettier ✅ (device) · Windows `phase7.cmd` ⏳ · tauri dev ⏳
+Verified: clippy ✅ tests ✅ (cargo + Vitest 134/134) typecheck ✅ lint ✅ (Windows, phase7.cmd) tauri dev on Windows ✅ (manual exit check by the user on Strata; fixes above).
 
 ## Phase 6 — Agent loop, approvals & built-in tools — 2026-11-06
 Status: done. `scripts\win\phase6.cmd` passed every check on Windows on the second run and committed `144a11d phase 6: agent loop, approvals & built-in tools`. The first run failed typecheck only: the generated bindings mark `ToolUse.server`/`tool` optional (`server?: string | null`, from `#[serde(default)]`), unlike the hand-edited copy; `toolView.ts` now uses `b.server ?? null`.

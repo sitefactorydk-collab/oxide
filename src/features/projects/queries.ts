@@ -14,6 +14,7 @@ import { chatKeys, replaceConversation } from "@/features/chats/queries";
 export const projectKeys = {
   all: ["projects"] as const,
   list: () => [...projectKeys.all, "list"] as const,
+  allKnowledge: () => [...projectKeys.all, "knowledge"] as const,
   knowledge: (id: string) => [...projectKeys.all, "knowledge", id] as const,
   file: (id: string) => [...projectKeys.all, "file", id] as const,
 };

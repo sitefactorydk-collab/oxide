@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { NumberSetting } from "@/components/NumberSetting";
 import { Toggle } from "@/features/models/ModelsSection";
 import { DEFAULT_SETTINGS, useSetToolSettings, useSettings } from "@/features/settings/queries";
 
@@ -33,34 +33,14 @@ export function PermissionsSection() {
 }
 
 function StepsField({ value, onChange }: { value: number; onChange: (n: number) => void }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
-  const commit = () => {
-    const n = Math.round(Number(text));
-    const next = Number.isFinite(n) ? Math.min(MAX_STEPS, Math.max(1, n)) : value;
-    setText(String(next));
-    if (next !== value) onChange(next);
-  };
   return (
-    <label className="flex flex-col gap-2">
-      <span className="text-md font-medium text-fg">Most tool steps per reply</span>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={1}
-        max={MAX_STEPS}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-        }}
-        className="h-10 w-40 rounded-lg border border-line bg-raised px-3 text-md text-fg outline-none focus:border-accent"
-      />
-      <span className="text-sm text-fg-subtle">
-        A step is one round of the model calling tools and getting their results. When a reply
-        reaches the limit, Oxide stops it and says so. 1–{MAX_STEPS}.
-      </span>
-    </label>
+    <NumberSetting
+      label="Most tool steps per reply"
+      hint={`A step is one round of the model calling tools and getting their results. When a reply reaches the limit, Oxide stops it and says so. 1–${MAX_STEPS}.`}
+      value={value}
+      min={1}
+      max={MAX_STEPS}
+      onChange={onChange}
+    />
   );
 }
