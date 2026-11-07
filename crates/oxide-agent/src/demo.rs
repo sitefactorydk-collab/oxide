@@ -171,6 +171,7 @@ pub async fn create_demo_conversation(
                         model: model.to_owned(),
                         project_id: None,
                         attachments: Vec::new(),
+                        folders: vec![],
                     })
                     .await?;
                 let c = store

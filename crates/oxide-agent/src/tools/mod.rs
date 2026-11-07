@@ -5,7 +5,9 @@
 //! `^[a-zA-Z0-9_-]{1,64}$` for both Anthropic and OpenAI, so MCP tools become
 //! `server__tool` with other characters replaced.
 
+pub mod files;
 pub mod html;
+pub mod shell;
 pub mod web;
 
 use std::collections::HashSet;
@@ -81,6 +83,12 @@ pub enum Builtin {
     Artifact,
     /// Read a skill's instructions or files.
     LoadSkill,
+    /// A file tool in the chat's granted folders (run by the chat service).
+    File(files::FileOp),
+    /// The chat's task list (run by the chat service).
+    TaskList,
+    /// A shell command in a granted folder (run by the chat service).
+    RunCommand,
 }
 
 impl Builtin {
@@ -91,6 +99,9 @@ impl Builtin {
             Builtin::ProjectSearch => PROJECT_SEARCH,
             Builtin::Artifact => ARTIFACT_TOOL,
             Builtin::LoadSkill => LOAD_SKILL,
+            Builtin::File(op) => op.name(),
+            Builtin::TaskList => oxide_core::workspace::TASK_LIST,
+            Builtin::RunCommand => oxide_core::workspace::RUN_COMMAND,
         }
     }
 }
@@ -143,6 +154,9 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
             ToolKind::Builtin(Builtin::Artifact) => ToolUsageKind::Artifact,
             ToolKind::Builtin(Builtin::LoadSkill) => ToolUsageKind::Skill,
+            ToolKind::Builtin(Builtin::File(_)) => ToolUsageKind::File,
+            ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
+            ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -372,6 +386,9 @@ impl Tools {
                 ToolOutput::error("Artifacts are made in the chat, not here.")
             }
             ToolKind::Builtin(Builtin::LoadSkill) => self.load_skill(input).await,
+            ToolKind::Builtin(Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand) => {
+                ToolOutput::error("This tool runs in the chat, not here.")
+            }
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp
@@ -599,6 +616,9 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::ProjectSearch => return crate::knowledge::project_search_entry(),
         Builtin::Artifact => return crate::artifacts::artifact_entry(),
         Builtin::LoadSkill => return crate::skills::load_skill_entry(),
+        Builtin::File(op) => return files::file_entry(op, false),
+        Builtin::TaskList => return crate::tasks::task_list_entry(),
+        Builtin::RunCommand => return shell::shell_entry(&shell::Shell::detect()),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \

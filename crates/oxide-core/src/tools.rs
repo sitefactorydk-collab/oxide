@@ -62,6 +62,13 @@ pub enum ToolUsageKind {
     Artifact,
     /// A skill's instructions or files were loaded (the label is the skill's name).
     Skill,
+    /// A file or folder in a granted folder was listed, read, written, moved or deleted (the
+    /// label is the path).
+    File,
+    /// A shell command ran (the label is the command).
+    Shell,
+    /// The chat's task list was set (the label is the current step).
+    Tasks,
 }
 
 /// One tool call, logged per chat.

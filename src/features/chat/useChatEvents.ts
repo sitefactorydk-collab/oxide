@@ -6,6 +6,8 @@ import { artifactCallInfo, artifactRefOf } from "@/features/artifacts/partial";
 import { useArtifactPanel } from "@/features/artifacts/store";
 import { memoryKeys } from "@/features/memory/queries";
 import { toolKeys } from "@/features/tools/queries";
+import { setTaskListData } from "@/features/workspace/queries";
+import { useSessionPanelStore } from "@/features/workspace/store";
 import { toast } from "@/lib/toast";
 import { addMessageToCache, chatKeys, replaceConversation } from "@/features/chats/queries";
 import { useStreams } from "./streams";
@@ -77,6 +79,14 @@ export function useChatEvents(): void {
       events.memoryChanged.listen(({ payload }) => {
         void qc.invalidateQueries({ queryKey: memoryKeys.all });
         toast(payload.added === 1 ? "Memory updated" : `Memory updated (${payload.added} items)`);
+      }),
+    );
+    keep(
+      events.taskListChanged.listen(({ payload }) => {
+        setTaskListData(qc, payload);
+        if (payload.items.length > 0) {
+          useSessionPanelStore.getState().autoOpen(payload.conversationId);
+        }
       }),
     );
     keep(

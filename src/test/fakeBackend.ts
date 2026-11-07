@@ -27,6 +27,8 @@ import type {
   SearchHit,
   StreamEvent,
   ApprovalDecision,
+  ChatWorkspace,
+  TaskList,
   ToolApprovalRequest,
   ToolUsage,
   WebSearchKeys,
@@ -87,6 +89,9 @@ interface FakeState {
   answers: Array<{ conversationId: string; toolUseId: string; decision: ApprovalDecision }>;
   toolUsage: ToolUsage[];
   grants: Map<string, string[]>;
+  /** Granted folders per chat. */
+  workspaces: Map<string, ChatWorkspace>;
+  tasks: Map<string, TaskList>;
   searchKeys: WebSearchKeys;
   clock: { offset: number; zone: string | null } | null;
   artifacts: Artifact[];
@@ -142,6 +147,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         launchAtLogin: false,
         notifications: true,
       },
+      shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -154,6 +160,8 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     answers: [],
     toolUsage: [],
     grants: new Map(),
+    workspaces: new Map(),
+    tasks: new Map(),
     searchKeys: { brave: null, tavily: null },
     clock: null,
     artifacts: [],
@@ -254,6 +262,7 @@ const conversationUpdated = fakeEvent<ConversationChanged>("conversation-updated
 const mcpChanged = fakeEvent<McpEvent>("mcp-changed");
 const memoryChanged = fakeEvent<MemoryChanged>("memory-changed");
 const desktopRequest = fakeEvent<DesktopAction>("desktop-request");
+const taskListChanged = fakeEvent<TaskList>("task-list-changed");
 setMcpEmitter((e) => void mcpChanged.emit(e));
 
 export const fakeEvents = {
@@ -262,7 +271,40 @@ export const fakeEvents = {
   mcpChanged,
   memoryChanged,
   desktopRequest,
+  taskListChanged,
 } as unknown as typeof RealEvents;
+
+/** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
+export function setTaskList(conversationId: string, items: TaskList["items"]): void {
+  const list: TaskList = { conversationId, items, updatedAt: Date.now() };
+  state.tasks.set(conversationId, list);
+  void taskListChanged.emit(list);
+}
+
+/** A folder path as the fake backend resolves it (full paths only). */
+function resolvePath(path: string): Result<string, CommandError> {
+  const p = path.trim().replace(/[\\/]+$/, "");
+  if (!/^([A-Za-z]:\\|\/)/.test(p)) {
+    return { status: "error", error: { kind: "invalid", message: `“${path}” isn't a full path.` } };
+  }
+  return { status: "ok", data: p };
+}
+
+function workspaceOf(conversationId: string): ChatWorkspace {
+  let ws = state.workspaces.get(conversationId);
+  if (!ws) {
+    ws = { folders: [], allowDelete: false };
+    state.workspaces.set(conversationId, ws);
+  }
+  return ws;
+}
+
+function grantFolder(conversationId: string, path: string): void {
+  const ws = workspaceOf(conversationId);
+  if (ws.folders.some((f) => f.path === path)) return;
+  const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  ws.folders.push({ path, name, addedAt: Date.now() });
+}
 
 /** The tray, a menu or a deep link asks the main window to do something. */
 export function emitDesktopRequest(action: DesktopAction): void {
@@ -594,6 +636,10 @@ export const fakeCommands: typeof RealCommands = {
       updatedAt: now,
     };
     state.conversations.push(c);
+    for (const f of input.folders ?? []) {
+      const r = resolvePath(f);
+      if (r.status === "ok") grantFolder(c.id, r.data);
+    }
     const first = newMessage(c.id, null, input.text.trim(), input.attachments);
     const result = ok(c);
     startReply(c.id, first.id, options);
@@ -936,11 +982,27 @@ export const fakeCommands: typeof RealCommands = {
     const had = state.pending.some(
       (p) => p.conversationId === conversationId && p.toolUseId === toolUseId,
     );
+    const req = state.pending.find(
+      (p) => p.conversationId === conversationId && p.toolUseId === toolUseId,
+    );
     state.pending = state.pending.filter((p) => p.toolUseId !== toolUseId);
     state.answers.push({ conversationId, toolUseId, decision });
     if (decision === "allowChat") {
+      // The backend's "Allow always" keys: `server/tool`, `builtin/tool`, and one key per
+      // shell command.
+      let key = `fs/${toolUseId}`;
+      if (req?.server) key = `${req.server}/${req.tool}`;
+      else if (req?.tool === "run_command") {
+        let cmd = "";
+        try {
+          cmd = String((JSON.parse(req.inputJson) as { command?: unknown }).command ?? "").trim();
+        } catch {
+          cmd = "";
+        }
+        key = `builtin/run_command:${cmd}`;
+      } else if (req) key = `builtin/${req.tool}`;
       const g = state.grants.get(conversationId) ?? [];
-      state.grants.set(conversationId, [...g, `fs/${toolUseId}`]);
+      if (!g.includes(key)) state.grants.set(conversationId, [...g, key]);
     }
     return ok(had);
   },
@@ -952,6 +1014,32 @@ export const fakeCommands: typeof RealCommands = {
     const g = state.grants.get(conversationId) ?? [];
     state.grants.set(conversationId, toolKey === null ? [] : g.filter((k) => k !== toolKey));
     return ok(state.grants.get(conversationId) ?? []);
+  },
+  resolveFolder: (path) => Promise.resolve(resolvePath(path)),
+  chatWorkspace: (conversationId) => ok(structuredClone(workspaceOf(conversationId))),
+  addChatFolder: (conversationId, path) => {
+    if (!state.conversations.some((c) => c.id === conversationId)) {
+      return fail("notFound", "conversation not found");
+    }
+    const r = resolvePath(path);
+    if (r.status === "error") return Promise.resolve(r);
+    grantFolder(conversationId, r.data);
+    return ok(structuredClone(workspaceOf(conversationId)));
+  },
+  removeChatFolder: (conversationId, path) => {
+    const ws = workspaceOf(conversationId);
+    ws.folders = ws.folders.filter((f) => f.path !== path);
+    return ok(structuredClone(ws));
+  },
+  setChatAllowDelete: (conversationId, allow) => {
+    workspaceOf(conversationId).allowDelete = allow;
+    return ok(structuredClone(workspaceOf(conversationId)));
+  },
+  chatTaskList: (conversationId) =>
+    ok(state.tasks.get(conversationId) ?? { conversationId, items: [], updatedAt: 0 }),
+  openChatFolder: (_conversationId, path) => {
+    state.opened.push(path);
+    return ok(null);
   },
   setClientClock: (offset, zone) => {
     state.clock = { offset, zone };

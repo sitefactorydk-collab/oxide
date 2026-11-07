@@ -2,10 +2,13 @@ import {
   AlertTriangle,
   ChevronRight,
   FileText,
+  FolderOpen,
   FolderSearch,
   Globe,
+  ListChecks,
   Loader2,
   Plug,
+  SquareTerminal,
   ShieldAlert,
   Shapes,
   Sparkles,
@@ -35,7 +38,13 @@ function KindIcon({ call }: { call: ToolCallView }) {
             ? Shapes
             : kind === "skill"
               ? Sparkles
-              : Plug;
+              : kind === "file"
+                ? FolderOpen
+                : kind === "tasks"
+                  ? ListChecks
+                  : kind === "shell"
+                    ? SquareTerminal
+                    : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -128,7 +137,12 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
     const streams = useStreams.getState();
     streams.markAnswered(request.conversationId, request.toolUseId, decision !== "deny");
     if (decision === "allowChat") {
-      streams.markToolAllowed(request.conversationId, request.server, request.tool);
+      streams.markToolAllowed(
+        request.conversationId,
+        request.server,
+        request.tool,
+        request.inputJson,
+      );
     }
     answer.mutate({
       conversationId: request.conversationId,
@@ -167,7 +181,11 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           )}
           {request.destructive && (
             <p className="mt-1 text-sm text-danger">
-              The server says this tool can change or delete data.
+              {request.server
+                ? "The server says this tool can change or delete data."
+                : request.tool === "run_command"
+                  ? "Commands run on your computer and can change or delete files."
+                  : "This changes files in a folder you shared."}
             </p>
           )}
         </div>
@@ -193,7 +211,9 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           onClick={() => send("allowChat")}
           className="h-8 rounded-lg border border-line-strong px-3 text-sm text-fg hover:bg-hover disabled:opacity-50"
         >
-          Allow always for this chat
+          {request.server === null && request.tool === "run_command"
+            ? "Always allow this command"
+            : "Allow always for this chat"}
         </button>
         <button
           type="button"

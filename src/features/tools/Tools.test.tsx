@@ -147,7 +147,7 @@ describe("tool calls in a reply", () => {
       isError: false,
       durationMs: 0,
     });
-    const list = await screen.findByRole("list", { name: "Used in this chat" });
+    const list = await screen.findByRole("list", { name: "Used in this session" });
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(3));
     expect(list).toHaveTextContent("Web search2rust palettes · oxide colors");
     expect(list).toHaveTextContent("Web pagesexample.com");

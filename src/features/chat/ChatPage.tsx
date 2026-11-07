@@ -1,29 +1,7 @@
-import {
-  AlertCircle,
-  ArrowDown,
-  BookOpen,
-  FileText,
-  FolderSearch,
-  Globe,
-  Lightbulb,
-  Plug,
-  RotateCcw,
-  Shapes,
-  Sparkles,
-  X,
-} from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { AlertCircle, ArrowDown, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import type { Attachment, Feedback, Message } from "@/bindings";
-import { IconButton } from "@/components/ui/IconButton";
 import { ArtifactPanel } from "@/features/artifacts/ArtifactPanel";
 import {
   useConversation,
@@ -37,19 +15,15 @@ import {
 } from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
 import { useGenerateOptions } from "@/features/composer/options";
-import { EFFORT_LABELS, effectiveEffort, findModel } from "@/features/models/models";
-import { useModelLabel, useModels } from "@/features/models/queries";
-import { useToolSwitches } from "@/features/mcp/chatTools";
-import { useMcpServers } from "@/features/mcp/queries";
-import { usePendingApprovals, useToolUsage } from "@/features/tools/queries";
+import { usePendingApprovals } from "@/features/tools/queries";
 import { ApprovalCard } from "@/features/tools/ToolCallBlock";
-import { usageRows, type UsageRow } from "@/features/tools/toolView";
+import { SessionPanel } from "@/features/workspace/SessionPanel";
+import { useSessionPanel } from "@/features/workspace/store";
 import { errorMessage } from "@/lib/api";
-import { useUi } from "@/stores/ui";
 import { useBranches } from "./branches";
 import { AssistantMessage, LiveReplyView, UserMessage, type Versions } from "./Messages";
 import { useStreams } from "./streams";
-import { activeThread, attachmentsOf, newestLeafUnder, siblingsOf } from "./thread";
+import { activeThread, newestLeafUnder, siblingsOf } from "./thread";
 
 /** Distance from the bottom (px) within which the view follows a streaming reply. */
 const STICK_DISTANCE = 120;
@@ -131,7 +105,7 @@ function ChatView({ id }: { id: string }) {
   const setModel = useSetConversationModel();
   const rate = useSetFeedback();
   const options = useGenerateOptions();
-  const rightPanelOpen = useUi((s) => s.rightPanelOpen);
+  const panel = useSessionPanel(id);
   const [draft, setDraft] = useState("");
   const scroll = useStickToBottom();
 
@@ -315,7 +289,7 @@ function ChatView({ id }: { id: string }) {
         </div>
       </div>
       <ArtifactPanel conversationId={id} />
-      {rightPanelOpen && <ChatDetailsPanel id={id} modelId={convo.model} thread={thread} />}
+      {panel.open && <SessionPanel id={id} modelId={convo.model} thread={thread} />}
     </div>
   );
 }
@@ -381,145 +355,6 @@ function OrphanApprovals({ conversationId }: { conversationId: string }) {
           <ApprovalCard request={r} />
         </div>
       ))}
-    </div>
-  );
-}
-
-function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
-  const Icon =
-    kind === "webSearch"
-      ? Globe
-      : kind === "webFetch"
-        ? FileText
-        : kind === "providerTool"
-          ? Sparkles
-          : kind === "projectSearch"
-            ? FolderSearch
-            : kind === "artifact"
-              ? Shapes
-              : kind === "skill"
-                ? BookOpen
-                : Plug;
-  return <Icon aria-hidden className="size-4" />;
-}
-
-/** "Used in this chat": web searches, pages, connectors. Click a row to see the call. */
-function UsedInChat({ id }: { id: string }) {
-  const { data } = useToolUsage(id);
-  const rows = usageRows(data ?? []);
-  if (rows.length === 0) {
-    return <p className="text-sm text-fg-subtle">Nothing yet.</p>;
-  }
-  return (
-    <ul aria-label="Used in this chat" className="flex flex-col gap-1">
-      {rows.map((r) => (
-        <li key={r.key}>
-          <button
-            type="button"
-            onClick={() =>
-              document
-                .querySelector(`[data-tool-call="${CSS.escape(r.toolUseId)}"]`)
-                ?.scrollIntoView({ behavior: "smooth", block: "center" })
-            }
-            className="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
-          >
-            <span className="mt-0.5 text-fg-subtle">
-              <UsageIcon kind={r.kind} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 text-base text-fg">
-                <span className="truncate">{r.title}</span>
-                {r.count > 1 && (
-                  <span className="shrink-0 rounded bg-sunken px-1.5 text-xs tabular-nums text-fg-subtle">
-                    {r.count}
-                  </span>
-                )}
-                {r.errors > 0 && (
-                  <span className="shrink-0 text-xs text-danger">{r.errors} failed</span>
-                )}
-              </span>
-              {r.details.length > 0 && (
-                <span className="block truncate text-xs text-fg-subtle">
-                  {r.details.slice(-3).join(" · ")}
-                </span>
-              )}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** Which tools the chat may use: web and running connectors. */
-function useToolsSummary(id: string): string {
-  const switches = useToolSwitches(id);
-  const { data: servers } = useMcpServers();
-  const on = servers.filter((s) => s.status === "running" && switches.serverOn(s.name));
-  const parts: string[] = [];
-  if (switches.webOn) parts.push("Web");
-  if (on.length > 0) parts.push(on.map((s) => s.name).join(", "));
-  return parts.length > 0 ? parts.join(" · ") : "None";
-}
-
-/** Right-hand "in this chat" panel: model, tools, files, and what the chat used. */
-function ChatDetailsPanel({
-  id,
-  modelId,
-  thread,
-}: {
-  id: string;
-  modelId: string;
-  thread: Message[];
-}) {
-  const toolsSummary = useToolsSummary(id);
-  const toggle = useUi((s) => s.toggleRightPanel);
-  const thinking = useUi((s) => s.thinking);
-  const effort = useUi((s) => s.effort);
-  const modelLabel = useModelLabel(modelId);
-  const { data: lists } = useModels();
-  const caps = findModel(lists, modelId)?.capabilities;
-  const applied = caps ? effectiveEffort(caps, effort) : null;
-  const files = thread.flatMap((m) =>
-    attachmentsOf(m).map((b) => (b.type === "document" ? b.name : "Image")),
-  );
-  return (
-    <aside aria-label="Chat details" className="w-72 shrink-0 p-3">
-      <div className="rounded-xl border border-line bg-raised p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-md font-semibold text-fg">In this chat</h2>
-          <IconButton size="sm" label="Close details" onClick={toggle}>
-            <X className="size-4" />
-          </IconButton>
-        </div>
-        <dl className="flex flex-col gap-3 text-base">
-          <Row icon={<Lightbulb className="size-4" />} label="Model">
-            {modelLabel}
-            {thinking ? " · thinking" : ""}
-            {applied ? ` · ${EFFORT_LABELS[applied]} effort` : ""}
-          </Row>
-          <Row icon={<Plug className="size-4" />} label="Tools">
-            {toolsSummary}
-          </Row>
-          <Row icon={<FileText className="size-4" />} label="Files">
-            {files.length === 0 ? "None yet" : `${files.length}: ${files.join(", ")}`}
-          </Row>
-        </dl>
-        <h3 className="mb-1.5 mt-5 text-sm font-semibold text-fg">Used in this chat</h3>
-        <UsedInChat id={id} />
-      </div>
-    </aside>
-  );
-}
-
-function Row({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="mt-0.5 text-fg-subtle">{icon}</span>
-      <div className="min-w-0">
-        <dt className="text-xs text-fg-subtle">{label}</dt>
-        <dd className="truncate text-fg">{children}</dd>
-      </div>
     </div>
   );
 }

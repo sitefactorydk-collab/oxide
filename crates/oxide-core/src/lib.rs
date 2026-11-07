@@ -18,6 +18,7 @@ pub mod project;
 pub mod provider;
 pub mod settings;
 pub mod tools;
+pub mod workspace;
 
 pub use artifact::{
     ARTIFACT_TOOL, Artifact, ArtifactDetail, ArtifactKind, ArtifactSummary, ArtifactVersion,
@@ -52,13 +53,14 @@ pub use project::{
 pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,
-    ProfileSettings, ProjectSettings, ThemePref, ToolSettings, WebSearchProvider,
+    ProfileSettings, ProjectSettings, ShellSettings, ThemePref, ToolSettings, WebSearchProvider,
     WebSearchSettings,
 };
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,
     WebSearchTest,
 };
+pub use workspace::{ChatFolder, ChatWorkspace, TaskItem, TaskList, TaskStatus};
 
 /// Product name shown in the UI and window titles.
 pub const APP_NAME: &str = "Oxide";

@@ -12,6 +12,8 @@
 //! - [`artifacts`]: the `artifact` tool (documents, code, pages, diagrams, React).
 //! - [`memory`]: learning memory items from chats (opt-in).
 //! - [`skills`]: the skills folder and the `load_skill` tool.
+//! - [`tasks`]: the `task_list` tool; [`tools::files`] and [`tools::shell`]: file tools and
+//!   commands confined to a chat's granted folders.
 //!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
@@ -27,6 +29,7 @@ pub mod memory;
 mod registry;
 pub mod sampling;
 pub mod skills;
+pub mod tasks;
 mod title;
 pub mod tools;
 

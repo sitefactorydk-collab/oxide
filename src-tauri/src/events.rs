@@ -1,7 +1,9 @@
 //! Typed events sent to the frontend (registered in `specta_builder`).
 
 use oxide_agent::EventSink;
-use oxide_core::{ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent};
+use oxide_core::{
+    ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent, TaskList,
+};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
@@ -27,6 +29,10 @@ pub struct McpChanged(pub McpEvent);
 pub struct MemoryChanged {
     pub added: u32,
 }
+
+/// The model set a chat's task list (`events.taskListChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct TaskListChanged(pub TaskList);
 
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
@@ -61,6 +67,12 @@ impl EventSink for TauriSink {
     fn memory_changed(&self, added: u32) {
         if let Err(e) = (MemoryChanged { added }).emit(&self.app) {
             tracing::warn!("couldn't send a memory update: {e}");
+        }
+    }
+
+    fn tasks_changed(&self, list: TaskList) {
+        if let Err(e) = TaskListChanged(list).emit(&self.app) {
+            tracing::warn!("couldn't send a task list update: {e}");
         }
     }
 }

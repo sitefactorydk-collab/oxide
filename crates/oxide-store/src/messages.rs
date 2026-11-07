@@ -289,6 +289,7 @@ mod tests {
                 model: "m".into(),
                 project_id: None,
                 attachments: Vec::new(),
+                folders: vec![],
             })
             .await
             .expect("ok");
@@ -422,6 +423,7 @@ mod tests {
                 text: String::new(),
                 model: "m".into(),
                 project_id: None,
+                folders: vec![],
                 attachments: vec![oxide_core::Attachment {
                     id: "a".into(),
                     name: "shot.png".into(),

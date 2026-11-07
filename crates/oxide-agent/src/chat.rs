@@ -16,10 +16,11 @@ use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
 use oxide_core::tools::PROVIDER_SERVER;
+use oxide_core::workspace::{FILES_SWITCH, RUN_COMMAND, TASK_LIST, command_allowed};
 use oxide_core::{
     AppSettings, ApprovalDecision, ChatStreamEvent, ContentBlock, Conversation, GenerateOptions,
-    Message, ModelCapabilities, ProviderKind, Role, StopReason, StreamEvent, ThinkingStyle,
-    ToolApprovalRequest, ToolUsageKind, Usage,
+    Message, ModelCapabilities, ProviderKind, Role, StopReason, StreamEvent, TaskList,
+    ThinkingStyle, ToolApprovalRequest, ToolUsageKind, Usage,
 };
 use oxide_llm::capabilities::anthropic_curated;
 use oxide_llm::{ChatEvent, ChatMessage, ChatRequest, Provider, Thinking, complete_text};
@@ -38,6 +39,8 @@ use crate::knowledge::{
 use crate::memory::{MEMORY_SYSTEM, Scope, memory_prompt, parse_proposals};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
+use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
+use crate::tools::shell::{Shell, command_of, run_command, shell_entry};
 use crate::tools::{
     Builtin, ToolEntry, ToolKind, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label,
 };
@@ -62,6 +65,10 @@ pub trait EventSink: Send + Sync + 'static {
     /// `added` memory items were learned in the background.
     fn memory_changed(&self, added: u32) {
         let _ = added;
+    }
+    /// The model set a chat's task list.
+    fn tasks_changed(&self, list: TaskList) {
+        let _ = list;
     }
 }
 
@@ -115,6 +122,10 @@ struct Setup {
     project_id: Option<String>,
     /// "Allow always for this chat" keys.
     grants: HashSet<String>,
+    /// The chat's granted folders, resolved (file tools and the shell are confined to them).
+    sandbox: Sandbox,
+    /// The shell `run_command` uses (`None`: the shell tool is off).
+    shell: Option<Shell>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -212,6 +223,9 @@ impl ChatService {
                     o.request.conversation_id == conversation_id
                         && o.request.server == p.request.server
                         && o.request.tool == p.request.tool
+                        && (p.request.server.is_some()
+                            || p.request.tool != RUN_COMMAND
+                            || o.request.input_json == p.request.input_json)
                 })
                 .map(|(id, _)| id.clone())
                 .collect();
@@ -515,6 +529,41 @@ impl ChatService {
             .await?
             .into_iter()
             .collect();
+        // Agentic work: the task list, and file tools (and the shell) in granted folders.
+        let workspace = self.store.chat_workspace(&conversation.id).await?;
+        let sandbox = tokio::task::spawn_blocking(move || Sandbox::new(&workspace))
+            .await
+            .unwrap_or_default();
+        let mut shell = None;
+        if caps.tools {
+            let at = tool_set
+                .entries
+                .iter()
+                .position(|e| matches!(e.kind, ToolKind::Mcp { .. }))
+                .unwrap_or(tool_set.entries.len());
+            let mut own = Vec::new();
+            if chat_tools.allows_builtin(TASK_LIST) {
+                own.push(crate::tasks::task_list_entry());
+            }
+            if !sandbox.is_empty() && chat_tools.allows_builtin(FILES_SWITCH) {
+                for op in FileOp::ALL {
+                    if chat_tools.allows_builtin(op.name()) {
+                        own.push(file_entry(op, sandbox.allows_delete()));
+                    }
+                }
+            }
+            if settings.shell.enabled
+                && !sandbox.is_empty()
+                && chat_tools.allows_builtin(RUN_COMMAND)
+            {
+                let sh = tokio::task::spawn_blocking(Shell::detect)
+                    .await
+                    .unwrap_or_else(|_| Shell::detect());
+                own.push(shell_entry(&sh));
+                shell = Some(sh);
+            }
+            tool_set.entries.splice(at..at, own);
+        }
         let project = match &conversation.project_id {
             Some(p) => self.store.get_project(p).await.ok(),
             None => None,
@@ -565,6 +614,21 @@ impl ChatService {
             knowledge_search,
             memory: memory.as_deref(),
             skills: skills.as_deref(),
+            folders: if tool_set
+                .entries
+                .iter()
+                .any(|e| matches!(e.kind, ToolKind::Builtin(Builtin::File(_))))
+            {
+                sandbox.root_paths()
+            } else {
+                Vec::new()
+            },
+            delete_for_good: sandbox.allows_delete(),
+            shell: shell.as_ref().map(|s| s.label.as_str()),
+            task_list: tool_set
+                .entries
+                .iter()
+                .any(|e| e.kind == ToolKind::Builtin(Builtin::TaskList)),
         });
         Ok(Setup {
             provider,
@@ -578,6 +642,8 @@ impl ChatService {
             system_context,
             project_id: conversation.project_id.clone(),
             grants,
+            sandbox,
+            shell,
         })
     }
 
@@ -780,19 +846,39 @@ impl ChatService {
         }
     }
 
-    fn needs_approval(entry: &ToolEntry, setup: &Setup) -> bool {
-        if setup.grants.contains(&entry.grant_key()) {
+    /// Key of "Allow always for this chat" for one call. Shell commands are allowed one
+    /// command at a time, not the whole tool.
+    fn grant_key(entry: &ToolEntry, input: &Value) -> String {
+        match entry.kind {
+            ToolKind::Builtin(Builtin::RunCommand) => format!(
+                "{}:{}",
+                entry.grant_key(),
+                command_of(input).unwrap_or_default()
+            ),
+            _ => entry.grant_key(),
+        }
+    }
+
+    fn needs_approval(entry: &ToolEntry, input: &Value, setup: &Setup) -> bool {
+        if setup.grants.contains(&Self::grant_key(entry, input)) {
             return false;
         }
-        match entry.server() {
+        match &entry.kind {
             // Searching the project's own files never asks.
-            None if entry.kind == ToolKind::Builtin(Builtin::ProjectSearch) => false,
-            // Artifacts only write into Oxide's own database.
-            None if entry.kind == ToolKind::Builtin(Builtin::Artifact) => false,
+            ToolKind::Builtin(Builtin::ProjectSearch) => false,
+            // Artifacts and the task list only write into Oxide's own database.
+            ToolKind::Builtin(Builtin::Artifact | Builtin::TaskList) => false,
             // Skills are Oxide's own files, only read.
-            None if entry.kind == ToolKind::Builtin(Builtin::LoadSkill) => false,
-            None => setup.settings.tools.ask_before_web,
-            Some(_) => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
+            ToolKind::Builtin(Builtin::LoadSkill) => false,
+            // The user granted the folder: looking is fine, changing asks.
+            ToolKind::Builtin(Builtin::File(op)) => !op.read_only(),
+            ToolKind::Builtin(Builtin::RunCommand) => match command_of(input) {
+                Ok(c) => !command_allowed(&c, &setup.settings.shell.allowlist),
+                // Runs (and fails with a message) without bothering the user.
+                Err(_) => false,
+            },
+            ToolKind::Builtin(_) => setup.settings.tools.ask_before_web,
+            ToolKind::Mcp { .. } => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
     }
 
@@ -895,7 +981,7 @@ impl ChatService {
                 }
             };
             self.emit_call(cid, &call, &entry);
-            let ask = Self::needs_approval(&entry, setup);
+            let ask = Self::needs_approval(&entry, &input, setup);
             ready.push(Ready {
                 call,
                 entry,
@@ -910,11 +996,13 @@ impl ChatService {
         let done: Mutex<Vec<(usize, ToolOutput)>> = Mutex::new(Vec::new());
         let settings = &setup.settings;
         let project_id = setup.project_id.as_deref();
+        let sandbox = &setup.sandbox;
+        let shell = setup.shell.as_ref();
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
             async move {
-                let key = r.entry.grant_key();
+                let key = Self::grant_key(&r.entry, &r.input);
                 let granted = lock(grants).contains(&key);
                 if r.ask && !granted {
                     match self
@@ -955,6 +1043,17 @@ impl ChatService {
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
+                } else if let ToolKind::Builtin(
+                    b @ (Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand),
+                ) = r.entry.kind
+                {
+                    let started = Instant::now();
+                    let mut out = self
+                        .run_workspace_tool(cid, b, &r.input, sandbox, shell, settings)
+                        .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
                 } else if r.entry.kind == ToolKind::Builtin(Builtin::Artifact) {
                     let started = Instant::now();
                     let mut out = run_artifact(&self.store, cid, reply_id, &r.input).await;
@@ -985,6 +1084,62 @@ impl ChatService {
             }
         }
         finished
+    }
+
+    /// Runs a file tool, the task list or a shell command for a chat.
+    async fn run_workspace_tool(
+        &self,
+        cid: &str,
+        tool: Builtin,
+        input: &Value,
+        sandbox: &Sandbox,
+        shell: Option<&Shell>,
+        settings: &AppSettings,
+    ) -> ToolOutput {
+        let text = |t: String| ToolOutput {
+            content: vec![ContentBlock::text(t)],
+            is_error: false,
+            duration_ms: 0,
+        };
+        match tool {
+            Builtin::File(op) => {
+                let (sb, input) = (sandbox.clone(), input.clone());
+                match tokio::task::spawn_blocking(move || sb.run(op, &input)).await {
+                    Ok(Ok(t)) => text(t),
+                    Ok(Err(e)) => ToolOutput::error(e),
+                    Err(e) => ToolOutput::error(format!("The file tool failed: {e}")),
+                }
+            }
+            Builtin::TaskList => {
+                let items = match crate::tasks::parse_tasks(input) {
+                    Ok(i) => i,
+                    Err(e) => return ToolOutput::error(e),
+                };
+                match self.store.set_task_list(cid, &items).await {
+                    Ok(list) => {
+                        let summary = crate::tasks::summary(&list);
+                        self.sink.tasks_changed(list);
+                        text(summary)
+                    }
+                    Err(e) => ToolOutput::error(format!("The task list couldn't be saved: {e}")),
+                }
+            }
+            Builtin::RunCommand => {
+                let Some(shell) = shell else {
+                    return ToolOutput::error("The shell tool is off (Settings → Permissions).");
+                };
+                let limit = Duration::from_secs(u64::from(settings.shell.timeout_secs.max(1)));
+                match run_command(sandbox, shell, input, limit).await {
+                    Ok((t, failed)) => ToolOutput {
+                        content: vec![ContentBlock::text(t)],
+                        is_error: failed,
+                        duration_ms: 0,
+                    },
+                    Err(e) => ToolOutput::error(e),
+                }
+            }
+            _ => ToolOutput::error("This tool isn't a workspace tool."),
+        }
     }
 
     fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
@@ -1028,7 +1183,13 @@ impl ChatService {
                 entry.usage_kind(),
                 entry.server().map(str::to_owned),
                 entry.tool().to_owned(),
-                usage_label(entry.tool(), input),
+                match entry.kind {
+                    ToolKind::Builtin(Builtin::File(op)) => file_label(op, input),
+                    ToolKind::Builtin(Builtin::TaskList) => crate::tasks::parse_tasks(input)
+                        .ok()
+                        .and_then(|t| crate::tasks::label(&t)),
+                    _ => usage_label(entry.tool(), input),
+                },
                 out.is_error,
             )
             .await;
@@ -1796,6 +1957,7 @@ pub(crate) mod tests {
         pub events: Mutex<Vec<ChatStreamEvent>>,
         pub changed: Mutex<Vec<Conversation>>,
         pub memory_changes: AtomicUsize,
+        pub tasks: Mutex<Vec<TaskList>>,
         notify: tokio::sync::Notify,
     }
 
@@ -1810,6 +1972,10 @@ pub(crate) mod tests {
         }
         fn memory_changed(&self, _added: u32) {
             self.memory_changes.fetch_add(1, Ordering::SeqCst);
+            self.notify.notify_waiters();
+        }
+        fn tasks_changed(&self, list: TaskList) {
+            self.tasks.lock().expect("lock").push(list);
             self.notify.notify_waiters();
         }
     }
@@ -1896,6 +2062,7 @@ pub(crate) mod tests {
                 model: "lmstudio/fake-model".into(),
                 project_id: None,
                 attachments: Vec::new(),
+                folders: vec![],
             })
             .await
             .expect("chat");
@@ -2361,7 +2528,14 @@ pub(crate) mod tests {
         let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["web_fetch", "artifact", "fs__list", "fs__read", "fs__write"]
+            vec![
+                "web_fetch",
+                "artifact",
+                "task_list",
+                "fs__list",
+                "fs__read",
+                "fs__write"
+            ]
         );
         assert!(
             reqs[0]
@@ -2715,6 +2889,270 @@ pub(crate) mod tests {
             ]
         );
         assert_eq!(m.content.last(), Some(&ContentBlock::text("done")));
+    }
+
+    // ---- Agentic work: folders, file tools, task list, shell -------------------------------
+
+    fn result_of(m: &Message, id: &str) -> (String, bool) {
+        m.content
+            .iter()
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } if tool_use_id == id => Some((text_blocks(content), *is_error)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no result for {id}"))
+    }
+
+    #[tokio::test]
+    async fn workspace_tools_stay_in_granted_folders_and_ask_before_changes() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).expect("mkdir");
+        std::fs::create_dir_all(tmp.path().join("outside")).expect("mkdir");
+        std::fs::write(work.join("a.txt"), "alpha").expect("write");
+        std::fs::write(tmp.path().join("outside/secret.txt"), "no").expect("write");
+
+        let mut first = call(
+            "t1",
+            "task_list",
+            r#"{"tasks":[{"title":"Look","status":"in_progress"},{"title":"Sort","status":"pending"}]}"#,
+        );
+        first.extend(call("l1", "list_dir", "{}"));
+        first.extend(call(
+            "e1",
+            "read_file",
+            r#"{"path":"../outside/secret.txt"}"#,
+        ));
+        first.extend(call(
+            "m1",
+            "move_file",
+            r#"{"from":"a.txt","to":"Text/a.txt"}"#,
+        ));
+        first.extend(call("d1", "delete_file", r#"{"path":"Text"}"#));
+        let f = fixture(vec![
+            turn(first, StopReason::ToolUse),
+            turn(vec![text("Sorted.")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        let root = crate::tools::files::resolve_grant(&work.to_string_lossy()).expect("grant");
+        f.store
+            .add_chat_folder(&f.chat.id, &root)
+            .await
+            .expect("adds");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Only the changes ask: the move and the delete.
+        let mv = wait_approval(&f, "m1").await;
+        assert_eq!(mv.tool, "move_file");
+        assert!(mv.server.is_none());
+        let del = wait_approval(&f, "d1").await;
+        assert!(del.destructive);
+        assert_eq!(f.service.pending_approvals().len(), 2);
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "m1", ApprovalDecision::AllowOnce)
+        );
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "d1", ApprovalDecision::Deny)
+        );
+        f.sink.wait_finished().await;
+
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        for t in [
+            "task_list",
+            "list_dir",
+            "read_file",
+            "move_file",
+            "delete_file",
+        ] {
+            assert!(names.contains(&t), "{t} in {names:?}");
+        }
+        assert!(
+            !names.contains(&"run_command"),
+            "the shell is off by default"
+        );
+        let system = reqs[0].system.as_deref().expect("system");
+        assert!(
+            system.contains(&format!("<shared_folders>\n- {root}\n")),
+            "{system}"
+        );
+        assert!(system.contains("task_list"), "{system}");
+
+        let m = saved(&f);
+        assert!(result_of(&m, "t1").0.contains("0 of 2 done"));
+        assert!(result_of(&m, "l1").0.contains("a.txt"));
+        let (escape, err) = result_of(&m, "e1");
+        assert!(err && escape.contains("outside"), "{escape}");
+        assert!(!result_of(&m, "m1").1);
+        assert!(work.join("Text/a.txt").exists(), "moved");
+        assert!(result_of(&m, "d1").1, "denied");
+        assert!(work.join("Text").exists(), "not deleted");
+
+        let tasks = f.sink.tasks.lock().expect("lock").clone();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            f.store
+                .task_list(&f.chat.id)
+                .await
+                .expect("list")
+                .items
+                .len(),
+            2
+        );
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        let kinds: Vec<(ToolUsageKind, Option<String>)> =
+            used.iter().map(|u| (u.kind, u.label.clone())).collect();
+        assert!(
+            kinds.contains(&(ToolUsageKind::Tasks, Some("Look".into()))),
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&(ToolUsageKind::File, Some("a.txt → Text/a.txt".into()))));
+        assert!(kinds.contains(&(ToolUsageKind::File, Some(".".into()))));
+    }
+
+    #[tokio::test]
+    async fn no_folders_no_file_tools_and_switches_apply() {
+        let f = fixture(vec![
+            turn(vec![text("Hi.")], StopReason::EndTurn),
+            title_step(),
+            turn(vec![text("Again.")], StopReason::EndTurn),
+        ])
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.shell.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let names: Vec<String> = f.fake.requests()[0]
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert!(names.contains(&"task_list".to_owned()));
+        assert!(
+            !names.iter().any(|n| n == "list_dir" || n == "run_command"),
+            "{names:?}"
+        );
+
+        // With a folder, but files and the task list switched off in the chat.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let root =
+            crate::tools::files::resolve_grant(&tmp.path().to_string_lossy()).expect("grant");
+        f.store
+            .add_chat_folder(&f.chat.id, &root)
+            .await
+            .expect("adds");
+        f.store
+            .set_chat_tools(
+                &f.chat.id,
+                &oxide_core::ChatTools {
+                    disabled_builtins: vec!["files".into(), "task_list".into()],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("switches");
+        f.sink.events.lock().expect("lock").clear();
+        f.service
+            .regenerate(&f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs
+            .last()
+            .expect("req")
+            .tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(names.contains(&"run_command"), "{names:?}");
+        assert!(
+            !names.contains(&"list_dir") && !names.contains(&"task_list"),
+            "{names:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_commands_ask_unless_allowlisted_one_command_at_a_time() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let mut first = call("s1", "run_command", r#"{"command":"echo hi"}"#);
+        first.extend(call(
+            "s2",
+            "run_command",
+            r#"{"command":"echo hi > out.txt"}"#,
+        ));
+        first.extend(call("s3", "run_command", r#"{"command":"pwd"}"#));
+        let mut second = call("s4", "run_command", r#"{"command":"pwd"}"#);
+        second.extend(call("s5", "run_command", r#"{"command":"ls"}"#));
+        let f = fixture(vec![
+            turn(first, StopReason::ToolUse),
+            turn(second, StopReason::ToolUse),
+            turn(vec![text("Done.")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.shell.enabled = true;
+        settings.shell.allowlist = vec!["echo".into()];
+        f.store.save_app_settings(settings).await.expect("saves");
+        let root =
+            crate::tools::files::resolve_grant(&tmp.path().to_string_lossy()).expect("grant");
+        f.store
+            .add_chat_folder(&f.chat.id, &root)
+            .await
+            .expect("adds");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // `echo hi` is allowlisted; a redirect isn't, nor is `pwd`.
+        wait_approval(&f, "s2").await;
+        wait_approval(&f, "s3").await;
+        assert_eq!(f.service.pending_approvals().len(), 2);
+        // "Allow always" for `pwd` doesn't answer the other command's card.
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "s3", ApprovalDecision::AllowChat)
+        );
+        assert_eq!(f.service.pending_approvals().len(), 1);
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "s2", ApprovalDecision::Deny)
+        );
+        // Next step: `pwd` runs without asking now, `ls` asks.
+        wait_approval(&f, "s5").await;
+        assert_eq!(f.service.pending_approvals().len(), 1);
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "s5", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert!(result_of(&m, "s1").0.contains("hi"));
+        assert!(result_of(&m, "s2").1);
+        assert!(!tmp.path().join("out.txt").exists());
+        assert!(result_of(&m, "s4").0.contains("Exit code 0"));
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(
+            used.iter()
+                .any(|u| u.kind == ToolUsageKind::Shell && u.label.as_deref() == Some("echo hi"))
+        );
+        let system = f.fake.requests()[0].system.clone().unwrap_or_default();
+        assert!(system.contains("run_command (sh"), "{system}");
     }
 
     // ---- Projects & memory ---------------------------------------------------------------

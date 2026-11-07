@@ -128,6 +128,7 @@ mod tests {
             model: "m".into(),
             project_id: None,
             attachments: Vec::new(),
+            folders: vec![],
         })
         .await
         .expect("creates")

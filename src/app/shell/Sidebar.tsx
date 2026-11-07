@@ -15,7 +15,9 @@ import { InlineRename } from "@/components/InlineRename";
 import { MenuContent, MenuRoot, MenuTrigger } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ChatMenuItems } from "@/features/chat/ChatMenuItems";
+import { useStreams } from "@/features/chat/streams";
 import { useExportChat } from "@/features/chat/useExportChat";
+import { usePendingApprovals } from "@/features/tools/queries";
 import type { Conversation } from "@/bindings";
 import {
   useConversations,
@@ -165,6 +167,38 @@ function Section({
   );
 }
 
+/**
+ * A chat's state in the sidebar: "Needs input" while a tool call waits for approval (also
+ * for replies running in the background), a dot while a reply is being written.
+ */
+function ChatStatus({ id }: { id: string }) {
+  const { data } = usePendingApprovals(true);
+  const waitingLive = useStreams(
+    (s) =>
+      s.live[id]?.blocks.some((b) => b.kind === "tool" && b.call.status === "awaitingApproval") ??
+      false,
+  );
+  const running = useStreams((s) => s.live[id] !== undefined);
+  const needsInput = waitingLive || (data ?? []).some((r) => r.conversationId === id);
+  if (needsInput) {
+    return (
+      <span className="ml-auto shrink-0 rounded-full bg-accent-soft px-1.5 py-px text-xs font-medium text-accent group-hover:opacity-0">
+        Needs input
+      </span>
+    );
+  }
+  if (running) {
+    return (
+      <span
+        role="status"
+        aria-label="Working"
+        className="ml-auto size-2 shrink-0 animate-pulse rounded-full bg-accent group-hover:opacity-0"
+      />
+    );
+  }
+  return null;
+}
+
 function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
   const star = useStarConversation();
   const rename = useRenameConversation();
@@ -202,9 +236,10 @@ function ChatRow({ convo, active }: { convo: Conversation; active: boolean }) {
       <NavLink
         to={`/chat/${convo.id}`}
         title={convo.title}
-        className="flex h-full min-w-0 flex-1 items-center pl-2.5 pr-8 text-md text-fg"
+        className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2.5 pr-8 text-md text-fg"
       >
         <span className="truncate">{convo.title}</span>
+        <ChatStatus id={convo.id} />
       </NavLink>
       <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
         <Tooltip label="More options">

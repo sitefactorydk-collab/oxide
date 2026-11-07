@@ -6,6 +6,7 @@ import { useBranches } from "@/features/chat/branches";
 import { resetMcpUi } from "@/features/mcp/store";
 import { resetExtensionDrop } from "@/features/extensions/store";
 import { resetStreams } from "@/features/chat/streams";
+import { resetWorkspaceUi } from "@/features/workspace/store";
 import { useToasts } from "@/lib/toast";
 import { createMemoryStorage, isUsableStorage } from "@/lib/storage";
 
@@ -69,4 +70,5 @@ afterEach(() => {
   resetMcpUi();
   resetExtensionDrop();
   resetArtifactPanel();
+  resetWorkspaceUi();
 });

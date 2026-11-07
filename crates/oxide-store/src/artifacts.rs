@@ -344,6 +344,7 @@ mod tests {
             model: "anthropic/sonnet".into(),
             project_id: None,
             attachments: Vec::new(),
+            folders: vec![],
         })
         .await
         .expect("starts")

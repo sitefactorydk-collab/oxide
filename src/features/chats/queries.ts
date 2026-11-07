@@ -17,6 +17,7 @@ import {
 } from "@/bindings";
 import { unwrap } from "@/lib/api";
 import { applyDraftChatTools } from "@/features/mcp/chatTools";
+import { useDraftFolders } from "@/features/workspace/store";
 
 /** Query keys for chat data. */
 export const chatKeys = {
@@ -159,8 +160,15 @@ export function useStartConversation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { input: StartConversation; options: GenerateOptions }) =>
-      unwrap(commands.startConversation(v.input, v.options)),
-    onSuccess: (c) => {
+      unwrap(
+        commands.startConversation(
+          // Folders picked before the chat existed are granted with it.
+          { ...v.input, folders: v.input.folders ?? useDraftFolders.getState().folders },
+          v.options,
+        ),
+      ),
+    onSuccess: (c, v) => {
+      if (v.input.folders === undefined) useDraftFolders.getState().clear();
       patchList(qc, (list) => sortByUpdated([c, ...list.filter((x) => x.id !== c.id)]));
       // Tool switches chosen before the chat existed.
       applyDraftChatTools(qc, c.id);

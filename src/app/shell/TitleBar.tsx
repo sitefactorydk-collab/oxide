@@ -29,6 +29,8 @@ import {
 } from "@/features/chats/queries";
 import { useProject, useProjects } from "@/features/projects/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
+import { StepPill } from "@/features/workspace/StepPill";
+import { useSessionPanel } from "@/features/workspace/store";
 import { cn } from "@/lib/cn";
 import { platform } from "@/lib/platform";
 import { useUi } from "@/stores/ui";
@@ -44,8 +46,6 @@ export function TitleBar({ pagePath }: { pagePath: string }) {
   const sidebarOpen = useUi((s) => s.sidebarOpen);
   const sidebarWidth = useUi((s) => s.sidebarWidth);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
-  const rightPanelOpen = useUi((s) => s.rightPanelOpen);
-  const toggleRightPanel = useUi((s) => s.toggleRightPanel);
   const navigate = useNavigate();
 
   const chatMatch = matchPath("/chat/:id", pagePath);
@@ -87,20 +87,29 @@ export function TitleBar({ pagePath }: { pagePath: string }) {
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2 pl-4">
         <Breadcrumb pagePath={pagePath} />
         <div data-tauri-drag-region className="h-full min-w-4 flex-1" />
-        {chatMatch && (
-          <IconButton
-            label={rightPanelOpen ? "Hide chat details" : "Show chat details"}
-            active={rightPanelOpen}
-            onClick={toggleRightPanel}
-          >
-            <PanelRight className="size-[18px]" />
-          </IconButton>
-        )}
+        {chatMatch?.params.id && <ChatPanelButtons conversationId={chatMatch.params.id} />}
         <div className={cn(platform === "windows" ? "w-1" : "w-2")} />
       </div>
 
       {platform === "windows" && <WindowControls />}
     </header>
+  );
+}
+
+/** The "Step n of m" pill and the session panel button of a chat. */
+function ChatPanelButtons({ conversationId }: { conversationId: string }) {
+  const panel = useSessionPanel(conversationId);
+  return (
+    <>
+      <StepPill conversationId={conversationId} />
+      <IconButton
+        label={panel.open ? "Hide chat details" : "Show chat details"}
+        active={panel.open}
+        onClick={panel.toggle}
+      >
+        <PanelRight className="size-[18px]" />
+      </IconButton>
+    </>
   );
 }
 

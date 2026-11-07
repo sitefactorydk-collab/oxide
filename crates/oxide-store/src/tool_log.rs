@@ -13,6 +13,9 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::ProjectSearch => "projectSearch",
         ToolUsageKind::Artifact => "artifact",
         ToolUsageKind::Skill => "skill",
+        ToolUsageKind::File => "file",
+        ToolUsageKind::Shell => "shell",
+        ToolUsageKind::Tasks => "tasks",
     }
 }
 
@@ -24,6 +27,9 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "projectSearch" => ToolUsageKind::ProjectSearch,
         "artifact" => ToolUsageKind::Artifact,
         "skill" => ToolUsageKind::Skill,
+        "file" => ToolUsageKind::File,
+        "shell" => ToolUsageKind::Shell,
+        "tasks" => ToolUsageKind::Tasks,
         _ => ToolUsageKind::Connector,
     }
 }
@@ -199,6 +205,7 @@ mod tests {
                 model: "p/m".into(),
                 project_id: None,
                 attachments: vec![],
+                folders: vec![],
             })
             .await
             .expect("chat");

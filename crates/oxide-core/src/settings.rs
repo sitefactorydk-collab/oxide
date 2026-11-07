@@ -195,6 +195,34 @@ impl Default for DesktopSettings {
     }
 }
 
+/// Default time limit of one shell command, in seconds.
+pub const DEFAULT_SHELL_TIMEOUT_SECS: u32 = 120;
+/// Longest time limit Settings accepts for one shell command, in seconds.
+pub const MAX_SHELL_TIMEOUT_SECS: u32 = 3_600;
+
+/// The shell tool (Settings → Permissions). Off by default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ShellSettings {
+    /// Models may run commands in a chat's granted folders (`run_command`).
+    pub enabled: bool,
+    /// Commands that run without asking: a command whose start matches an entry word by
+    /// word (`git status` allows `git status -s`, not `git push`). Everything else asks.
+    pub allowlist: Vec<String>,
+    /// Time limit of one command, in seconds.
+    pub timeout_secs: u32,
+}
+
+impl Default for ShellSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allowlist: Vec::new(),
+            timeout_secs: DEFAULT_SHELL_TIMEOUT_SECS,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
@@ -206,6 +234,7 @@ pub struct AppSettings {
     pub projects: ProjectSettings,
     pub memory: MemorySettings,
     pub desktop: DesktopSettings,
+    pub shell: ShellSettings,
 }
 
 impl AppSettings {
@@ -238,6 +267,17 @@ impl AppSettings {
             .trim()
             .trim_end_matches('/')
             .to_owned();
+        self.shell.timeout_secs = self.shell.timeout_secs.clamp(1, MAX_SHELL_TIMEOUT_SECS);
+        let mut allow: Vec<String> = Vec::new();
+        for entry in &self.shell.allowlist {
+            let e = entry.split_whitespace().collect::<Vec<_>>().join(" ");
+            let e: String = e.chars().take(200).collect();
+            if !e.is_empty() && !allow.contains(&e) {
+                allow.push(e);
+            }
+        }
+        allow.truncate(100);
+        self.shell.allowlist = allow;
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());
@@ -254,6 +294,17 @@ mod tests {
         let s: AppSettings = serde_json::from_str(r#"{"profile":{"name":"Ada"}}"#).expect("parses");
         assert_eq!(s.profile.name, "Ada");
         assert_eq!(s.appearance, AppearanceSettings::default());
+    }
+
+    #[test]
+    fn shell_settings_are_cleaned() {
+        let mut s = AppSettings::default();
+        assert!(!s.shell.enabled);
+        s.shell.timeout_secs = 0;
+        s.shell.allowlist = vec!["  git   status ".into(), "".into(), "git status".into()];
+        let s = s.normalized();
+        assert_eq!(s.shell.timeout_secs, 1);
+        assert_eq!(s.shell.allowlist, vec!["git status".to_owned()]);
     }
 
     #[test]

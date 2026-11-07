@@ -73,7 +73,16 @@ interface StreamsState {
   /** Closes an approval card as soon as the user answers it. */
   markAnswered: (conversationId: string, toolUseId: string, allowed: boolean) => void;
   /** "Allow always": closes every waiting card of the same tool in the chat. */
-  markToolAllowed: (conversationId: string, server: string | null, tool: string) => void;
+  /**
+   * "Allow always for this chat": the tool's other waiting cards close too. Shell commands
+   * are allowed one command at a time, so only cards with the same arguments close.
+   */
+  markToolAllowed: (
+    conversationId: string,
+    server: string | null,
+    tool: string,
+    inputJson?: string,
+  ) => void;
 }
 
 type Maps = Pick<StreamsState, "live" | "failures">;
@@ -258,15 +267,17 @@ export const useStreams = create<StreamsState>()((set) => ({
       );
       return { live: { ...s.live, [id]: { ...live, blocks } } };
     }),
-  markToolAllowed: (id, server, tool) =>
+  markToolAllowed: (id, server, tool, inputJson) =>
     set((s) => {
       const live = s.live[id];
       if (!live) return s;
+      const perCommand = server === null && tool === "run_command";
       const blocks = live.blocks.map((b) =>
         b.kind === "tool" &&
         b.call.status === "awaitingApproval" &&
         b.call.server === server &&
-        b.call.tool === tool
+        b.call.tool === tool &&
+        (!perCommand || b.call.approval?.inputJson === inputJson)
           ? { ...b, call: { ...b.call, approval: null, status: "approved" as const } }
           : b,
       );

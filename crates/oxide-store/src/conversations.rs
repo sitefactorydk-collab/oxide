@@ -121,6 +121,9 @@ impl Store {
         .await
         .map_err(|e| map_fk(e, "project"))?;
         insert_message(&mut tx, &message).await?;
+        for folder in &input.folders {
+            crate::workspace::insert_folder(&mut tx, &convo.id, folder).await?;
+        }
         tx.commit().await?;
         Ok((convo, message))
     }
@@ -225,6 +228,7 @@ mod tests {
             model: "anthropic/sonnet".into(),
             project_id: None,
             attachments: Vec::new(),
+            folders: vec![],
         }
     }
 

@@ -17,6 +17,8 @@ import { findListing, findModel } from "@/features/models/models";
 import { useModels } from "@/features/models/queries";
 import { isExtensionFile, useExtensionDrop } from "@/features/extensions/store";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
+import { useFolderControls } from "@/features/workspace/folders";
+import { FolderChips } from "@/features/workspace/FolderChips";
 import { cn } from "@/lib/cn";
 import { inTauri } from "@/lib/platform";
 import { EffortMenu, ThinkingToggle } from "./ReasoningControls";
@@ -65,6 +67,7 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const files = useAttachments();
+  const folders = useFolderControls(conversationId);
   const { data: models } = useModels();
   const model = findModel(models, modelId);
   const providerKind = findListing(models, modelId)?.providerKind;
@@ -178,6 +181,7 @@ export function Composer({
     <>
       <PlusMenu
         onPickFiles={pickFiles}
+        onPickFolder={() => void folders.pick()}
         limits={files.limits}
         conversationId={conversationId}
         onAttach={files.addPrepared}
@@ -198,6 +202,7 @@ export function Composer({
           variant === "home" ? "px-3 pb-2.5 pt-3.5" : "px-3 py-2",
         )}
       >
+        <FolderChips folders={folders.folders} onRemove={folders.remove} />
         {files.items.length > 0 && (
           <AttachmentChips
             items={files.items}

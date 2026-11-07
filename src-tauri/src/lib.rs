@@ -30,7 +30,7 @@ const BINDINGS_HEADER: &str =
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         artifacts, attachments, chats, desktop, extensions, mcp, memory, models, projects,
-        providers, settings, system, tools,
+        providers, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -38,6 +38,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::ConversationUpdated,
             events::McpChanged,
             events::MemoryChanged,
+            events::TaskListChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -124,6 +125,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             tools::web_search_keys,
             tools::set_web_search_key,
             tools::test_web_search,
+            // Agentic work: folders and the task list
+            workspace::resolve_folder,
+            workspace::chat_workspace,
+            workspace::add_chat_folder,
+            workspace::remove_chat_folder,
+            workspace::set_chat_allow_delete,
+            workspace::chat_task_list,
+            workspace::open_chat_folder,
             // System
             system::open_external,
             // Desktop integration

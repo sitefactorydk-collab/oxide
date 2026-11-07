@@ -205,6 +205,14 @@ pub struct PromptContext<'a> {
     pub memory: Option<&'a str>,
     /// The skills the model may load, as `- name: description` lines (`load_skill` is on).
     pub skills: Option<&'a str>,
+    /// Folders the user shared with the chat (the file tools are on).
+    pub folders: Vec<String>,
+    /// `delete_file` deletes for good instead of moving things into `_to_delete`.
+    pub delete_for_good: bool,
+    /// The shell `run_command` uses, when the shell tool is on.
+    pub shell: Option<&'a str>,
+    /// The `task_list` tool is on.
+    pub task_list: bool,
 }
 
 fn os_name(os: &str) -> &str {
@@ -298,6 +306,37 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                  call the artifact tool again with its id instead of writing it out again.",
             );
         }
+    }
+    if !ctx.folders.is_empty() {
+        let list: Vec<String> = ctx.folders.iter().map(|f| format!("- {f}")).collect();
+        s.push_str(&format!(
+            "\n\n<shared_folders>\n{}\n</shared_folders>\nThe user shared these folders on \
+             their computer with this chat. You can list, read and search files in them \
+             (list_dir, read_file, search_files) and change them (write_file, edit_file, \
+             move_file, delete_file; the user approves changes). Nothing outside these folders \
+             can be reached. Look before you change things, and don't delete or overwrite \
+             anything the user didn't ask you to.{}",
+            list.join("\n"),
+            if ctx.delete_for_good {
+                " delete_file deletes for good."
+            } else {
+                " delete_file moves things into a _to_delete folder the user can empty."
+            }
+        ));
+        if let Some(shell) = ctx.shell {
+            s.push_str(&format!(
+                " You can also run commands there with run_command ({shell}); prefer the file \
+                 tools for reading and changing files."
+            ));
+        }
+    }
+    if ctx.task_list {
+        s.push_str(
+            "\n\nFor work with several steps (more than two tool calls, or anything the user \
+             would want to follow), first make a plan with the task_list tool, then keep it \
+             up to date as you go: mark each step in_progress when you start it and done when \
+             it's finished. When everything is done, tell the user what you did.",
+        );
     }
     if let Some(list) = ctx.skills.map(str::trim).filter(|l| !l.is_empty()) {
         s.push_str(&format!(
@@ -654,6 +693,7 @@ mod tests {
             knowledge_search: Vec::new(),
             memory: None,
             skills: None,
+            ..PromptContext::default()
         });
         assert!(
             p.contains("Friday 2026-11-06, 20:10 (Europe/Copenhagen, UTC+01:00)"),

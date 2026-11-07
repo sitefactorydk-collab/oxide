@@ -14,6 +14,7 @@ pub mod providers;
 pub mod settings;
 pub mod system;
 pub mod tools;
+pub mod workspace;
 
 use serde::Serialize;
 use specta::Type;

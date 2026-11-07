@@ -33,12 +33,18 @@ pub async fn get_conversation(state: State<'_, AppState>, id: String) -> CmdResu
 #[specta::specta]
 pub async fn start_conversation(
     state: State<'_, AppState>,
-    input: StartConversation,
+    mut input: StartConversation,
     options: GenerateOptions,
 ) -> CmdResult<Conversation> {
     if input.text.trim().is_empty() && input.attachments.is_empty() {
         return Err(CommandError::Invalid("the message is empty".into()));
     }
+    // Folders are granted with the chat, so the first reply already has its file tools.
+    let mut folders = Vec::new();
+    for f in std::mem::take(&mut input.folders) {
+        folders.push(crate::commands::workspace::resolve_folder(f).await?);
+    }
+    input.folders = folders;
     // Only files Oxide prepared (in its attachments folder) can be sent.
     state.attachments.blocks(&input.attachments)?;
     let (conversation, first) = state.store.start_conversation(input).await?;

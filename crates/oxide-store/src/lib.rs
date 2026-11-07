@@ -17,6 +17,7 @@ mod search;
 pub mod secrets;
 mod settings;
 mod tool_log;
+mod workspace;
 
 use std::path::Path;
 use std::str::FromStr;
@@ -34,6 +35,7 @@ pub use secrets::{
     set_large,
 };
 pub use tool_log::NewToolUsage;
+pub use workspace::folder_name;
 
 /// File name of the database inside the app data directory.
 pub const DB_FILE_NAME: &str = "oxide.db";
@@ -150,6 +152,7 @@ mod tests {
                     model: "anthropic/sonnet".into(),
                     project_id: None,
                     attachments: Vec::new(),
+                    folders: vec![],
                 })
                 .await
                 .expect("creates");

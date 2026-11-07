@@ -311,7 +311,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 **Exit:** a sample `.mcpb` installs, configures and runs, and a sample skill is discovered and used by the model.
 
 ### Phase 11 — Agentic tasks (Cowork-style)
-- **Folder grants:** the user adds folders to a chat (picker). Built-in file tools (`list_dir`, `read_file`, `write_file`, `edit_file`, `search`, `move`) are confined to granted roots after symlink and `..` resolution. Delete needs per-chat permission and moves files to a `_to_delete` folder by default.
+- **Folder grants:** the user adds folders to a chat (picker). Built-in file tools (`list_dir`, `read_file`, `search_files`, `write_file`, `edit_file`, `move_file`, `delete_file`; names changed in Phase 11, see PROGRESS.md) are confined to granted roots after symlink and `..` resolution. Reading never asks; changes ask. Delete moves files to a `_to_delete` folder by default, or deletes for good when the chat allows it.
 - **Session side panel** (extends the right-hand "In this chat" panel; requested by the user after Phase 4, modelled on Claude desktop's visible behavior):
   - **Progress:** a `task_list` tool (create/update) renders the chat's steps with live status (pending / in progress / done) and a "Step n of m" pill in the title bar that opens the panel.
   - **Used in this session:** a list built from the Phase 6 usage log: web searches (with the query), web fetches, MCP connectors and their tools, files and granted folders, the linked computer or browser. Repeated uses of the same kind collapse into one row with a count or source icons; clicking a row scrolls to the tool call in the transcript.

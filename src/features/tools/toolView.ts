@@ -158,6 +158,15 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   if (call.tool === "web_search") return str("query") ?? "";
   if (call.tool === "web_fetch") return str("url") ?? "";
   if (call.tool === "project_search") return str("query") ?? "";
+  if (call.server === null && call.tool === "move_file") {
+    const from = str("from") ?? str("source") ?? "";
+    const to = str("to") ?? str("destination") ?? "";
+    return from && to ? `${from} → ${to}` : from || to;
+  }
+  if (call.server === null && call.tool === "search_files") {
+    return str("text") ?? str("query") ?? str("name") ?? "";
+  }
+  if (call.server === null && call.tool === "task_list") return taskDetail(input);
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -171,7 +180,35 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   return typeof first === "string" ? first : "";
 }
 
-export type ToolKind = "search" | "fetch" | "project" | "artifact" | "skill" | "connector";
+/** "Now: <step>" or "n of m done" for a task_list call. */
+function taskDetail(input: Record<string, unknown>): string {
+  const list = input.tasks ?? input.todos ?? input.items ?? input.steps;
+  if (!Array.isArray(list) || list.length === 0) return "";
+  const steps = list.map((t: unknown) => {
+    if (typeof t === "string") return { title: t, status: "pending" };
+    const o = (t ?? {}) as Record<string, unknown>;
+    const title = [o.title, o.content, o.name, o.step].find((v) => typeof v === "string");
+    const status = typeof o.status === "string" ? o.status.toLowerCase() : "pending";
+    return { title: (title as string | undefined) ?? "", status };
+  });
+  const isDone = (st: string) => ["done", "completed", "complete", "finished"].includes(st);
+  const done = steps.filter((t) => isDone(t.status)).length;
+  return `${done} of ${steps.length} done`;
+}
+
+/** Oxide's file tools (Phase 11): verbs while running and after. */
+export const FILE_TOOL_VERBS: Record<string, [string, string]> = {
+  list_dir: ["Listing", "Listed"],
+  read_file: ["Reading", "Read"],
+  search_files: ["Searching files for", "Searched files for"],
+  write_file: ["Writing", "Wrote"],
+  edit_file: ["Editing", "Edited"],
+  move_file: ["Moving", "Moved"],
+  delete_file: ["Deleting", "Deleted"],
+};
+
+export type ToolKind =
+  "search" | "fetch" | "project" | "artifact" | "skill" | "file" | "tasks" | "shell" | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
   if (call.tool === "web_search" && (call.server === null || call.server === "anthropic")) {
@@ -181,6 +218,9 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.tool === "project_search" && call.server === null) return "project";
   if (call.tool === "artifact" && call.server === null) return "artifact";
   if (call.tool === "load_skill" && call.server === null) return "skill";
+  if (call.server === null && call.tool in FILE_TOOL_VERBS) return "file";
+  if (call.server === null && call.tool === "task_list") return "tasks";
+  if (call.server === null && call.tool === "run_command") return "shell";
   return "connector";
 }
 
@@ -206,6 +246,14 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       return { action: busy ? "Writing artifact" : "Artifact", detail };
     case "skill":
       return { action: busy ? "Loading skill" : "Loaded skill", detail };
+    case "file": {
+      const [doing, did] = FILE_TOOL_VERBS[call.tool] ?? ["Using", "Used"];
+      return { action: busy ? doing : did, detail: detail || "folder" };
+    }
+    case "tasks":
+      return { action: busy ? "Updating task list" : "Updated task list", detail };
+    case "shell":
+      return { action: busy ? "Running" : "Ran", detail };
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -229,6 +277,8 @@ export interface UsageRow {
 export function usageRows(usage: ToolUsage[]): UsageRow[] {
   const rows = new Map<string, UsageRow>();
   for (const u of usage) {
+    // The task list has its own section ("Progress").
+    if (u.kind === "tasks") continue;
     const key =
       u.kind === "connector"
         ? `connector:${u.server ?? ""}`
@@ -248,7 +298,11 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                 ? "Artifacts"
                 : u.kind === "skill"
                   ? "Skills"
-                  : (u.server ?? "Connector");
+                  : u.kind === "file"
+                    ? "Files"
+                    : u.kind === "shell"
+                      ? "Commands"
+                      : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

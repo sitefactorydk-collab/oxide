@@ -1,6 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import {
   FileText,
+  FolderPlus,
   Globe,
   MessageSquareText,
   Paperclip,
@@ -42,16 +43,19 @@ import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { unwrap } from "@/lib/api";
 
 /**
- * Composer "+" menu: attach files; switch connectors and single tools on or off for this
+ * Composer "+" menu: attach files; share a folder; switch connectors and single tools on or off for this
  * chat; attach an MCP prompt or resource as context; web search (and web fetch) on or off.
  */
 export function PlusMenu({
   onPickFiles,
+  onPickFolder,
   limits,
   conversationId,
   onAttach,
 }: {
   onPickFiles: () => void;
+  /** Shares a folder with the chat (its file tools work there). */
+  onPickFolder: () => void;
   limits: AttachmentLimits;
   /** The chat being written in; `undefined` for a new chat (switches are kept as a draft). */
   conversationId?: string;
@@ -100,6 +104,15 @@ export function PlusMenu({
                 Up to {limits.maxFiles} files · images {formatBytes(limits.maxImageBytes)} · PDFs{" "}
                 {formatBytes(limits.maxPdfBytes)} / {limits.maxPdfPages} pages · text{" "}
                 {formatBytes(limits.maxTextBytes)}
+              </span>
+            </span>
+          </MenuItem>
+          <MenuItem onSelect={onPickFolder}>
+            <FolderPlus />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span>Add folder</span>
+              <span className="text-xs leading-4 text-fg-subtle">
+                Lets Oxide read and, with your approval, change files there
               </span>
             </span>
           </MenuItem>

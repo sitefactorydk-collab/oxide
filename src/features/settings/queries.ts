@@ -8,6 +8,7 @@ import {
   type MemorySettings,
   type ModelSettings,
   type ProjectSettings,
+  type ShellSettings,
   type ThemePref,
   type ToolSettings,
   type WebSearchSettings,
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     launchAtLogin: false,
     notifications: true,
   },
+  shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
 };
 
 export function useSettings() {
@@ -132,6 +134,12 @@ export function useSetModelSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ModelSettings>) =>
     update((s) => ({ ...s, models: { ...s.models, ...patch } }));
+}
+
+export function useSetShellSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ShellSettings>) =>
+    update((s) => ({ ...s, shell: { ...s.shell, ...patch } }));
 }
 
 export function useSetToolSettings() {

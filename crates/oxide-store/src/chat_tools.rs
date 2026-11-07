@@ -48,6 +48,7 @@ mod tests {
                 model: "p/m".into(),
                 project_id: None,
                 attachments: vec![],
+                folders: vec![],
             })
             .await
             .expect("chat");

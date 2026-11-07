@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 10 — Extensions (.mcpb) & Skills (`6ccbc48`; exit check passed on Windows on 2026-11-07)
-- **Next phase:** Phase 11 — Agentic tasks (Cowork-style)
+- **Current phase:** Phase 11 — Agentic tasks (Cowork-style): implemented; `scripts\win\phase11.cmd` and the manual exit check on Windows are pending
+- **Next phase:** Phase 12 — Managed Python (uv) & code execution (after Phase 11's exit check)
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -27,6 +28,59 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
 - **Syncing many files into the linked folder** (added in Phase 8): without delete permission, `tar x` fails on existing files (it unlinks first); `tar xzf <file> --overwrite` writes them in place.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 11 — Agentic tasks (Cowork-style) — 2026-11-07
+Status: implemented; waiting for `scripts\win\phase11.cmd` (checks, Vitest, build, commit) and the exit check by hand on Windows. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
+
+First Windows run (2026-11-07): fmt, prettier, clippy, cargo test, typecheck, lint and the vite build passed; 4 of 186 Vitest tests failed, all in the new `Workspace.test.tsx` and all test-side:
+- The “+” menu was opened with `pointerDown`, which Radix ignores under jsdom; it now opens with Enter on the trigger, like the other tests.
+- “Allowed in this chat” expected a new approval to refresh the list, but the app refreshes it when an approval is answered. The test now answers a card with “Always allow this command”, and the fake backend stores real grant keys (`server/tool`, `builtin/tool`, `builtin/run_command:<command>`).
+- The shell approval test didn't send the `toolUse` event that opens a tool block, and didn't wait for the held reply; both added.
+
+Exit criteria (check by hand in `cargo tauri dev`; `phase11.ps1` makes `Documents\Oxide sample folder` with ten mixed files the first time it runs):
+- [ ] **Organize a folder end to end.** New chat → “+” → **Add folder** → `Documents\Oxide sample folder` (a folder chip shows above the text). Ask: “Organize this folder by file type and write a summary.md of what's in it.”
+  - The title bar shows a **Step n of m** pill and the right-hand panel opens on **Progress** with the plan; steps tick off live (in progress → done).
+  - `list_dir`/`read_file`/`search_files` run without cards. Every `move_file` and `write_file` shows an approval card (“Allow always for this chat” then covers the rest of that tool's moves).
+  - **Used in this session** fills in: files and folders (with a count), the task list; clicking a row scrolls to the call. **Allowed in this chat** lists the “Allow always” choices; ✕ takes one back.
+  - The folder ends up sorted into subfolders with a `summary.md`.
+- [ ] **Delete.** “Delete ideas.md.” → an approval card marked destructive; after Allow, the file is in `_to_delete\` inside the shared folder. Tick **Delete for good** in the panel's Folders section and repeat with another file: it's gone.
+- [ ] **Path escapes are blocked.** “Read C:\Windows\win.ini” and “Read ..\..\something” → the tool answers that the path is outside the shared folders (also covered by tests: `escapes_are_refused`, `links_out_of_the_grant_are_refused`, `workspace_tools_stay_in_granted_folders_and_ask_before_changes`).
+- [ ] **Shell (off by default).** Settings → Permissions → Shell commands → on; add `Get-ChildItem` to the allowlist. In the sample folder's chat: “List the files with Get-ChildItem, then run `New-Item test.txt`.” → the first runs without asking, the second asks; “Allow always” there allows only that exact command.
+- [ ] **Long-running.** Start the organize prompt, then hide Oxide (✕ to the tray): an approval card notifies (Phase 9), and the sidebar row shows **Needs input** while a card waits and a pulsing dot while it works. A finished reply notifies.
+- [ ] The panel's open/closed state is remembered per chat (close it in one chat, open another, come back).
+
+Done:
+- **`oxide-core`:** `workspace.rs`: tool names (`list_dir`, `read_file`, `search_files`, `write_file`, `edit_file`, `move_file`, `delete_file`, `task_list`, `run_command`), `FILES_SWITCH` (`disabledBuiltins: ["files"]` switches all file tools off in a chat), `TO_DELETE_DIR`, limits (20 folders, 50 tasks, 200-character titles); `ChatFolder`, `ChatWorkspace { folders, allowDelete }`, `TaskStatus` (forgiving `parse`), `TaskItem`, `TaskList` (`progress`, `current`), `clean_task_title`, `command_allowed` (allowlist matched word by word; commands with `;`, `&`, `|`, `>`, `<`, backticks, line breaks or `$(` always ask). `StartConversation.folders` (granted before the first reply). Settings: `shell { enabled (off), allowlist, timeoutSecs (120, 1–3600) }`. `ToolUsageKind::File | Shell | Tasks`.
+- **`oxide-store`:** migration `0008_workspace.sql`: `chat_folders`, `chat_workspace` (`allow_delete`), `chat_tasks` (JSON items); all cascade with the chat. `chat_workspace`, `add_chat_folder` (≤ 20), `remove_chat_folder`, `set_chat_allow_delete`, `task_list`, `set_task_list`; `start_conversation` grants the new chat's folders.
+- **`oxide-agent`:**
+  - `tools/files.rs`: `Sandbox` (the chat's resolved roots). Every path is made absolute (relative paths start at the first folder), `..` is resolved, and the longest existing prefix is canonicalized, so links pointing out of a grant are refused; the result must sit inside a root. Writes, moves and deletes can't target a root itself. Tools: `list_dir` (depth 1–3, sizes, folders first, ≤ 1,000 entries), `read_file` (text only, binary refused, files ≤ 10 MB, 60k characters per call with `start_line`), `search_files` (name wildcards and/or text, skips `.git` and `_to_delete`, ≤ 200 matches), `write_file` (creates parent folders), `edit_file` (exactly one match, like the artifact tool), `move_file` (creates parent folders, won't overwrite), `delete_file` (moves into `<root>\_to_delete\` with a unique name, or deletes for good when the chat allows it). `resolve_grant` checks a picked folder. Labels for the usage log.
+  - `tasks.rs`: the `task_list` tool (whole list per call; accepts strings, `content`/`name`/`step`, `completed: true`, `in progress`/`completed`), summary returned to the model (“1 of 3 done; now: …”).
+  - `tools/shell.rs`: `Shell::detect` (Windows: `pwsh.exe` if on the PATH, else Windows PowerShell, `-NoProfile -NonInteractive`, UTF-8 output; elsewhere `sh -c`), `run_command { command, cwd? }` in a granted folder, no console window (`CREATE_NO_WINDOW`), time limit (kills the process tree with `taskkill /T` on Windows), stdout/stderr captured (4 MB read, 30k characters shown, start and end kept), exit code.
+  - `ChatService::setup`: the task list is in every tools-capable chat; file tools when the chat has folders; `run_command` when the shell setting is on and there are folders; each can be switched off per chat. Approvals: reading never asks, changes always ask (unless “Allow always”), the task list never asks; shell commands ask unless allowlisted, and “Allow always” is per exact command (`grant_key` = tool + command; answering one card closes only cards with the same command). `EventSink::tasks_changed`. System prompt: `<shared_folders>` with what the tools may do and where deletes go, the shell, and when to keep a task list.
+- **`src-tauri`:** `commands/workspace.rs`: `resolve_folder`, `chat_workspace`, `add_chat_folder`, `remove_chat_folder`, `set_chat_allow_delete`, `chat_task_list`, `open_chat_folder`; event `TaskListChanged` (`events.taskListChanged`); `start_conversation` resolves the draft's folders first.
+- **Frontend:**
+  - `features/workspace/`: `SessionPanel` (replaces the old details panel: **Progress** with live statuses and “n of m done”; **Folders** with open/remove, Add folder and “Delete for good”; **Used in this session**; **Allowed in this chat** with per-grant and “Revoke all”; **Details** with model/tools/files), `StepPill` (“Step n of m” in the title bar; opens the panel), `FolderChips` (composer), `folders.ts` (`useFolderControls`: a saved chat's folders or a new chat's draft), `store.ts` (draft folders; panel open state per chat, persisted, falling back to the last choice; opens by itself the first time a task list appears), `queries.ts`, `tasks.ts`, `grants.ts`.
+  - “+” menu: **Add folder**. Sidebar rows: **Needs input** badge while an approval waits (live or from `pending_tool_approvals`), a pulsing dot while a reply runs. Tool lines and “Used in this session” know file, shell and task-list calls. Settings → Permissions: a note on folder permissions and a **Shell commands** section (switch, time limit, allowlist).
+- **Tests:** Rust: path resolution, `..`/absolute/other-root escapes, links out of a grant, no folders, list/read/search, write/edit/move, delete to `_to_delete` vs for good, several folders, wildcards (files.rs); task parsing and summaries; shell output, time limit, folder checks, long output, PowerShell (Windows only); allowlist matching; store CRUD and cascades; chat service: workspace tools confined and asking only for changes, switches and no-folder chats, shell commands per command and allowlist (Unix). Vitest (Windows): `features/workspace/Workspace.test.tsx` (draft folders granted with a new chat, relative paths refused, panel management, live progress + pill, Used in this session, revoking grants, Needs input badge, one command at a time, Shell settings, helpers); `fakeBackend.ts` implements the new commands and `emitTaskList`.
+
+Deviations from PLAN.md (and why):
+- **Tool names:** `search_files`, `move_file` and `delete_file` instead of `search`, `move` (clearer next to MCP tools); delete is its own tool.
+- **“Delete needs per-chat permission”** is the approval card (marked destructive) for every delete, plus the panel's **Delete for good** switch; without it deletes go to `_to_delete`.
+- **Reading in a granted folder never asks** (the grant is the permission); every change asks unless allowed for the chat.
+- **Granted folders aren't sent to MCP servers as roots:** servers are shared by all chats while folders are per chat. Roots stay empty.
+- **Long-running mode reuses Phase 9's notifications** (reply finished, approval needed, while the window is hidden or unfocused); the “needs your input” badge is on the sidebar row.
+
+Known issues / TODO carried forward:
+- On Unix a timed-out command's grandchildren may survive (`kill -9` reaches only the shell); Windows kills the tree.
+- `read_file` reads text only; PDFs and images in a shared folder can't be read yet (attach them instead).
+- `move_file` uses a rename, so moving between two shared folders on different drives fails with an error.
+- The allowlist is a prefix check, not a parser: anything with chaining/redirect characters always asks.
+- `src/bindings/index.ts` was edited by hand on the agent side; `cargo test` (export_bindings) regenerates it on Windows.
+
+Notes for Phase 12:
+- `run_python` can reuse `Sandbox` (granted folder as the working dir) and `shell.rs`'s capture/time-limit code; generated files in a granted folder already show in “Used in this session” when written through the file tools.
+
+Verified: fmt ✅ clippy ✅ tests ✅ (Linux) typecheck ✅ lint ✅ prettier ✅ (device VM) — Vitest, vite build and tauri dev on Windows pending (`phase11.cmd`).
 
 ## Phase 10 — Extensions (.mcpb) & Skills — 2026-11-07
 Status: done. `scripts\win\phase10.cmd` committed `6ccbc48 phase 10: extensions (.mcpb) & skills` on the second run (fixes below); the user then ran the whole exit check by hand on Windows (Strata `swift-iq2_xs`): everything passed.

@@ -34,6 +34,10 @@ pub struct StartConversation {
     pub project_id: Option<String>,
     /// Files sent with the first message (see [`Attachment`]).
     pub attachments: Vec<Attachment>,
+    /// Folders to grant the chat before its first reply (full paths; see
+    /// [`crate::ChatFolder`]).
+    #[serde(default)]
+    pub folders: Vec<String>,
 }
 
 /// A chat matching a search, with the best matching message excerpt if the hit was in the text.

@@ -767,6 +767,84 @@ async testWebSearch(settings: WebSearchSettings, key: string | null) : Promise<R
 }
 },
 /**
+ * Checks a folder the user picked and returns its resolved path (also before the chat
+ * exists, for the new-chat composer).
+ */
+async resolveFolder(path: string) : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_folder", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A chat's folders and whether it may delete for good.
+ */
+async chatWorkspace(conversationId: string) : Promise<Result<ChatWorkspace, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_workspace", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Grants a folder to a chat. Its file tools reach only paths inside granted folders.
+ */
+async addChatFolder(conversationId: string, path: string) : Promise<Result<ChatWorkspace, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_chat_folder", { conversationId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a folder from a chat.
+ */
+async removeChatFolder(conversationId: string, path: string) : Promise<Result<ChatWorkspace, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_chat_folder", { conversationId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lets `delete_file` delete for good in a chat (off: it moves things into `_to_delete`).
+ */
+async setChatAllowDelete(conversationId: string, allow: boolean) : Promise<Result<ChatWorkspace, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_chat_allow_delete", { conversationId, allow }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The chat's task list (empty when the model never made one).
+ */
+async chatTaskList(conversationId: string) : Promise<Result<TaskList, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_task_list", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens one of a chat's folders in the file manager.
+ */
+async openChatFolder(conversationId: string, path: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_chat_folder", { conversationId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1060,13 +1138,15 @@ chatStream: ChatStream,
 conversationUpdated: ConversationUpdated,
 desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
-memoryChanged: MemoryChanged
+memoryChanged: MemoryChanged,
+taskListChanged: TaskListChanged
 }>({
 chatStream: "chat-stream",
 conversationUpdated: "conversation-updated",
 desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
-memoryChanged: "memory-changed"
+memoryChanged: "memory-changed",
+taskListChanged: "task-list-changed"
 })
 
 /** user-defined constants **/
@@ -1075,7 +1155,7 @@ memoryChanged: "memory-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -1205,6 +1285,18 @@ export type AttachmentSource =
  * Bytes from the clipboard or a browser file input, base64-encoded.
  */
 { kind: "bytes"; name: string; data: string }
+/**
+ * A folder the user gave a chat. Its file tools can only reach paths inside it.
+ */
+export type ChatFolder = { 
+/**
+ * The folder's full path, resolved (no `..`, no symbolic links).
+ */
+path: string; 
+/**
+ * The folder's own name (last part of the path).
+ */
+name: string; addedAt: number }
 export type ChatFont = "serif" | "sans" | "system"
 /**
  * A step of a reply being written (`events.chatStream` in TypeScript).
@@ -1230,6 +1322,14 @@ disabledTools: string[];
  * Built-in tools that are off (`web_search`, `web_fetch`).
  */
 disabledBuiltins: string[] }
+/**
+ * The folders of a chat and what its file tools may do there.
+ */
+export type ChatWorkspace = { folders: ChatFolder[]; 
+/**
+ * `delete_file` deletes for good. Off: it moves things into `_to_delete`.
+ */
+allowDelete: boolean }
 export type CommandError = 
 /**
  * The thing asked for doesn't exist (any more).
@@ -2102,6 +2202,23 @@ export type SearchHit = { conversation: Conversation; messageId: string | null; 
  */
 export type SearchKeyKind = "brave" | "tavily"
 /**
+ * The shell tool (Settings → Permissions). Off by default.
+ */
+export type ShellSettings = { 
+/**
+ * Models may run commands in a chat's granted folders (`run_command`).
+ */
+enabled: boolean; 
+/**
+ * Commands that run without asking: a command whose start matches an entry word by
+ * word (`git status` allows `git status -s`, not `git push`). Everything else asks.
+ */
+allowlist: string[]; 
+/**
+ * Time limit of one command, in seconds.
+ */
+timeoutSecs: number }
+/**
  * What happened when Oxide last tried to register the shortcut.
  */
 export type ShortcutStatus = { 
@@ -2160,7 +2277,12 @@ export type StartConversation = { text: string; model: string; projectId: string
 /**
  * Files sent with the first message (see [`Attachment`]).
  */
-attachments: Attachment[] }
+attachments: Attachment[]; 
+/**
+ * Folders to grant the chat before its first reply (full paths; see
+ * [`crate::ChatFolder`]).
+ */
+folders?: string[] }
 /**
  * Why a reply ended.
  */
@@ -2249,6 +2371,22 @@ export type StreamEvent =
  * The reply failed. `message` is the partial reply if any of it was saved.
  */
 { type: "failed"; error: string; message: Message | null }
+/**
+ * One step of a chat's task list.
+ */
+export type TaskItem = { title: string; status: TaskStatus }
+/**
+ * A chat's task list (the session panel's "Progress").
+ */
+export type TaskList = { conversationId: string; items: TaskItem[]; updatedAt: number }
+/**
+ * The model set a chat's task list (`events.taskListChanged`).
+ */
+export type TaskListChanged = TaskList
+/**
+ * Where a step of the task list is.
+ */
+export type TaskStatus = "pending" | "inProgress" | "done"
 /**
  * Connection test request. Uses `api_key` if given, otherwise the key stored for
  * `provider_id`, so the form can be tested before or after saving.
@@ -2347,7 +2485,20 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * A skill's instructions or files were loaded (the label is the skill's name).
  */
-"skill"
+"skill" | 
+/**
+ * A file or folder in a granted folder was listed, read, written, moved or deleted (the
+ * label is the path).
+ */
+"file" | 
+/**
+ * A shell command ran (the label is the command).
+ */
+"shell" | 
+/**
+ * The chat's task list was set (the label is the current step).
+ */
+"tasks"
 /**
  * Token counts for one reply.
  */

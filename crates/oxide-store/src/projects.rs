@@ -216,6 +216,7 @@ mod tests {
                 model: "m".into(),
                 project_id: Some(p.id.clone()),
                 attachments: Vec::new(),
+                folders: vec![],
             })
             .await
             .expect("creates");
