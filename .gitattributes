@@ -6,3 +6,6 @@
 *.ico binary
 *.icns binary
 *.woff2 binary
+*.mcpb binary
+*.skill binary
+*.zip binary

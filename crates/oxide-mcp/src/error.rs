@@ -46,6 +46,9 @@ pub enum McpError {
     /// The server doesn't speak a version Oxide knows.
     #[error("{0}")]
     Unsupported(String),
+    /// A desktop extension (or skill archive) can't be read, installed or run.
+    #[error("{0}")]
+    Extension(String),
 }
 
 fn detail_suffix(detail: &str) -> String {

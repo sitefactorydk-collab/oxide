@@ -12,6 +12,7 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::ProviderTool => "providerTool",
         ToolUsageKind::ProjectSearch => "projectSearch",
         ToolUsageKind::Artifact => "artifact",
+        ToolUsageKind::Skill => "skill",
     }
 }
 
@@ -22,6 +23,7 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "providerTool" => ToolUsageKind::ProviderTool,
         "projectSearch" => ToolUsageKind::ProjectSearch,
         "artifact" => ToolUsageKind::Artifact,
+        "skill" => ToolUsageKind::Skill,
         _ => ToolUsageKind::Connector,
     }
 }

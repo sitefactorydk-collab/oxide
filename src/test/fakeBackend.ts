@@ -32,6 +32,7 @@ import type {
   WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
+import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import {
   seedConversations,
@@ -169,6 +170,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     },
   };
   resetFakeMcp();
+  resetFakeExtensions();
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -568,6 +570,7 @@ export function setReplyMode(mode: ReplyMode): void {
 
 export const fakeCommands: typeof RealCommands = {
   ...fakeMcpCommands,
+  ...fakeExtensionCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

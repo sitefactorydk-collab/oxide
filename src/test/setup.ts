@@ -4,6 +4,7 @@ import { afterEach, vi } from "vitest";
 import { resetArtifactPanel } from "@/features/artifacts/store";
 import { useBranches } from "@/features/chat/branches";
 import { resetMcpUi } from "@/features/mcp/store";
+import { resetExtensionDrop } from "@/features/extensions/store";
 import { resetStreams } from "@/features/chat/streams";
 import { useToasts } from "@/lib/toast";
 import { createMemoryStorage, isUsableStorage } from "@/lib/storage";
@@ -66,5 +67,6 @@ afterEach(() => {
   useBranches.setState({ leaf: {} });
   useToasts.setState({ toasts: [] });
   resetMcpUi();
+  resetExtensionDrop();
   resetArtifactPanel();
 });

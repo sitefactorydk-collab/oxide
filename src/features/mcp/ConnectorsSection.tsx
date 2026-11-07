@@ -95,6 +95,7 @@ export function ConnectorsSection() {
 }
 
 function ServerCard({ server }: { server: McpServerState }) {
+  const openSettings = useOpenSettings();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const setEnabled = useSetMcpEnabled();
@@ -145,6 +146,11 @@ function ServerCard({ server }: { server: McpServerState }) {
                     Remote
                   </span>
                 )}
+                {server.extension && (
+                  <span className="rounded-md bg-sunken px-1.5 py-0.5 text-xs text-fg-muted">
+                    Extension · {server.extension}
+                  </span>
+                )}
               </div>
               <p className="mt-0.5 truncate font-mono text-sm text-fg-muted" title={server.summary}>
                 {server.summary}
@@ -186,9 +192,18 @@ function ServerCard({ server }: { server: McpServerState }) {
                   <RotateCw />
                 </Button>
               )}
-              <Button label={`Edit ${server.name}`} onClick={() => setEditing(true)}>
-                Edit
-              </Button>
+              {server.extension ? (
+                <Button
+                  label={`${server.name} settings in Extensions`}
+                  onClick={() => openSettings("extensions")}
+                >
+                  Manage
+                </Button>
+              ) : (
+                <Button label={`Edit ${server.name}`} onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+              )}
               <Switch
                 checked={enabled}
                 label={`Use ${server.name}`}

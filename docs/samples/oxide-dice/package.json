@@ -1,0 +1,7 @@
+{
+  "name": "oxide-dice",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "server/index.js"
+}

@@ -9,12 +9,17 @@
 //!   },
 //!   "oxide": {
 //!     "disabledServers": ["docs"],
-//!     "servers": { "docs": { "oauthClientId": "…" } }
+//!     "servers": { "docs": { "oauthClientId": "…" } },
+//!     "extensions": { "files": { "enabled": true, "version": "1.2.0", "values": { … } } }
 //!   }
 //! }
 //! ```
 //!
 //! Unknown keys anywhere are kept when Oxide rewrites the file.
+//!
+//! Desktop extensions are managed entries under `oxide.extensions`, not in `mcpServers`: their
+//! command line is built from the bundle's manifest when Oxide starts (it needs the install
+//! folder and secrets from the keychain), so it isn't something to paste elsewhere.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,8 +27,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use oxide_core::{
-    ImportCandidate, ImportPreview, ImportStatus, McpConfigFile, McpServerConfig, McpTransport,
+    ExtensionValue, ImportCandidate, ImportPreview, ImportStatus, McpConfigFile, McpServerConfig,
+    McpTransport, Timestamp,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::McpError;
@@ -201,6 +208,81 @@ impl OxideConfig {
             .and_then(Value::as_str)
             .map(str::to_owned);
         Some((id, secret))
+    }
+}
+
+/// An installed desktop extension's entry (`oxide.extensions.<name>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExtensionEntry {
+    pub enabled: bool,
+    pub version: String,
+    pub installed_at: Timestamp,
+    /// Settings that aren't sensitive (those are in the keychain).
+    pub values: BTreeMap<String, ExtensionValue>,
+    /// Sensitive settings that have a value in the keychain.
+    pub secrets: Vec<String>,
+}
+
+impl Default for ExtensionEntry {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            version: String::new(),
+            installed_at: 0,
+            values: BTreeMap::new(),
+            secrets: Vec::new(),
+        }
+    }
+}
+
+impl OxideConfig {
+    fn extensions_map(&self) -> Option<&Map<String, Value>> {
+        self.root
+            .get("oxide")
+            .and_then(|o| o.get("extensions"))
+            .and_then(Value::as_object)
+    }
+
+    /// Installed extensions (entries that can't be read are skipped).
+    pub fn extensions(&self) -> Vec<(String, ExtensionEntry)> {
+        self.extensions_map()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), serde_json::from_value(v.clone()).ok()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn extension(&self, name: &str) -> Option<ExtensionEntry> {
+        serde_json::from_value(self.extensions_map()?.get(name)?.clone()).ok()
+    }
+
+    pub fn is_extension(&self, name: &str) -> bool {
+        self.extensions_map().is_some_and(|m| m.contains_key(name))
+    }
+
+    pub fn set_extension(&mut self, name: &str, entry: &ExtensionEntry) {
+        let value = serde_json::to_value(entry).unwrap_or(Value::Null);
+        object_at(self.oxide_mut(), "extensions").insert(name.to_owned(), value);
+    }
+
+    pub fn remove_extension(&mut self, name: &str) -> bool {
+        let oxide = self.oxide_mut();
+        let Some(Value::Object(m)) = oxide.get_mut("extensions") else {
+            return false;
+        };
+        let removed = m.remove(name).is_some();
+        if m.is_empty() {
+            oxide.remove("extensions");
+        }
+        removed
+    }
+
+    /// Whether `name` is a server entry in `mcpServers`.
+    pub fn has_server(&self, name: &str) -> bool {
+        self.entries().is_some_and(|m| m.contains_key(name))
     }
 }
 
@@ -697,6 +779,34 @@ mod tests {
         );
         assert!(ours.to_text().contains("\"extra\": 1"));
         assert!(!import_preview(&ours, Path::new("x"), None).found);
+    }
+
+    #[test]
+    fn extension_entries_live_under_oxide() {
+        let mut cfg = OxideConfig::default();
+        let mut e = ExtensionEntry {
+            version: "1.0.0".into(),
+            ..Default::default()
+        };
+        e.values.insert("depth".into(), ExtensionValue::Number(3.0));
+        e.secrets.push("key".into());
+        cfg.set_extension("files", &e);
+        assert!(cfg.is_extension("files"));
+        assert!(!cfg.has_server("files"));
+        assert_eq!(cfg.extension("files"), Some(e.clone()));
+        let v: Value = serde_json::from_str(&cfg.to_text()).expect("json");
+        assert_eq!(v["oxide"]["extensions"]["files"]["version"], json!("1.0.0"));
+        assert_eq!(
+            v["oxide"]["extensions"]["files"]["values"]["depth"],
+            json!(3.0)
+        );
+        assert!(v["mcpServers"].as_object().is_some_and(|m| m.is_empty()));
+        // Round trip through the text.
+        let again = OxideConfig::parse(&cfg.to_text()).expect("parses");
+        assert_eq!(again.extensions(), vec![("files".to_string(), e)]);
+        assert!(cfg.remove_extension("files"));
+        assert!(!cfg.remove_extension("files"));
+        assert!(!cfg.to_text().contains("extensions"));
     }
 
     #[tokio::test]

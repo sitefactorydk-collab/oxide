@@ -8,6 +8,7 @@ import {
   Plug,
   ShieldAlert,
   Shapes,
+  Sparkles,
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
@@ -32,7 +33,9 @@ function KindIcon({ call }: { call: ToolCallView }) {
           ? FolderSearch
           : kind === "artifact"
             ? Shapes
-            : Plug;
+            : kind === "skill"
+              ? Sparkles
+              : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 

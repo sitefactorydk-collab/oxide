@@ -61,6 +61,7 @@ function state(cfg: McpServerConfig, overrides: Partial<McpServerState> = {}): M
     prompts: 0,
     restarts: 0,
     signedIn: false,
+    extension: null,
     updatedAt: 1,
     ...overrides,
   };

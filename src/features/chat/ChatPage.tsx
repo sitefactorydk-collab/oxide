@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   ArrowDown,
+  BookOpen,
   FileText,
   FolderSearch,
   Globe,
@@ -396,7 +397,9 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
             ? FolderSearch
             : kind === "artifact"
               ? Shapes
-              : Plug;
+              : kind === "skill"
+                ? BookOpen
+                : Plug;
   return <Icon aria-hidden className="size-4" />;
 }
 

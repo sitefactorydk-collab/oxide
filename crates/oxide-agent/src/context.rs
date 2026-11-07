@@ -203,6 +203,8 @@ pub struct PromptContext<'a> {
     pub knowledge_search: Vec<String>,
     /// What Oxide remembers about the user, as a bullet list (memory on).
     pub memory: Option<&'a str>,
+    /// The skills the model may load, as `- name: description` lines (`load_skill` is on).
+    pub skills: Option<&'a str>,
 }
 
 fn os_name(os: &str) -> &str {
@@ -296,6 +298,14 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                  call the artifact tool again with its id instead of writing it out again.",
             );
         }
+    }
+    if let Some(list) = ctx.skills.map(str::trim).filter(|l| !l.is_empty()) {
+        s.push_str(&format!(
+            "\n\n<skills>\n{list}\n</skills>\nThese are skills the user installed: instructions for \
+             particular kinds of tasks. When a request matches a skill's description, call \
+             load_skill with its name before you start and follow what it says (it may point \
+             to more files to read). Don't load skills that don't apply."
+        ));
     }
     if let Some(name) = ctx.project_name.map(str::trim).filter(|n| !n.is_empty()) {
         s.push_str(&format!(
@@ -643,6 +653,7 @@ mod tests {
             project_instructions: Some("Answer in Danish."),
             knowledge_search: Vec::new(),
             memory: None,
+            skills: None,
         });
         assert!(
             p.contains("Friday 2026-11-06, 20:10 (Europe/Copenhagen, UTC+01:00)"),
@@ -704,6 +715,22 @@ mod tests {
             "{p}"
         );
         assert!(!system_prompt(&PromptContext::default()).contains("artifact"));
+    }
+
+    #[test]
+    fn system_prompt_lists_skills() {
+        let p = system_prompt(&PromptContext {
+            skills: Some("- haiku: Use for haiku requests"),
+            project_instructions: Some("Be brief."),
+            ..PromptContext::default()
+        });
+        assert!(
+            p.contains("<skills>\n- haiku: Use for haiku requests\n</skills>"),
+            "{p}"
+        );
+        assert!(p.contains("call load_skill with its name"));
+        assert!(p.find("<skills>") < p.find("<project_instructions>"));
+        assert!(!system_prompt(&PromptContext::default()).contains("load_skill"));
     }
 
     #[test]

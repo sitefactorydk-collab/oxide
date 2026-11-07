@@ -20,6 +20,7 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase4.cmd` | Phase 4: checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
 | `phase5.cmd` | Phase 5: `npm install`, checks, commit when green, then starts the app | `phase5*`, `check*`, `commit*`, `dev.log` |
 | `phase6.cmd` | Phase 6: checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
+| `phase10.cmd` | Phase 10: checks, vite build, commit when green, then starts the app | `check*`, `phase10-build*`, `commit*`, `dev.log` |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 
 Later phases add a `phaseN.cmd` that does the phase's setup, runs `check.ps1`, commits when green and starts the app.

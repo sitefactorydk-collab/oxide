@@ -548,6 +548,7 @@ impl ChatService {
         } else {
             None
         };
+        let skills = crate::skills::skills_prompt(&tool_set.skills);
         let clock = lock(&self.clock).clone();
         let system = system_prompt(&PromptContext {
             user_name: &settings.profile.name,
@@ -563,6 +564,7 @@ impl ChatService {
             project_instructions: project.as_ref().map(|p| p.instructions.as_str()),
             knowledge_search,
             memory: memory.as_deref(),
+            skills: skills.as_deref(),
         });
         Ok(Setup {
             provider,
@@ -787,6 +789,8 @@ impl ChatService {
             None if entry.kind == ToolKind::Builtin(Builtin::ProjectSearch) => false,
             // Artifacts only write into Oxide's own database.
             None if entry.kind == ToolKind::Builtin(Builtin::Artifact) => false,
+            // Skills are Oxide's own files, only read.
+            None if entry.kind == ToolKind::Builtin(Builtin::LoadSkill) => false,
             None => setup.settings.tools.ask_before_web,
             Some(_) => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -1859,6 +1863,14 @@ pub(crate) mod tests {
     }
 
     async fn fixture_with(scripts: Vec<Vec<Step>>, mcp: Option<Arc<FakeMcp>>) -> Fixture {
+        fixture_full(scripts, mcp, None).await
+    }
+
+    async fn fixture_full(
+        scripts: Vec<Vec<Step>>,
+        mcp: Option<Arc<FakeMcp>>,
+        skills: Option<crate::skills::Skills>,
+    ) -> Fixture {
         let store = Store::open_in_memory().await.expect("store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
         let fake = FakeProvider::new(scripts);
@@ -1873,6 +1885,10 @@ pub(crate) mod tests {
             secrets,
             None,
         );
+        let tools = match skills {
+            Some(sk) => tools.with_skills(sk),
+            None => tools,
+        };
         let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
         let (chat, first) = store
             .start_conversation(StartConversation {
@@ -2851,6 +2867,75 @@ pub(crate) mod tests {
         let used = f.store.tool_usage(&f.chat.id).await.expect("log");
         assert_eq!(used[0].kind, ToolUsageKind::Artifact);
         assert_eq!(used[0].label.as_deref(), Some("Hello page"));
+    }
+
+    #[tokio::test]
+    async fn skills_are_listed_and_loaded_without_asking() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let skills = crate::skills::Skills::new(dir.path().to_path_buf());
+        skills
+            .create(&oxide_core::SkillInput {
+                name: "haiku".into(),
+                description: "Use when the user asks for a haiku".into(),
+                body: "Always write three lines: 5, 7 and 5 syllables. End with a season word."
+                    .into(),
+            })
+            .expect("creates");
+        let mut first = vec![text("Loading the skill.")];
+        first.extend(call("s1", "load_skill", "{\"name\":\"haiku\"}"));
+        let f = fixture_full(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("Autumn wind...")], StopReason::EndTurn),
+                title_step(),
+            ],
+            None,
+            Some(skills.clone()),
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.tools.ask_before_web = true; // doesn't apply to skills
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+
+        let reqs = f.fake.requests();
+        assert!(reqs[0].tools.iter().any(|t| t.name == "load_skill"));
+        let system = reqs[0].system.as_deref().expect("system");
+        assert!(
+            system.contains("- haiku: Use when the user asks for a haiku"),
+            "{system}"
+        );
+        assert!(
+            !f.sink
+                .events()
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolApproval { .. })),
+            "skills never ask"
+        );
+        // The second step sees the instructions as the tool's result.
+        let second = format!("{:?}", reqs[1].messages);
+        assert!(second.contains("season word"), "{second}");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("log");
+        assert_eq!(used[0].kind, ToolUsageKind::Skill);
+        assert_eq!(used[0].label.as_deref(), Some("haiku"));
+
+        // Switched off: no tool and no list.
+        skills.set_enabled("haiku", false).expect("off");
+        let set = f
+            .service
+            .tools()
+            .tool_set(
+                &oxide_core::ChatTools::default(),
+                &oxide_core::AppSettings::default(),
+                ProviderKind::LmStudio,
+            )
+            .await;
+        assert!(set.find("load_skill").is_none());
+        assert!(set.skills.is_empty());
     }
 
     #[tokio::test]

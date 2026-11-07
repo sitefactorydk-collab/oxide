@@ -29,8 +29,8 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, chats, desktop, mcp, memory, models, projects, providers, settings,
-        system, tools,
+        artifacts, attachments, chats, desktop, extensions, mcp, memory, models, projects,
+        providers, settings, system, tools,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -96,6 +96,24 @@ fn specta_builder() -> Builder<tauri::Wry> {
             mcp::mcp_sign_out,
             mcp::get_chat_tools,
             mcp::set_chat_tools,
+            // Extensions and skills
+            extensions::pick_paths,
+            extensions::list_extensions,
+            extensions::preview_extension,
+            extensions::install_extension,
+            extensions::discard_extension,
+            extensions::configure_extension,
+            extensions::set_extension_enabled,
+            extensions::uninstall_extension,
+            extensions::open_extensions_folder,
+            extensions::list_skills,
+            extensions::get_skill,
+            extensions::create_skill,
+            extensions::update_skill,
+            extensions::add_skill,
+            extensions::set_skill_enabled,
+            extensions::remove_skill,
+            extensions::open_skills_folder,
             // Tool loop
             tools::answer_tool_approval,
             tools::pending_tool_approvals,
@@ -280,6 +298,7 @@ pub fn run() -> anyhow::Result<()> {
                 },
             ))?;
             let mcp = state.mcp.clone();
+            let extensions = state.extensions.clone();
             let settings = tauri::async_runtime::block_on(state.store.app_settings())
                 .unwrap_or_else(|e| {
                     tracing::warn!("settings: {e}");
@@ -291,6 +310,8 @@ pub fn run() -> anyhow::Result<()> {
                 if let Err(e) = mcp.start().await {
                     tracing::warn!("MCP config: {e}");
                 }
+                // Then the installed extensions' servers.
+                extensions.refresh().await;
             });
 
             let handle = app.handle().clone();

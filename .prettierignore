@@ -6,3 +6,4 @@ src-tauri/icons
 src/bindings
 package-lock.json
 *.md
+docs/samples

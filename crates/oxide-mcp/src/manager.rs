@@ -4,7 +4,7 @@
 //! [`ManagerSink`]. Server requests for the user (elicitation, sampling) become
 //! [`McpInteraction`]s that the UI answers through [`McpManager::answer`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -60,7 +60,8 @@ pub struct ManagerOptions {
     pub ask_timeout: Duration,
     /// How often the config file is checked for edits.
     pub watch_every: Duration,
-    /// Working folder of local servers (default: the home folder).
+    /// Working folder of local servers (default: the home folder). Extension servers run in
+    /// their own folder.
     pub cwd: Option<PathBuf>,
 }
 
@@ -92,6 +93,19 @@ struct Slot {
     challenge: Option<String>,
 }
 
+/// A desktop extension's server, as built from its manifest (see [`crate::extensions`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionServer {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    /// Command line with secrets hidden.
+    pub summary: String,
+    pub display_name: String,
+    /// The extension's folder (the server's working folder).
+    pub dir: PathBuf,
+}
+
 struct PendingAsk {
     interaction: McpInteraction,
     tx: oneshot::Sender<McpAnswer>,
@@ -115,6 +129,8 @@ struct Inner {
     /// The runtime servers run on, so they can be started from any thread (a synchronous
     /// Tauri command runs on the main thread, outside the runtime).
     runtime: Mutex<Option<tokio::runtime::Handle>>,
+    /// Servers of installed desktop extensions that can run, by name.
+    extensions: Mutex<HashMap<String, ExtensionServer>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -153,6 +169,7 @@ impl McpManager {
                 shutting_down: AtomicBool::new(false),
                 next_gen: AtomicU64::new(1),
                 runtime: Mutex::new(tokio::runtime::Handle::try_current().ok()),
+                extensions: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -230,7 +247,21 @@ impl McpManager {
 
     /// The configured entry for the edit form.
     pub fn server_config(&self, name: &str) -> Result<McpServerConfig, McpError> {
-        match lock(&self.inner.config).server(name) {
+        let cfg = lock(&self.inner.config).clone();
+        if cfg.is_extension(name) && !cfg.has_server(name) {
+            return self
+                .inner
+                .entries(&cfg)
+                .into_iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, c)| c.map_err(McpError::Config))
+                .unwrap_or_else(|| {
+                    Err(McpError::Config(format!(
+                        "the extension \"{name}\" can't run yet; see Settings → Extensions"
+                    )))
+                });
+        }
+        match cfg.server(name) {
             Some(Ok(c)) => Ok(c),
             Some(Err(why)) => Err(McpError::Config(why)),
             None => Err(McpError::Config(format!(
@@ -327,7 +358,13 @@ impl McpManager {
         Ok(())
     }
 
-    async fn edit(
+    /// The config as last loaded or saved.
+    pub fn config_snapshot(&self) -> OxideConfig {
+        lock(&self.inner.config).clone()
+    }
+
+    /// Changes the config, saves it and applies it.
+    pub async fn edit(
         &self,
         f: impl FnOnce(&mut OxideConfig) -> Result<(), McpError>,
     ) -> Result<(), McpError> {
@@ -344,6 +381,12 @@ impl McpManager {
         server: McpServerConfig,
         old_name: Option<String>,
     ) -> Result<(), McpError> {
+        if lock(&self.inner.config).is_extension(server.name.trim()) {
+            return Err(McpError::Config(format!(
+                "an extension is called \"{}\"; pick another name",
+                server.name.trim()
+            )));
+        }
         if old_name.is_none()
             && lock(&self.inner.config)
                 .server(server.name.trim())
@@ -358,6 +401,12 @@ impl McpManager {
     }
 
     pub async fn remove_server(&self, name: &str) -> Result<(), McpError> {
+        if self.config_snapshot().is_extension(name) && !self.config_snapshot().has_server(name) {
+            return Err(McpError::Config(
+                "this connector comes from an extension; uninstall it in Settings → Extensions"
+                    .into(),
+            ));
+        }
         self.edit(|c| {
             c.remove(name);
             Ok(())
@@ -365,12 +414,36 @@ impl McpManager {
         .await
     }
 
+    /// Turns a server, or an extension's server, on or off.
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<(), McpError> {
         self.edit(|c| {
-            c.set_enabled(name, enabled);
+            match c.extension(name).filter(|_| !c.has_server(name)) {
+                Some(mut e) => {
+                    e.enabled = enabled;
+                    c.set_extension(name, &e);
+                }
+                None => c.set_enabled(name, enabled),
+            }
             Ok(())
         })
         .await
+    }
+
+    /// Replaces the servers of installed extensions and applies the change (new ones start,
+    /// changed ones restart, missing ones stop).
+    pub fn set_extension_servers(&self, servers: HashMap<String, ExtensionServer>) {
+        *lock(&self.inner.extensions) = servers;
+        let cfg = lock(&self.inner.config).clone();
+        self.inner.apply(cfg);
+    }
+
+    /// Stops one extension's server (before its files are replaced or removed).
+    pub fn drop_extension_server(&self, name: &str) {
+        let removed = lock(&self.inner.extensions).remove(name).is_some();
+        if removed {
+            let cfg = lock(&self.inner.config).clone();
+            self.inner.apply(cfg);
+        }
     }
 
     /// What importing Claude desktop's servers would do.
@@ -519,8 +592,13 @@ impl Inner {
         )
     }
 
-    fn blank_state(name: &str, config: Option<&McpServerConfig>) -> McpServerState {
+    fn blank_state(&self, name: &str, config: Option<&McpServerConfig>) -> McpServerState {
+        let ext = lock(&self.extensions).get(name).cloned();
         let (transport, summary) = match config {
+            Some(_) if ext.is_some() => (
+                McpTransport::Stdio,
+                ext.as_ref().map(|e| e.summary.clone()).unwrap_or_default(),
+            ),
             Some(c) if c.transport == McpTransport::Http => (McpTransport::Http, c.url.clone()),
             Some(c) => (
                 McpTransport::Stdio,
@@ -548,6 +626,7 @@ impl Inner {
             prompts: 0,
             restarts: 0,
             signed_in: false,
+            extension: ext.map(|e| e.display_name),
             updated_at: now_ms(),
         }
     }
@@ -558,7 +637,7 @@ impl Inner {
             return;
         }
         *lock(&self.config) = cfg.clone();
-        let entries = cfg.servers();
+        let entries = self.entries(&cfg);
         let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
         *lock(&self.order) = names.clone();
 
@@ -579,9 +658,10 @@ impl Inner {
                 Err(why) => {
                     self.stop_slot(&name);
                     let generation = self.ensure_slot(&name, None);
+                    let blank = self.blank_state(&name, None);
                     self.update(&name, generation, |s| {
                         s.config = None;
-                        s.state = Self::blank_state(&name, None);
+                        s.state = blank;
                         s.state.status = McpStatus::Error;
                         s.state.error = Some(format!("This entry can't be used: {why}"));
                     });
@@ -598,10 +678,11 @@ impl Inner {
                         self.start_slot(&name, config);
                     } else {
                         let generation = self.ensure_slot(&name, Some(&config));
+                        let blank = self.blank_state(&name, Some(&config));
                         self.update(&name, generation, |s| {
                             s.config = Some(config.clone());
                             let restarts = s.state.restarts;
-                            s.state = Self::blank_state(&name, Some(&config));
+                            s.state = blank;
                             s.state.restarts = restarts;
                             s.lists = McpServerLists::default();
                         });
@@ -611,9 +692,38 @@ impl Inner {
         }
     }
 
+    /// The config's servers followed by installed extensions' servers (a server entry wins
+    /// over an extension of the same name).
+    fn entries(&self, cfg: &OxideConfig) -> Vec<(String, Result<McpServerConfig, String>)> {
+        let mut entries = cfg.servers();
+        let ext = lock(&self.extensions).clone();
+        for (name, entry) in cfg.extensions() {
+            if entries.iter().any(|(n, _)| n == &name) {
+                continue;
+            }
+            if let Some(server) = ext.get(&name) {
+                entries.push((
+                    name.clone(),
+                    Ok(McpServerConfig {
+                        name,
+                        transport: McpTransport::Stdio,
+                        command: server.command.clone(),
+                        args: server.args.clone(),
+                        env: server.env.clone(),
+                        url: String::new(),
+                        headers: BTreeMap::new(),
+                        enabled: entry.enabled,
+                    }),
+                ));
+            }
+        }
+        entries
+    }
+
     /// Makes sure a slot exists and gives it a new generation, which it returns.
     fn ensure_slot(self: &Arc<Self>, name: &str, config: Option<&McpServerConfig>) -> u64 {
         let generation = self.next_generation();
+        let blank = self.blank_state(name, config);
         let mut slots = lock(&self.slots);
         match slots.get_mut(name) {
             Some(s) => s.generation = generation,
@@ -622,7 +732,7 @@ impl Inner {
                     name.to_owned(),
                     Slot {
                         config: config.cloned(),
-                        state: Self::blank_state(name, config),
+                        state: blank,
                         client: None,
                         lists: McpServerLists::default(),
                         log: self.new_log(name),
@@ -668,9 +778,10 @@ impl Inner {
         let task = runtime.spawn(async move {
             supervise(inner, task_name, generation, task_config, stop_rx).await;
         });
+        let blank = self.blank_state(name, Some(&config));
         self.update(name, generation, move |s| {
             let restarts = s.state.restarts;
-            s.state = Self::blank_state(name, Some(&config));
+            s.state = blank;
             s.state.status = McpStatus::Starting;
             s.state.restarts = restarts;
             s.config = Some(config);
@@ -866,7 +977,11 @@ async fn connect_server(
                 command: config.command.clone(),
                 args: config.args.clone(),
                 env: config.env.clone(),
-                cwd: inner.opts.cwd.clone().or_else(process::home_dir),
+                cwd: lock(&inner.extensions)
+                    .get(name)
+                    .map(|e| e.dir.clone())
+                    .or_else(|| inner.opts.cwd.clone())
+                    .or_else(process::home_dir),
             },
             tx,
             log,

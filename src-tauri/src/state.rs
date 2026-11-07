@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oxide_agent::{AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Tools};
-use oxide_mcp::{ManagerOptions, ManagerSink, McpManager};
+use oxide_agent::{
+    AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Skills, Tools,
+};
+use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
 pub struct AppState {
@@ -18,6 +20,10 @@ pub struct AppState {
     pub attachments: AttachmentStore,
     /// MCP servers from `<config dir>/oxide_config.json`.
     pub mcp: McpManager,
+    /// Desktop extensions, unpacked under `<data dir>/extensions`; their servers run in `mcp`.
+    pub extensions: Extensions,
+    /// Skills under `<data dir>/skills`.
+    pub skills: Skills,
 }
 
 /// Where the app keeps its files.
@@ -57,15 +63,18 @@ impl AppState {
             Some(dirs.logs.clone()),
             parts.sink,
             parts.agent,
-            parts.tokens,
+            parts.tokens.clone(),
             ManagerOptions::default(),
         );
+        let extensions = Extensions::new(data_dir.join("extensions"), mcp.clone(), parts.tokens);
+        let skills = Skills::new(data_dir.join("skills"));
         // Models get the running MCP servers' tools plus Oxide's web tools.
         let tools = Tools::new(
             Some(Arc::new(mcp.clone()) as Arc<dyn McpTools>),
             secrets.clone(),
             Some(attachments.clone()),
-        );
+        )
+        .with_skills(skills.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
@@ -74,6 +83,8 @@ impl AppState {
             chat,
             attachments,
             mcp,
+            extensions,
+            skills,
         })
     }
 }

@@ -158,6 +158,11 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   if (call.tool === "web_search") return str("query") ?? "";
   if (call.tool === "web_fetch") return str("url") ?? "";
   if (call.tool === "project_search") return str("query") ?? "";
+  if (call.tool === "load_skill") {
+    const name = str("name") ?? "";
+    const path = str("path");
+    return path ? `${name} · ${path}` : name;
+  }
   for (const k of LABEL_KEYS) {
     const v = str(k);
     if (v) return v;
@@ -166,7 +171,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   return typeof first === "string" ? first : "";
 }
 
-export type ToolKind = "search" | "fetch" | "project" | "artifact" | "connector";
+export type ToolKind = "search" | "fetch" | "project" | "artifact" | "skill" | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
   if (call.tool === "web_search" && (call.server === null || call.server === "anthropic")) {
@@ -175,6 +180,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.tool === "web_fetch" && call.server === null) return "fetch";
   if (call.tool === "project_search" && call.server === null) return "project";
   if (call.tool === "artifact" && call.server === null) return "artifact";
+  if (call.tool === "load_skill" && call.server === null) return "skill";
   return "connector";
 }
 
@@ -198,6 +204,8 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       };
     case "artifact":
       return { action: busy ? "Writing artifact" : "Artifact", detail };
+    case "skill":
+      return { action: busy ? "Loading skill" : "Loaded skill", detail };
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -238,7 +246,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
               ? "Project knowledge"
               : u.kind === "artifact"
                 ? "Artifacts"
-                : (u.server ?? "Connector");
+                : u.kind === "skill"
+                  ? "Skills"
+                  : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

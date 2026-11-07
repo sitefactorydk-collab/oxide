@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.3",
+  "name": "oxide-dice",
+  "display_name": "Oxide Dice",
+  "version": "1.0.0",
+  "description": "Roll dice and greet people. A sample extension for testing Oxide.",
+  "long_description": "A dependency-free Node.js MCP server packed as a desktop extension. Its settings exercise every kind Oxide supports: text, a number with a range, a switch, and a sensitive token kept in the system keychain.",
+  "author": { "name": "Oxide contributors" },
+  "license": "MIT",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "DICE_GREETING": "${user_config.greeting}",
+        "DICE_LUCKY": "${user_config.lucky_number}",
+        "DICE_SHOUT": "${user_config.shout}",
+        "DICE_TOKEN": "${user_config.api_token}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "roll_dice", "description": "Roll dice and add them up" },
+    { "name": "greet", "description": "Greet someone with your greeting" },
+    { "name": "settings_check", "description": "Show which settings the server received" }
+  ],
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": { "node": ">=16" }
+  },
+  "user_config": {
+    "greeting": {
+      "type": "string",
+      "title": "Greeting",
+      "description": "The word the greet tool starts with.",
+      "default": "Hello",
+      "required": true
+    },
+    "lucky_number": {
+      "type": "number",
+      "title": "Lucky number",
+      "description": "Mentioned when a die shows it.",
+      "default": 7,
+      "min": 1,
+      "max": 100
+    },
+    "shout": {
+      "type": "boolean",
+      "title": "Shout",
+      "description": "Greet in capital letters.",
+      "default": false
+    },
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Any text: it shows that sensitive settings reach the server from the keychain (settings_check reports only its length).",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}

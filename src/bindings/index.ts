@@ -505,6 +505,169 @@ async setChatTools(conversationId: string, tools: ChatTools) : Promise<Result<nu
 }
 },
 /**
+ * Opens the system picker. Returns the chosen paths (empty if cancelled).
+ */
+async pickPaths(kind: PickKind, multiple: boolean) : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pick_paths", { kind, multiple }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listExtensions() : Promise<Result<Extension[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_extensions") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens and checks a `.mcpb` file without installing it.
+ */
+async previewExtension(path: string) : Promise<Result<ExtensionPreview, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_extension", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Installs (or updates) an opened bundle with the form's settings.
+ */
+async installExtension(stagingId: string, values: Partial<{ [key in string]: ExtensionValue }>) : Promise<Result<Extension, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_extension", { stagingId, values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forgets an opened bundle (the install dialog was cancelled).
+ */
+async discardExtension(stagingId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discard_extension", { stagingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves an extension's settings. Sensitive values left empty keep what's stored.
+ */
+async configureExtension(name: string, values: Partial<{ [key in string]: ExtensionValue }>) : Promise<Result<Extension, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("configure_extension", { name, values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setExtensionEnabled(name: string, enabled: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_extension_enabled", { name, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async uninstallExtension(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("uninstall_extension", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens an extension's folder, or the extensions folder, in the file manager.
+ */
+async openExtensionsFolder(name: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_extensions_folder", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listSkills() : Promise<Result<Skill[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_skills") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSkill(folder: string) : Promise<Result<SkillDetail, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_skill", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes a new skill from the form.
+ */
+async createSkill(input: SkillInput) : Promise<Result<Skill, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_skill", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateSkill(folder: string, input: SkillInput) : Promise<Result<Skill, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_skill", { folder, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Adds a skill from a folder or a zip (`.zip`, `.skill`) on disk.
+ */
+async addSkill(path: string) : Promise<Result<Skill, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_skill", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setSkillEnabled(folder: string, enabled: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_skill_enabled", { folder, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeSkill(folder: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens a skill's folder, or the skills folder, in the file manager.
+ */
+async openSkillsFolder(folder: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_skills_folder", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Answers a tool call that waits for approval. Returns whether it was still waiting.
  */
 async answerToolApproval(conversationId: string, toolUseId: string, decision: ApprovalDecision) : Promise<Result<boolean, CommandError>> {
@@ -1211,6 +1374,150 @@ export type ExportFormat =
  */
 "json"
 /**
+ * An installed extension.
+ */
+export type Extension = { 
+/**
+ * `None` when the manifest can't be read (status `broken`).
+ */
+info: ExtensionInfo | null; name: string; version: string; enabled: boolean; status: ExtensionStatus; 
+/**
+ * Why it can't run, written for users.
+ */
+problem: string | null; 
+/**
+ * Where it's unpacked.
+ */
+dir: string; 
+/**
+ * Settings that aren't sensitive.
+ */
+values: Partial<{ [key in string]: ExtensionValue }>; 
+/**
+ * Sensitive settings that have a value in the keychain (the values never leave it).
+ */
+secretsSet: string[]; installedAt: number }
+/**
+ * One setting an extension asks for.
+ */
+export type ExtensionField = { key: string; type: ExtensionFieldType; title: string; description: string | null; required: boolean; 
+/**
+ * The manifest's default, with `${HOME}` and friends already filled in.
+ */
+default: ExtensionValue | null; 
+/**
+ * Folders and files: several may be picked.
+ */
+multiple: boolean; 
+/**
+ * Strings: masked, and kept in the OS keychain.
+ */
+sensitive: boolean; min: number | null; max: number | null }
+/**
+ * The kind of value a setting holds (`user_config.<key>.type`).
+ */
+export type ExtensionFieldType = "string" | "number" | "boolean" | "directory" | "file"
+/**
+ * What an extension's manifest says about it.
+ */
+export type ExtensionInfo = { 
+/**
+ * Machine name (`name`), also the connector's name in Oxide.
+ */
+name: string; displayName: string; version: string; description: string; longDescription: string | null; author: string; authorUrl: string | null; homepage: string | null; repository: string | null; license: string | null; manifestVersion: string; serverType: ExtensionServerType; tools: ExtensionItem[]; prompts: ExtensionItem[]; 
+/**
+ * The server makes more tools than it lists.
+ */
+toolsGenerated: boolean; keywords: string[]; 
+/**
+ * `darwin`, `win32`, `linux`; empty: every platform.
+ */
+platforms: string[]; 
+/**
+ * Version needs, e.g. `node: ">=18"`.
+ */
+runtimes: Partial<{ [key in string]: string }>; fields: ExtensionField[]; 
+/**
+ * The icon as a `data:` URL (PNG, small), if it has one.
+ */
+icon: string | null }
+/**
+ * A tool or prompt the manifest lists (servers may offer more at run time).
+ */
+export type ExtensionItem = { name: string; description: string | null }
+/**
+ * A `.mcpb` that was opened and checked, waiting for the user to install it.
+ */
+export type ExtensionPreview = { 
+/**
+ * Pass to `install_extension`.
+ */
+stagingId: string; info: ExtensionInfo; 
+/**
+ * Set when this replaces an installed version.
+ */
+installedVersion: string | null; 
+/**
+ * Things the user should know (other OS, Node.js missing, …).
+ */
+warnings: string[]; 
+/**
+ * Starting values for the form: the installed extension's, else the defaults.
+ */
+values: Partial<{ [key in string]: ExtensionValue }>; 
+/**
+ * Sensitive settings the installed version already has.
+ */
+secretsSet: string[]; 
+/**
+ * Unpacked size in bytes and number of files.
+ */
+size: number; files: number }
+/**
+ * How an extension's server runs (`server.type` in the manifest).
+ */
+export type ExtensionServerType = 
+/**
+ * JavaScript with its `node_modules` bundled; runs with the system's Node.js.
+ */
+"node" | 
+/**
+ * Python with its packages bundled; runs through uv.
+ */
+"python" | 
+/**
+ * A self-contained program.
+ */
+"binary" | 
+/**
+ * Python with a `pyproject.toml`; uv installs the dependencies.
+ */
+"uv"
+/**
+ * Whether an installed extension can run.
+ */
+export type ExtensionStatus = 
+/**
+ * Configured; its server runs while it's enabled.
+ */
+"ready" | 
+/**
+ * A required setting is missing.
+ */
+"needsSetup" | 
+/**
+ * It's for another operating system.
+ */
+"unsupported" | 
+/**
+ * Its files or manifest can't be read.
+ */
+"broken"
+/**
+ * A setting value. Folders and files with `multiple` take a list.
+ */
+export type ExtensionValue = boolean | number | string[] | string
+/**
  * A rating with an optional note ("what went wrong").
  */
 export type Feedback = { rating: Rating; note: string | null; createdAt: number }
@@ -1505,7 +1812,12 @@ restarts: number;
 /**
  * Has a stored OAuth sign-in.
  */
-signedIn: boolean; updatedAt: number }
+signedIn: boolean; 
+/**
+ * The desktop extension this server comes from (its display name). Such servers are
+ * managed in Settings → Extensions, not edited as config entries.
+ */
+extension: string | null; updatedAt: number }
 /**
  * Where a server is in its life cycle.
  */
@@ -1684,6 +1996,26 @@ thinkingBudget: number }
 export type NewMemory = { projectId: string | null; text: string }
 export type NewProject = { name: string; description: string }
 /**
+ * What a picker should choose.
+ */
+export type PickKind = 
+/**
+ * A `.mcpb` (or older `.dxt`) bundle.
+ */
+"extension" | 
+/**
+ * A zipped skill (`.zip`, `.skill`).
+ */
+"skillArchive" | 
+/**
+ * Any folder (a skill folder, or a folder setting of an extension).
+ */
+"folder" | 
+/**
+ * Any file (a file setting of an extension).
+ */
+"file"
+/**
  * Response of [`ping`]: proves the IPC round trip and the generated bindings work.
  */
 export type PingResponse = { message: string; appName: string; appVersion: string; coreVersion: string }
@@ -1785,6 +2117,42 @@ active: string | null;
  * Why `wanted` couldn't be registered, for Settings.
  */
 error: string | null }
+/**
+ * A skill in Oxide's skills folder.
+ */
+export type Skill = { 
+/**
+ * From the front matter (falls back to the folder name).
+ */
+name: string; description: string; 
+/**
+ * The folder's name inside the skills folder.
+ */
+folder: string; path: string; enabled: boolean; license: string | null; 
+/**
+ * Files besides `SKILL.md`.
+ */
+files: number; 
+/**
+ * Why it can't be used (no `SKILL.md`, no description, …).
+ */
+problem: string | null; updatedAt: number }
+/**
+ * A skill with its instructions, for viewing and editing.
+ */
+export type SkillDetail = { skill: Skill; 
+/**
+ * `SKILL.md` after the front matter.
+ */
+body: string; 
+/**
+ * Other files, as paths relative to the skill's folder.
+ */
+fileList: string[] }
+/**
+ * A skill written in Settings.
+ */
+export type SkillInput = { name: string; description: string; body: string }
 /**
  * Creates a chat together with its first user message.
  */
@@ -1975,7 +2343,11 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * An artifact made or changed (the label is its title).
  */
-"artifact"
+"artifact" | 
+/**
+ * A skill's instructions or files were loaded (the label is the skill's name).
+ */
+"skill"
 /**
  * Token counts for one reply.
  */

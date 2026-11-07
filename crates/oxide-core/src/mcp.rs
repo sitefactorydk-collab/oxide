@@ -106,6 +106,9 @@ pub struct McpServerState {
     pub restarts: u32,
     /// Has a stored OAuth sign-in.
     pub signed_in: bool,
+    /// The desktop extension this server comes from (its display name). Such servers are
+    /// managed in Settings → Extensions, not edited as config entries.
+    pub extension: Option<String>,
     pub updated_at: Timestamp,
 }
 

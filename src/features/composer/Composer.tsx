@@ -15,6 +15,8 @@ import { limitsSummary } from "@/features/attachments/limits";
 import { useAttachments } from "@/features/attachments/useAttachments";
 import { findListing, findModel } from "@/features/models/models";
 import { useModels } from "@/features/models/queries";
+import { isExtensionFile, useExtensionDrop } from "@/features/extensions/store";
+import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { cn } from "@/lib/cn";
 import { inTauri } from "@/lib/platform";
 import { EffortMenu, ThinkingToggle } from "./ReasoningControls";
@@ -68,10 +70,19 @@ export function Composer({
   const providerKind = findListing(models, modelId)?.providerKind;
 
   const { addPaths, addFiles } = files;
+  const openSettings = useOpenSettings();
   const dropHandlers = useMemo(
     () => ({
       onPaths: (paths: string[]) => {
-        addPaths(paths);
+        // A desktop extension opens its install dialog instead of being attached.
+        const bundle = paths.find(isExtensionFile);
+        if (bundle) {
+          useExtensionDrop.getState().request(bundle);
+          openSettings("extensions");
+        }
+        const rest = paths.filter((p) => !isExtensionFile(p));
+        if (rest.length === 0) return;
+        addPaths(rest);
         textareaRef.current?.focus();
       },
       onFiles: (list: File[]) => {
@@ -79,7 +90,7 @@ export function Composer({
         textareaRef.current?.focus();
       },
     }),
-    [addPaths, addFiles],
+    [addPaths, addFiles, openSettings],
   );
   const dragging = useFileDrop(dropHandlers);
 

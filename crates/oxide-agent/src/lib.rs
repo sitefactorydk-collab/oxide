@@ -11,6 +11,7 @@
 //! - [`knowledge`]: project knowledge files, full or searched (`project_search`).
 //! - [`artifacts`]: the `artifact` tool (documents, code, pages, diagrams, React).
 //! - [`memory`]: learning memory items from chats (opt-in).
+//! - [`skills`]: the skills folder and the `load_skill` tool.
 //!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
@@ -25,6 +26,7 @@ pub mod knowledge;
 pub mod memory;
 mod registry;
 pub mod sampling;
+pub mod skills;
 mod title;
 pub mod tools;
 
@@ -36,5 +38,6 @@ pub use context::{
 pub use error::AgentError;
 pub use registry::{Connector, ModelRegistry};
 pub use sampling::run_sampling;
+pub use skills::Skills;
 pub use title::{clean_title, pick_title_model};
 pub use tools::{McpTools, Tools, WebTools};

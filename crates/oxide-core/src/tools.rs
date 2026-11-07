@@ -60,6 +60,8 @@ pub enum ToolUsageKind {
     ProjectSearch,
     /// An artifact made or changed (the label is its title).
     Artifact,
+    /// A skill's instructions or files were loaded (the label is the skill's name).
+    Skill,
 }
 
 /// One tool call, logged per chat.

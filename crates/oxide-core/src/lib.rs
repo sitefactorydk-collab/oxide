@@ -9,6 +9,7 @@ pub mod attachment;
 pub mod chat;
 pub mod conversation;
 pub mod desktop;
+pub mod extension;
 pub mod mcp;
 pub mod memory;
 pub mod message;
@@ -29,6 +30,11 @@ pub use chat::{
 };
 pub use conversation::{Conversation, SearchHit, StartConversation};
 pub use desktop::DesktopAction;
+pub use extension::{
+    Extension, ExtensionField, ExtensionFieldType, ExtensionInfo, ExtensionItem, ExtensionPreview,
+    ExtensionServerType, ExtensionStatus, ExtensionValue, LOAD_SKILL, Skill, SkillDetail,
+    SkillInput,
+};
 pub use mcp::{
     ChatTools, ImportCandidate, ImportPreview, ImportStatus, McpAnswer, McpAsk, McpCapabilities,
     McpConfigFile, McpContent, McpEra, McpEvent, McpInteraction, McpLogLine, McpLogSource,

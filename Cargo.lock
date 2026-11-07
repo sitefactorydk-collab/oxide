@@ -3673,6 +3673,8 @@ name = "oxide-mcp"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "crc32fast",
+ "flate2",
  "futures-util",
  "oxide-core",
  "rand 0.8.8",

@@ -72,15 +72,15 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "extensions",
     label: "Extensions",
     icon: Puzzle,
-    phase: 10,
-    blurb: "Install and configure desktop extensions (.mcpb).",
+    blurb:
+      "Desktop extensions (.mcpb) bundle an MCP server you can install in one step. Settings marked sensitive are kept in the system keychain.",
   },
   {
     id: "skills",
     label: "Skills",
     icon: Sparkles,
-    phase: 10,
-    blurb: "Folders of instructions the model can load on demand.",
+    blurb:
+      "Instructions for particular kinds of tasks. Models see each skill’s name and description and load the rest when a task calls for it.",
   },
   {
     id: "permissions",

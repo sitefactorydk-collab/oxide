@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::future::BoxFuture;
+use oxide_core::LOAD_SKILL;
 use oxide_core::artifact::ARTIFACT_TOOL;
 use oxide_core::tools::{PROJECT_SEARCH, PROVIDER_SERVER, WEB_FETCH, WEB_SEARCH};
 use oxide_core::{
@@ -24,6 +25,7 @@ use oxide_store::SecretStore;
 use serde_json::{Map, Value, json};
 
 use crate::attachments::AttachmentStore;
+use crate::skills::Skills;
 pub use web::{Fetched, SearchHit, WebTools};
 
 /// Most characters of text one tool result gives the model.
@@ -77,6 +79,8 @@ pub enum Builtin {
     ProjectSearch,
     /// Create and change artifacts (run by the chat service, which knows the chat).
     Artifact,
+    /// Read a skill's instructions or files.
+    LoadSkill,
 }
 
 impl Builtin {
@@ -86,6 +90,7 @@ impl Builtin {
             Builtin::WebFetch => WEB_FETCH,
             Builtin::ProjectSearch => PROJECT_SEARCH,
             Builtin::Artifact => ARTIFACT_TOOL,
+            Builtin::LoadSkill => LOAD_SKILL,
         }
     }
 }
@@ -137,6 +142,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::WebFetch) => ToolUsageKind::WebFetch,
             ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
             ToolKind::Builtin(Builtin::Artifact) => ToolUsageKind::Artifact,
+            ToolKind::Builtin(Builtin::LoadSkill) => ToolUsageKind::Skill,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -156,6 +162,8 @@ pub struct ToolSet {
     pub entries: Vec<ToolEntry>,
     /// Provider-run tools (Anthropic web search), as JSON definitions.
     pub server_tools: Vec<Value>,
+    /// Skills the model may load (`load_skill` is in the set): name and description.
+    pub skills: Vec<(String, String)>,
 }
 
 impl ToolSet {
@@ -230,6 +238,7 @@ pub struct Tools {
     mcp: Option<Arc<dyn McpTools>>,
     pub web: WebTools,
     attachments: Option<AttachmentStore>,
+    skills: Option<Skills>,
 }
 
 impl Tools {
@@ -242,7 +251,18 @@ impl Tools {
             mcp,
             web: WebTools::new(secrets),
             attachments,
+            skills: None,
         }
+    }
+
+    /// Gives models the skills in this folder (`load_skill`).
+    pub fn with_skills(mut self, skills: Skills) -> Self {
+        self.skills = Some(skills);
+        self
+    }
+
+    pub fn skills(&self) -> Option<&Skills> {
+        self.skills.as_ref()
     }
 
     pub fn with_web(mut self, web: WebTools) -> Self {
@@ -280,6 +300,22 @@ impl Tools {
         if chat.allows_builtin(ARTIFACT_TOOL) {
             set.entries.push(crate::artifacts::artifact_entry());
             taken.insert(ARTIFACT_TOOL.into());
+        }
+        if chat.allows_builtin(LOAD_SKILL)
+            && let Some(skills) = &self.skills
+        {
+            let dir = skills.clone();
+            let usable = tokio::task::spawn_blocking(move || dir.usable())
+                .await
+                .unwrap_or_default();
+            if !usable.is_empty() {
+                set.skills = usable
+                    .into_iter()
+                    .map(|s| (s.name, s.description))
+                    .collect();
+                set.entries.push(crate::skills::load_skill_entry());
+                taken.insert(LOAD_SKILL.into());
+            }
         }
         if let Some(mcp) = &self.mcp {
             let mut tools = mcp.tools();
@@ -335,6 +371,7 @@ impl Tools {
             ToolKind::Builtin(Builtin::Artifact) => {
                 ToolOutput::error("Artifacts are made in the chat, not here.")
             }
+            ToolKind::Builtin(Builtin::LoadSkill) => self.load_skill(input).await,
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp
@@ -354,6 +391,27 @@ impl Tools {
         out.duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         cap_text(&mut out.content);
         out
+    }
+
+    async fn load_skill(&self, input: &Value) -> ToolOutput {
+        let Some(skills) = self.skills.clone() else {
+            return ToolOutput::error("Skills aren't available.");
+        };
+        let Some(name) = input.get("name").and_then(Value::as_str).map(str::to_owned) else {
+            return ToolOutput::error("load_skill needs a \"name\" string.");
+        };
+        let path = input.get("path").and_then(Value::as_str).map(str::to_owned);
+        let res = tokio::task::spawn_blocking(move || skills.load(&name, path.as_deref()))
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+        match res {
+            Ok(text) => ToolOutput {
+                content: vec![ContentBlock::text(text)],
+                is_error: false,
+                duration_ms: 0,
+            },
+            Err(e) => ToolOutput::error(e),
+        }
     }
 
     async fn web_search(&self, input: &Value, settings: &AppSettings) -> ToolOutput {
@@ -540,6 +598,7 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
     let (title, description, schema) = match b {
         Builtin::ProjectSearch => return crate::knowledge::project_search_entry(),
         Builtin::Artifact => return crate::artifacts::artifact_entry(),
+        Builtin::LoadSkill => return crate::skills::load_skill_entry(),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \
@@ -702,6 +761,10 @@ pub fn usage_label(entry_tool: &str, input: &Value) -> Option<String> {
         WEB_FETCH => s("url"),
         PROJECT_SEARCH => s("query"),
         ARTIFACT_TOOL => s("title").or_else(|| s("id")),
+        LOAD_SKILL => s("name").map(|n| match s("path") {
+            Some(p) => format!("{n} · {p}"),
+            None => n,
+        }),
         _ => [
             "path", "file", "filename", "url", "uri", "query", "q", "name", "title", "command",
             "repoName",

@@ -21,6 +21,9 @@ base64.workspace = true
 sha2 = "0.10"
 rand = "0.8"
 url = "2"
+# .mcpb bundles and zipped skills are zip files (see `archive.rs`).
+flate2 = "1"
+crc32fast = "1"
 
 # Job Objects tie a server's whole process tree to Oxide (see `process/windows.rs`).
 [target.'cfg(windows)'.dependencies]
