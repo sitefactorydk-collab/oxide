@@ -1,5 +1,14 @@
 import { useQueries } from "@tanstack/react-query";
-import { FileText, Globe, MessageSquareText, Paperclip, Plug, Plus, Settings2 } from "lucide-react";
+import {
+  FileText,
+  Globe,
+  MessageSquareText,
+  Paperclip,
+  Plug,
+  Plus,
+  Settings2,
+  Shapes,
+} from "lucide-react";
 import { useState } from "react";
 import {
   commands,
@@ -148,6 +157,14 @@ export function PlusMenu({
           >
             <Globe />
             Web search
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={switches.artifactsOn}
+            onCheckedChange={(v) => switches.toggleArtifacts(v === true)}
+            onSelect={(e) => e.preventDefault()}
+          >
+            <Shapes />
+            Artifacts
           </MenuCheckboxItem>
           <MenuSub>
             <MenuSubTrigger>

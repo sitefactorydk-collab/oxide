@@ -58,6 +58,8 @@ pub enum ToolUsageKind {
     ProviderTool,
     /// A search of the project's knowledge.
     ProjectSearch,
+    /// An artifact made or changed (the label is its title).
+    Artifact,
 }
 
 /// One tool call, logged per chat.

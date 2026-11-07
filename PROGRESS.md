@@ -4,7 +4,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 
 ## Status
 - **Last completed:** Phase 7 — Projects & memory (`402259b`, then fixes from the manual check; exit check passed on Strata on 2026-11-07)
-- **Next phase:** Phase 8 — Artifacts
+- **Current phase:** Phase 8 — Artifacts (written; Windows checks and exit check pending)
+- **Next phase:** Phase 9 — Desktop integration
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -25,14 +26,56 @@ The current phase and hand-off notes live here. Every phase chat reads this file
   - Builds use `CARGO_TARGET_DIR=$HOME/oxide-target-linux`. clippy and rustfmt work there.
   - New crates must already be in the vendor bundle. `futures-util` stays `default-features = false` because `futures-macro` isn't vendored.
   - Frontend files: copy them to the device and run tsc/eslint/prettier there (see above), then copy the formatted files back to the mirror.
+- **Syncing many files into the linked folder** (added in Phase 8): without delete permission, `tar x` fails on existing files (it unlinks first); `tar xzf <file> --overwrite` writes them in place.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 8 — Artifacts — 2026-11-07
+Status: in progress. Code and tests written; `scripts\win\phase8.cmd` (npm install, all checks, `vite build`, commit when green) waits for the Windows run, then the manual exit check below.
+
+Exit criteria (check by hand in `cargo tauri dev`; any model with tools, ideally Anthropic or a larger local model):
+- [ ] **Each type renders.** Ask for each as an artifact, e.g. “Write a short Markdown guide to brewing coffee as an artifact”, “a Python script that renames photos by date”, “an SVG of a sun”, “a Mermaid flowchart of a pull request review”, “a React counter app with a lucide icon, styled with Tailwind”. While the model writes, the panel opens beside the chat and shows the source live (“Writing…”); when it's saved it switches to the preview. Each reply has a card in the thread that reopens the artifact.
+- [ ] **Updates create versions.** “Make the guide's title shorter.” → the same card kind shows “Edited version 2”, the panel says “Version 2 of 2”, ‹ › switches between versions. Code ↔ Preview, Copy, Download (save dialog) and Full screen (Esc leaves) work; the panel's left edge resizes it.
+- [ ] **HTML can't reach Tauri.** Ask: “Create an html artifact with exactly this content:” and paste
+  `<!doctype html><pre id=o></pre><script>let p;try{p=String(!!parent.document)}catch(e){p='blocked ('+e.name+')'}o.textContent='__TAURI__: '+typeof window.__TAURI__+'\n__TAURI_INTERNALS__: '+typeof window.__TAURI_INTERNALS__+'\nparent.document: '+p;fetch('https://example.com').then(()=>o.textContent+='\nfetch: allowed (bad)',()=>o.textContent+='\nfetch: blocked')</script>`
+  Expected: `undefined`, `undefined`, `blocked (SecurityError)`, `fetch: blocked`.
+- [ ] `/artifacts` lists them across chats (filter by type, search); clicking one opens its chat with the panel; delete works.
+- [ ] The “+” menu's **Artifacts** switch turns the tool off for a chat.
+
+Done:
+- **`oxide-core`:** `artifact.rs`: `ArtifactKind` (markdown, code, html, svg, mermaid, react; forgiving `parse`), `Artifact`, `ArtifactVersion`, `ArtifactDetail`, `ArtifactSummary`, `ARTIFACT_TOOL`, `MAX_ARTIFACT_CHARS` (1M), `clean_key`/`key_from_title`/`clean_title`, `file_name` + extensions per language, `apply_update` (exactly one match; forgives surrounding whitespace and CRLF). `ToolUsageKind::Artifact`. `StreamEvent::ToolInputDelta { id, partialJson }`.
+- **`oxide-store`:** migration `0007_artifacts.sql` (`artifacts` with `UNIQUE(conversation_id, key)`, `artifact_versions`; both cascade with the chat). `artifacts.rs`: `save_artifact_version` (one transaction: create or bump the version), `artifact_by_key`, `conversation_artifacts`, `list_artifacts` (with chat title and an excerpt), `get_artifact`, `artifact_version`, `delete_artifact`.
+- **`oxide-agent`:** `artifacts.rs`: the `artifact` tool (schema ordered command, id, type, title, language, content, old_str, new_str so the title arrives first; description says when to use artifacts and what each type may do), `run_artifact` (guesses the command when missing, strips a wrapping code fence, keeps the type/title/language of earlier versions, readable errors for unknown ids, ambiguous `old_str`, missing type). The result is a text line plus an `ArtifactRef` block (id, title, version). `Builtin::Artifact`: in every tool set unless the chat switches it off (`disabledBuiltins: ["artifact"]`), never asks for approval, runs in `ChatService` like `project_search`, logged as `artifact` with the title. The system prompt says when to make one (`PromptContext.artifacts`). Tool-call arguments are now sent to the UI while they stream (`ToolInputDelta`, buffered with text every 40 ms).
+- **`src-tauri`:** commands `list_artifacts`, `conversation_artifacts`, `get_artifact`, `delete_artifact`, `save_artifact_file` (save dialog). `artifact_frame.rs`: the `oxide-artifact` URI scheme (Windows: `http://oxide-artifact.localhost/`) serves `artifact-frame.html` and its assets with the frame's own CSP (inline scripts and `unsafe-eval` allowed, https scripts/styles/images allowed, `connect-src 'none'`, `form-action 'none'`, `frame-src 'none'`), `Access-Control-Allow-Origin: *` (module scripts from the opaque-origin frame are CORS requests) and any CSP `<meta>` stripped. Debug builds proxy the Vite dev server (`build.devUrl`, `reqwest`); release builds read the bundled assets. The app CSP gains `frame-src` for it.
+- **Frontend:**
+  - `features/artifacts/`: `ArtifactPanel` (beside the chat, resizable from its left edge, width remembered; header with kind icon, title, kind line, “Writing…/Updating…”, version switcher, Preview/Code, Copy, Download, Full screen, Close), `ArtifactCard` (inline card; “Writing…” while streaming; “Edited version n”), `ArtifactsPage` (gallery: type chips, filter, delete with confirmation, open → chat + panel), `store.ts` (Zustand: target = chat + artifact/version or a live call; dismissed live call isn't reopened), `partial.ts` (reads string fields of streaming JSON, unescaping as it goes), `kinds.ts`, `KindIcon.tsx`, `queries.ts`.
+  - Renderers (`views/`): Markdown (the chat's renderer), code (`CodeView`, Shiki), SVG as an `<img>` data URL (scripts never run), Mermaid (bundled `mermaid`, `securityLevel: "strict"`, follows the theme), HTML and React in `FrameView`: `<iframe sandbox="allow-scripts allow-forms allow-modals allow-downloads">` (no `allow-same-origin`), a `ready → render → rendered | error` postMessage protocol checked against the frame's window, errors shown as a note.
+  - `src/frame/` + `artifact-frame.html` (second Vite entry): removes any `__TAURI*` globals, writes HTML artifacts into the document, compiles React artifacts with bundled `@babel/standalone` (TypeScript + JSX → CommonJS), evaluates them with a `require` limited to `react`, `react-dom`, `react-dom/client`, `lucide-react`, picks the default export (or the first exported function, or an unexported `App`), styles with `@tailwindcss/browser`, and wraps it in an error boundary.
+  - `useChatEvents`: opens the panel when an artifact's content starts streaming and switches it to the saved artifact on the tool result (`settle`); invalidates artifact queries. `streams.ts` appends `toolInputDelta` to the call's arguments. `ToolCallBlock` draws artifact calls as cards (failed ones as a normal line with the error). “+” menu: **Artifacts** switch. “Used in this chat” lists Artifacts.
+- **Tests:** Rust (Linux): core 40, store 43, agent 72, llm 45, mcp 51. New: kinds/keys/file names/updates (core); versions per key, gallery order, cascade, limits (store); create/update/rewrite, fence stripping, errors (agent `artifacts.rs`); `artifacts_are_made_without_asking_and_stream_their_input` (chat service: no approval card, input deltas before the call, version saved with the reply's id, logged); system prompt; tool sets. `src-tauri` (Windows only): frame CSP, CSP meta stripping, allowed paths. Vitest: `partial.test.ts`, `store.test.ts`, `src/frame/run.test.ts`, `Artifacts.test.tsx` (live panel → saved preview, versions/code/copy/download/full screen, SVG/Mermaid/HTML frame protocol and sandbox, failed calls, “+” switch, gallery). The fake backend implements the artifact commands (`saveArtifact` helper).
+
+Deviations from PLAN.md (and why):
+- **The frame is served by a custom protocol, not `srcdoc`:** a `srcdoc` frame inherits the app's CSP (no inline scripts in release builds), so artifacts couldn't run their own scripts. A separate origin with its own CSP also blocks network requests. PLAN.md's decisions table now records it.
+- **SVG is shown as an `<img>`** rather than sanitized markup: an SVG loaded as an image can't run scripts or load anything, which needs no sanitizer.
+- **HTML artifacts may load scripts, styles and images from https URLs** (CDN libraries), but can't make requests (`connect-src 'none'`).
+- **Artifacts are on by default in every chat with a tools-capable model**; the “+” menu switches them off per chat. There's no global setting yet.
+
+Known issues / TODO carried forward:
+- `src/bindings/index.ts` was edited by hand on the agent side; `cargo test` (export_bindings) regenerates it on Windows.
+- React artifacts can import only `react`, `react-dom` and `lucide-react` (the tool description says so). Charts libraries (e.g. Recharts) aren't bundled.
+- Artifacts made in a branch that was later regenerated stay in the chat's list (versions aren't tied to the visible branch).
+- Errors inside HTML artifacts aren't reported back (writing the page replaces the frame's listeners); React errors are.
+
+Notes for Phase 9:
+- The artifact frame is a pattern for other untrusted content: a URI scheme handler in `src-tauri` with its own CSP, and a sandboxed `<iframe>` without `allow-same-origin`.
+
+Verified: clippy ✅ (library crates, Linux) tests ✅ (library crates, Linux) typecheck ✅ lint ✅ (device, before npm install) — Windows run pending.
 
 ## Phase 7 — Projects & memory — 2026-11-07
 Status: done. `scripts\win\phase7.cmd` committed `402259b phase 7: projects & memory` on the third run (fixes below); the user then ran the exit check by hand (all five parts passed), and the fixes from that check were committed as `phase 7: fixes from the manual check`.
 
 Fixes after the first Windows run (2026-11-07): everything passed except 2 of 133 Vitest tests.
 - **“Moved to …” toast never showed** (a real bug): the menu item that started the move unmounts when the menu closes, and TanStack Query skips per-call `mutate` callbacks of unmounted components. `ChatMenuItems` now uses `mutateAsync().then(toast)`. **Don't put `onSuccess` on `mutate()` calls started from menu items.**
-- A test read “No files yet” before the knowledge query had loaded; it now waits (`findByText`). The same test closes the file viewer with its Close button (Escape didn’	 close it under jsdom).
+- A test read “No files yet” before the knowledge query had loaded; it now waits (`findByText`). The same test closes the file viewer with its Close button (Escape didn’t close it under jsdom).
 
 Manual check by the user (2026-11-07, `402259b`, Strata `swift-iq2_xs`):
 - Part 1 (instructions): the project chat answered in Danish **with thinking on**, but in English **with thinking off** (twice each); the chat outside the project answered in English. Small local models without thinking drop instructions buried mid-prompt. Fix: `<project_instructions>` moved to the very end of the system prompt (after memory), with firmer wording (every reply, including language/tone/format; only the user's own messages override them). Test: `system_prompt_carries_project_search_and_memory` checks the order.

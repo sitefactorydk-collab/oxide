@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetArtifactPanel } from "@/features/artifacts/store";
 import { useBranches } from "@/features/chat/branches";
 import { resetMcpUi } from "@/features/mcp/store";
 import { resetStreams } from "@/features/chat/streams";
@@ -65,4 +66,5 @@ afterEach(() => {
   useBranches.setState({ leaf: {} });
   useToasts.setState({ toasts: [] });
   resetMcpUi();
+  resetArtifactPanel();
 });

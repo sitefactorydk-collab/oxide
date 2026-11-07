@@ -129,6 +129,13 @@ pub enum StreamEvent {
         id: String,
         name: String,
     },
+    /// More of a tool call's arguments (JSON text, in pieces). Lets the UI show an artifact
+    /// while it's being written.
+    #[serde(rename_all = "camelCase")]
+    ToolInputDelta {
+        id: String,
+        partial_json: String,
+    },
     /// A tool call's arguments are complete. `server` is the MCP server (`None` for built-in
     /// tools, `Some("anthropic")` for a tool the provider runs itself); `tool` is the tool's
     /// own name and `title` its display name.

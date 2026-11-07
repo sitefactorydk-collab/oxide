@@ -1,6 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands, events } from "@/bindings";
+import { artifactKeys } from "@/features/artifacts/queries";
+import { artifactCallInfo, artifactRefOf } from "@/features/artifacts/partial";
+import { useArtifactPanel } from "@/features/artifacts/store";
 import { memoryKeys } from "@/features/memory/queries";
 import { toolKeys } from "@/features/tools/queries";
 import { toast } from "@/lib/toast";
@@ -39,8 +42,26 @@ export function useChatEvents(): void {
       events.chatStream.listen(({ payload }) => {
         useStreams.getState().apply(payload);
         const e = payload.event;
+        const cid = payload.conversationId;
+        if (e.type === "toolInputDelta") {
+          // An artifact being written opens in the panel as soon as its content starts.
+          const block = useStreams
+            .getState()
+            .live[cid]?.blocks.find((b) => b.kind === "tool" && b.call.id === e.id);
+          if (block?.kind === "tool" && block.call.name === "artifact") {
+            const info = artifactCallInfo(block.call.inputJson);
+            if (info.content !== null && info.command !== "update") {
+              useArtifactPanel.getState().openLive(cid, e.id);
+            }
+          }
+        }
         if (e.type === "toolResult") {
-          void qc.invalidateQueries({ queryKey: toolKeys.usage(payload.conversationId) });
+          void qc.invalidateQueries({ queryKey: toolKeys.usage(cid) });
+          const ref = artifactRefOf(e.content);
+          if (ref) {
+            void qc.invalidateQueries({ queryKey: artifactKeys.all });
+            useArtifactPanel.getState().settle(cid, e.id, ref.artifactId, ref.version);
+          }
         }
         if (e.type === "toolApproval" || e.type === "done" || e.type === "failed") {
           void qc.invalidateQueries({ queryKey: toolKeys.pending });

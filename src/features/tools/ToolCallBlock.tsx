@@ -7,10 +7,12 @@ import {
   Loader2,
   Plug,
   ShieldAlert,
+  Shapes,
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
+import { ArtifactCard } from "@/features/artifacts/ArtifactCard";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
 import { useStreams, type ToolCallView } from "@/features/chat/streams";
 import { useMcpUi } from "@/features/mcp/store";
@@ -28,7 +30,9 @@ function KindIcon({ call }: { call: ToolCallView }) {
         ? FileText
         : kind === "project"
           ? FolderSearch
-          : Plug;
+          : kind === "artifact"
+            ? Shapes
+            : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -207,8 +211,19 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
   );
 }
 
-/** A tool call in the thread: one line that opens to show the arguments and the result. */
+/**
+ * A tool call in the thread. Artifacts show as a card that opens the artifact panel (failed
+ * ones as a normal line, so the error can be read).
+ */
 export function ToolCallBlock({ call }: { call: ToolCallView }) {
+  if (toolKind(call) === "artifact" && call.status !== "error") {
+    return <ArtifactCard call={call} />;
+  }
+  return <ToolLine call={call} />;
+}
+
+/** One line that opens to show the arguments and the result. */
+function ToolLine({ call }: { call: ToolCallView }) {
   const [open, setOpen] = useState(false);
   const { action, detail } = callHeadline(call);
   const waiting = call.status === "awaitingApproval" && call.approval !== null;

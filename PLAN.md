@@ -37,6 +37,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Frontend state | Zustand for UI state, TanStack Query for backend data |
 | Styling | Tailwind CSS v4 + CSS variables design tokens. Radix UI primitives for menus, dialogs and tooltips |
 | Markdown | `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` + Shiki for code (JavaScript regex engine, since the CSP blocks WASM; colours from a CSS-variables theme in `tokens.css`). Model output is pre-processed (`components/markdown/prepare.ts`) for LaTeX delimiters, prices vs `$math$`, and partial input while streaming |
+| Artifacts | Built-in `artifact` tool (create / update / rewrite). HTML and React run in an `<iframe>` sandboxed without `allow-same-origin`, loaded from Oxide's own `oxide-artifact` URI scheme with its own CSP (inline scripts yes, network requests no) — not `srcdoc`, which would inherit the app's CSP (Phase 8) |
 | Location | `C:\AI Apps\Oxide` |
 
 ### Repository layout (target)

@@ -28,6 +28,7 @@ use serde_json::Value;
 use tokio::sync::{oneshot, watch};
 
 use crate::AgentError;
+use crate::artifacts::run_artifact;
 use crate::context::{
     PromptContext, build_messages, plan_request, request_messages, system_prompt,
 };
@@ -557,6 +558,7 @@ impl ChatService {
             web_search: tool_set.can_search(),
             web_fetch: tool_set.can_fetch(),
             connectors: tool_set.servers(),
+            artifacts: tool_set.can_make_artifacts(),
             project_name: project.as_ref().map(|p| p.name.as_str()),
             project_instructions: project.as_ref().map(|p| p.instructions.as_str()),
             knowledge_search,
@@ -783,6 +785,8 @@ impl ChatService {
         match entry.server() {
             // Searching the project's own files never asks.
             None if entry.kind == ToolKind::Builtin(Builtin::ProjectSearch) => false,
+            // Artifacts only write into Oxide's own database.
+            None if entry.kind == ToolKind::Builtin(Builtin::Artifact) => false,
             None => setup.settings.tools.ask_before_web,
             Some(_) => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -947,6 +951,12 @@ impl ChatService {
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
+                } else if r.entry.kind == ToolKind::Builtin(Builtin::Artifact) {
+                    let started = Instant::now();
+                    let mut out = run_artifact(&self.store, cid, reply_id, &r.input).await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
                 } else {
                     self.tools
                         .run(&r.entry, &r.input, &r.call.id, settings)
@@ -1045,6 +1055,9 @@ impl ChatService {
         if !reply.pending_text.is_empty() {
             let text = std::mem::take(&mut reply.pending_text);
             self.emit(cid, StreamEvent::TextDelta { text });
+        }
+        for (id, partial_json) in std::mem::take(&mut reply.pending_input) {
+            self.emit(cid, StreamEvent::ToolInputDelta { id, partial_json });
         }
     }
 
@@ -1295,6 +1308,8 @@ struct ReplyBuilder {
     usage_step: Option<Usage>,
     pending_text: String,
     pending_thinking: String,
+    /// Tool-call arguments not yet sent to the UI: (call id, JSON text).
+    pending_input: Vec<(String, String)>,
 }
 
 fn add_usage(a: Option<Usage>, b: Option<Usage>) -> Option<Usage> {
@@ -1385,6 +1400,10 @@ impl ReplyBuilder {
             ChatEvent::ToolUseDelta { id, partial_json } => {
                 if let Some(json) = self.input_of(&id) {
                     json.push_str(&partial_json);
+                    match self.pending_input.last_mut() {
+                        Some((last, text)) if *last == id => text.push_str(&partial_json),
+                        _ => self.pending_input.push((id, partial_json)),
+                    }
                 }
                 vec![]
             }
@@ -2326,7 +2345,7 @@ pub(crate) mod tests {
         let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["web_fetch", "fs__list", "fs__read", "fs__write"]
+            vec!["web_fetch", "artifact", "fs__list", "fs__read", "fs__write"]
         );
         assert!(
             reqs[0]
@@ -2755,6 +2774,83 @@ pub(crate) mod tests {
         assert!(system.contains("Answer like a pirate."));
         assert!(!system.contains("project_search"));
         assert!(req.tools.iter().all(|t| t.name != "project_search"));
+    }
+
+    #[tokio::test]
+    async fn artifacts_are_made_without_asking_and_stream_their_input() {
+        let mut first = vec![text("Here's the page.")];
+        first.extend(call(
+            "a1",
+            "artifact",
+            r#"{"command":"create","id":"hello","type":"html","title":"Hello page","content":"<h1>Hi</h1>"}"#,
+        ));
+        let f = fixture(vec![
+            turn(first, StopReason::ToolUse),
+            turn(vec![text("Made it.")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.tools.ask_before_web = true; // doesn't apply to artifacts
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+
+        let reqs = f.fake.requests();
+        assert!(reqs[0].tools.iter().any(|t| t.name == "artifact"));
+        let system = reqs[0].system.as_deref().expect("system");
+        assert!(system.contains("make artifacts"), "{system}");
+        let events = f.sink.events();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolApproval { .. })),
+            "artifacts never ask"
+        );
+        // The arguments reach the UI while they stream, before the call runs.
+        let streamed: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolInputDelta { id, partial_json } if id == "a1" => {
+                    Some(partial_json.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(streamed.contains("<h1>Hi</h1>"), "{streamed}");
+        let delta_at = events
+            .iter()
+            .position(|e| matches!(e, StreamEvent::ToolInputDelta { .. }));
+        let call_at = events
+            .iter()
+            .position(|e| matches!(e, StreamEvent::ToolCall { .. }));
+        assert!(delta_at < call_at);
+
+        let artifacts = f
+            .store
+            .conversation_artifacts(&f.chat.id)
+            .await
+            .expect("lists");
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].title, "Hello page");
+        let reply = saved(&f);
+        let version = f
+            .store
+            .artifact_version(&artifacts[0].id, None)
+            .await
+            .expect("version");
+        assert_eq!(version.message_id.as_deref(), Some(reply.id.as_str()));
+        assert!(reply.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolResult { content, is_error: false, .. }
+                if content.iter().any(|c| matches!(c, ContentBlock::ArtifactRef { version: 1, .. }))
+        )));
+        let used = f.store.tool_usage(&f.chat.id).await.expect("log");
+        assert_eq!(used[0].kind, ToolUsageKind::Artifact);
+        assert_eq!(used[0].label.as_deref(), Some("Hello page"));
     }
 
     #[tokio::test]

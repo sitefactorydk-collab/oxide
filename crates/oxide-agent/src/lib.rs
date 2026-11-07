@@ -9,10 +9,12 @@
 //! - [`AttachmentStore`]: checks, converts and stores attached files.
 //! - [`export`]: conversations as Markdown or JSON.
 //! - [`knowledge`]: project knowledge files, full or searched (`project_search`).
+//! - [`artifacts`]: the `artifact` tool (documents, code, pages, diagrams, React).
 //! - [`memory`]: learning memory items from chats (opt-in).
 //!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
+pub mod artifacts;
 pub mod attachments;
 mod chat;
 mod context;

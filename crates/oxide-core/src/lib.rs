@@ -4,6 +4,7 @@
 //! `serde` + `specta::Type`, so the frontend gets it through the generated bindings.
 //! Timestamps are Unix milliseconds (`i64`), exported to TypeScript as `number`.
 
+pub mod artifact;
 pub mod attachment;
 pub mod chat;
 pub mod conversation;
@@ -16,6 +17,9 @@ pub mod provider;
 pub mod settings;
 pub mod tools;
 
+pub use artifact::{
+    ARTIFACT_TOOL, Artifact, ArtifactDetail, ArtifactKind, ArtifactSummary, ArtifactVersion,
+};
 pub use attachment::{
     ATTACHMENT_LIMITS, Attachment, AttachmentKind, AttachmentLimits, AttachmentSource,
 };

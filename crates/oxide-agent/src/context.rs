@@ -192,6 +192,8 @@ pub struct PromptContext<'a> {
     pub web_fetch: bool,
     /// MCP servers whose tools are on.
     pub connectors: Vec<String>,
+    /// The `artifact` tool is on.
+    pub artifacts: bool,
     /// The chat's project, by name.
     pub project_name: Option<&'a str>,
     /// The chat's project instructions.
@@ -264,6 +266,13 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
             ctx.connectors.join(", ")
         ));
     }
+    if ctx.artifacts {
+        tools.push(
+            "make artifacts (documents, code, web pages, diagrams and small apps shown beside \
+             the chat)"
+                .to_owned(),
+        );
+    }
     if !tools.is_empty() {
         s.push_str(&format!(
             "\n\nYou can {}. Use tools when they help answer better or are needed for the task; \
@@ -278,6 +287,14 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                  current office holders, software versions. Write queries in the user's language \
                  when it matters, and include the year ({y}) for recent events."
             ));
+        }
+        if ctx.artifacts {
+            s.push_str(
+                " Put substantial content the user will keep, edit or run (a document, a longer \
+                 program, a page, a diagram, an interactive app) in an artifact; keep short \
+                 answers, explanations and small snippets in the chat. To change an artifact, \
+                 call the artifact tool again with its id instead of writing it out again.",
+            );
         }
     }
     if let Some(name) = ctx.project_name.map(str::trim).filter(|n| !n.is_empty()) {
@@ -621,6 +638,7 @@ mod tests {
             web_search: true,
             web_fetch: true,
             connectors: vec!["fs".into(), "time".into()],
+            artifacts: false,
             project_name: None,
             project_instructions: Some("Answer in Danish."),
             knowledge_search: Vec::new(),
@@ -672,6 +690,20 @@ mod tests {
         });
         assert!(many.contains("f49 and 10 more."), "{many}");
         assert!(!system_prompt(&PromptContext::default()).contains("project_search"));
+    }
+
+    #[test]
+    fn system_prompt_explains_artifacts_when_the_tool_is_on() {
+        let p = system_prompt(&PromptContext {
+            artifacts: true,
+            ..PromptContext::default()
+        });
+        assert!(p.contains("You can make artifacts"), "{p}");
+        assert!(
+            p.contains("call the artifact tool again with its id"),
+            "{p}"
+        );
+        assert!(!system_prompt(&PromptContext::default()).contains("artifact"));
     }
 
     #[test]

@@ -26,5 +26,12 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rollupOptions: {
+      // The app, and the sandboxed frame that runs HTML and React artifacts (Phase 8).
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        frame: fileURLToPath(new URL("./artifact-frame.html", import.meta.url)),
+      },
+    },
   },
 });

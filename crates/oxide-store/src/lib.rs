@@ -4,6 +4,7 @@
 //! One [`Store`] wraps a connection pool. Repository methods live in the submodules as
 //! `impl Store` blocks and return `oxide-core` types.
 
+mod artifacts;
 mod chat_tools;
 mod conversations;
 mod knowledge;
@@ -24,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
+pub use artifacts::NewArtifactVersion;
 pub use knowledge::{CHUNK_CHARS, MAX_FILE_CHARS, NewKnowledgeFile, any_word_query, chunk_text};
 pub use messages::NewReply;
 pub use search::fts_query;

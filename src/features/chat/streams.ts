@@ -174,6 +174,14 @@ export function reduceStream(
       };
       return put({ ...live, blocks: [...endThinking(live.blocks, now), { kind: "tool", call }] });
     }
+    case "toolInputDelta":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) =>
+          c.status === "streaming" ? { ...c, inputJson: c.inputJson + event.partialJson } : c,
+        ),
+      });
     case "toolCall":
       if (!live) return state;
       return put({

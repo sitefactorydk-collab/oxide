@@ -7,6 +7,7 @@ import {
   Lightbulb,
   Plug,
   RotateCcw,
+  Shapes,
   Sparkles,
   X,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
 import { Link, useParams } from "react-router";
 import type { Attachment, Feedback, Message } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
+import { ArtifactPanel } from "@/features/artifacts/ArtifactPanel";
 import {
   useConversation,
   useEditAndResend,
@@ -311,6 +313,7 @@ function ChatView({ id }: { id: string }) {
           />
         </div>
       </div>
+      <ArtifactPanel conversationId={id} />
       {rightPanelOpen && <ChatDetailsPanel id={id} modelId={convo.model} thread={thread} />}
     </div>
   );
@@ -391,7 +394,9 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
           ? Sparkles
           : kind === "projectSearch"
             ? FolderSearch
-            : Plug;
+            : kind === "artifact"
+              ? Shapes
+              : Plug;
   return <Icon aria-hidden className="size-4" />;
 }
 

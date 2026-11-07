@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::future::BoxFuture;
+use oxide_core::artifact::ARTIFACT_TOOL;
 use oxide_core::tools::{PROJECT_SEARCH, PROVIDER_SERVER, WEB_FETCH, WEB_SEARCH};
 use oxide_core::{
     AppSettings, AttachmentSource, ChatTools, ContentBlock, McpContent, McpStatus, McpTool,
@@ -74,6 +75,8 @@ pub enum Builtin {
     WebFetch,
     /// Search the chat's project knowledge (run by the chat service, which knows the project).
     ProjectSearch,
+    /// Create and change artifacts (run by the chat service, which knows the chat).
+    Artifact,
 }
 
 impl Builtin {
@@ -82,6 +85,7 @@ impl Builtin {
             Builtin::WebSearch => WEB_SEARCH,
             Builtin::WebFetch => WEB_FETCH,
             Builtin::ProjectSearch => PROJECT_SEARCH,
+            Builtin::Artifact => ARTIFACT_TOOL,
         }
     }
 }
@@ -132,6 +136,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::WebSearch) => ToolUsageKind::WebSearch,
             ToolKind::Builtin(Builtin::WebFetch) => ToolUsageKind::WebFetch,
             ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
+            ToolKind::Builtin(Builtin::Artifact) => ToolUsageKind::Artifact,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -173,6 +178,12 @@ impl ToolSet {
                 .entries
                 .iter()
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::WebSearch))
+    }
+
+    pub fn can_make_artifacts(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|e| e.kind == ToolKind::Builtin(Builtin::Artifact))
     }
 
     pub fn can_fetch(&self) -> bool {
@@ -266,6 +277,10 @@ impl Tools {
             set.entries.push(builtin_entry(Builtin::WebFetch));
             taken.insert(WEB_FETCH.into());
         }
+        if chat.allows_builtin(ARTIFACT_TOOL) {
+            set.entries.push(crate::artifacts::artifact_entry());
+            taken.insert(ARTIFACT_TOOL.into());
+        }
         if let Some(mcp) = &self.mcp {
             let mut tools = mcp.tools();
             tools.sort_by(|a, b| (&a.server, &a.name).cmp(&(&b.server, &b.name)));
@@ -316,6 +331,9 @@ impl Tools {
             ToolKind::Builtin(Builtin::WebFetch) => self.web_fetch(input).await,
             ToolKind::Builtin(Builtin::ProjectSearch) => {
                 ToolOutput::error("Project search runs in the chat, not here.")
+            }
+            ToolKind::Builtin(Builtin::Artifact) => {
+                ToolOutput::error("Artifacts are made in the chat, not here.")
             }
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
@@ -521,6 +539,7 @@ impl ToolOutput {
 fn builtin_entry(b: Builtin) -> ToolEntry {
     let (title, description, schema) = match b {
         Builtin::ProjectSearch => return crate::knowledge::project_search_entry(),
+        Builtin::Artifact => return crate::artifacts::artifact_entry(),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \
@@ -682,6 +701,7 @@ pub fn usage_label(entry_tool: &str, input: &Value) -> Option<String> {
         WEB_SEARCH => s("query"),
         WEB_FETCH => s("url"),
         PROJECT_SEARCH => s("query"),
+        ARTIFACT_TOOL => s("title").or_else(|| s("id")),
         _ => [
             "path", "file", "filename", "url", "uri", "query", "q", "name", "title", "command",
             "repoName",
@@ -856,12 +876,14 @@ pub(crate) mod tests {
             names,
             vec![
                 "web_fetch",
+                "artifact",
                 "fs__read",
                 "fs__write",
                 "web_search__web_fetch"
             ]
         );
         assert!(!set.can_search());
+        assert!(set.can_make_artifacts());
         let read = set.find("fs__read").expect("read");
         assert!(read.read_only && read.description.starts_with("[fs] "));
         assert_eq!(read.grant_key(), "fs/read");
@@ -879,7 +901,7 @@ pub(crate) mod tests {
 
         chat.disabled_servers = vec!["web search".into()];
         chat.disabled_tools = vec!["fs/write".into()];
-        chat.disabled_builtins = vec![WEB_FETCH.into(), WEB_SEARCH.into()];
+        chat.disabled_builtins = vec![WEB_FETCH.into(), WEB_SEARCH.into(), ARTIFACT_TOOL.into()];
         let set = tools
             .tool_set(&chat, &settings, ProviderKind::Anthropic)
             .await;

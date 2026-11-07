@@ -47,10 +47,22 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "web_search", "web_fetch"])],
     });
 
+  /** The `artifact` tool ("Artifacts" in the "+" menu). */
+  const artifactsOn = !tools.disabledBuiltins.includes("artifact");
+  const toggleArtifacts = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "artifact")
+        : [...new Set([...tools.disabledBuiltins, "artifact"])],
+    });
+
   return {
     tools,
     webOn,
     toggleWeb,
+    artifactsOn,
+    toggleArtifacts,
     serverOn: (server: string) => !tools.disabledServers.includes(server),
     toolOn: (server: string, tool: string) => !tools.disabledTools.includes(`${server}/${tool}`),
     toggleServer,

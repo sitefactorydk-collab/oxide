@@ -4,6 +4,7 @@
 //! under `crates/`. Every command is registered through `tauri-specta`, which generates
 //! the TypeScript bindings in `src/bindings/index.ts`.
 
+mod artifact_frame;
 mod commands;
 mod error;
 mod events;
@@ -27,7 +28,8 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        attachments, chats, mcp, memory, models, projects, providers, settings, system, tools,
+        artifacts, attachments, chats, mcp, memory, models, projects, providers, settings, system,
+        tools,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -61,6 +63,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             attachments::prepare_attachment,
             attachments::attachment_preview,
             attachments::attachment_limits,
+            // Artifacts
+            artifacts::list_artifacts,
+            artifacts::conversation_artifacts,
+            artifacts::get_artifact,
+            artifacts::delete_artifact,
+            artifacts::save_artifact_file,
             // MCP
             mcp::mcp_servers,
             mcp::mcp_server_lists,
@@ -164,6 +172,21 @@ pub fn run() -> anyhow::Result<()> {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // The sandboxed frame for HTML and React artifacts (see artifact_frame.rs).
+        .register_asynchronous_uri_scheme_protocol(
+            artifact_frame::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                let path = request
+                    .uri()
+                    .path_and_query()
+                    .map(|p| p.as_str().to_owned())
+                    .unwrap_or_else(|| "/".into());
+                tauri::async_runtime::spawn(async move {
+                    responder.respond(artifact_frame::respond(app, path).await);
+                });
+            },
+        )
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

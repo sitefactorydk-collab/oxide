@@ -111,3 +111,20 @@ export const CodeBlock = memo(function CodeBlock({ lang, code }: { lang: string;
     </div>
   );
 });
+
+/**
+ * Highlighted source filling its container, without the block's header (the artifact
+ * panel's code view).
+ */
+export const CodeView = memo(function CodeView({ lang, code }: { lang: string; code: string }) {
+  const tokens = useTokens(lang, code);
+  return (
+    <pre
+      tabIndex={0}
+      aria-label={`${lang || "text"} source`}
+      className="ox-code !m-0 min-h-full overflow-x-auto whitespace-pre !rounded-none !border-0 bg-code px-4 py-3 font-mono text-sm leading-6"
+    >
+      <code>{tokens ? <Highlighted tokens={tokens} code={code} /> : code}</code>
+    </pre>
+  );
+});

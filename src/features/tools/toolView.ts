@@ -166,7 +166,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   return typeof first === "string" ? first : "";
 }
 
-export type ToolKind = "search" | "fetch" | "project" | "connector";
+export type ToolKind = "search" | "fetch" | "project" | "artifact" | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
   if (call.tool === "web_search" && (call.server === null || call.server === "anthropic")) {
@@ -174,6 +174,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   }
   if (call.tool === "web_fetch" && call.server === null) return "fetch";
   if (call.tool === "project_search" && call.server === null) return "project";
+  if (call.tool === "artifact" && call.server === null) return "artifact";
   return "connector";
 }
 
@@ -195,6 +196,8 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
         action: busy ? "Searching project knowledge" : "Searched project knowledge",
         detail,
       };
+    case "artifact":
+      return { action: busy ? "Writing artifact" : "Artifact", detail };
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -233,7 +236,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
             ? u.tool
             : u.kind === "projectSearch"
               ? "Project knowledge"
-              : (u.server ?? "Connector");
+              : u.kind === "artifact"
+                ? "Artifacts"
+                : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

@@ -235,6 +235,59 @@ async attachmentLimits() : Promise<AttachmentLimits> {
     return await TAURI_INVOKE("attachment_limits");
 },
 /**
+ * Every artifact, most recently changed first, with its chat's title.
+ */
+async listArtifacts() : Promise<Result<ArtifactSummary[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_artifacts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A chat's artifacts, oldest first.
+ */
+async conversationArtifacts(conversationId: string) : Promise<Result<Artifact[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_artifacts", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * An artifact with every version.
+ */
+async getArtifact(id: string) : Promise<Result<ArtifactDetail, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_artifact", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteArtifact(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_artifact", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a version (`None`: the newest) to a file the user picks. Returns the path, or
+ * `None` if the user cancelled.
+ */
+async saveArtifactFile(id: string, version: number | null) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_artifact_file", { id, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Every configured server and how it's doing, in config order.
  */
 async mcpServers() : Promise<McpServerState[]> {
@@ -832,6 +885,62 @@ export type ApprovalDecision = "allowOnce" |
  * Allow this tool for the rest of the chat (saved).
  */
 "allowChat" | "deny"
+/**
+ * An artifact: its latest state. `key` is the id the model chose (unique in the chat).
+ */
+export type Artifact = { id: string; conversationId: string; key: string; kind: ArtifactKind; title: string; language: string | null; 
+/**
+ * The newest version number (1-based).
+ */
+version: number; createdAt: number; updatedAt: number }
+/**
+ * An artifact with every version, oldest first.
+ */
+export type ArtifactDetail = { artifact: Artifact; versions: ArtifactVersion[] }
+/**
+ * How an artifact is shown.
+ */
+export type ArtifactKind = 
+/**
+ * A Markdown document.
+ */
+"markdown" | 
+/**
+ * Source code in `language`.
+ */
+"code" | 
+/**
+ * A web page, run in a sandboxed frame.
+ */
+"html" | 
+/**
+ * An SVG image.
+ */
+"svg" | 
+/**
+ * A Mermaid diagram.
+ */
+"mermaid" | 
+/**
+ * A React component (default export), run in a sandboxed frame.
+ */
+"react"
+/**
+ * A row of the artifacts gallery.
+ */
+export type ArtifactSummary = { artifact: Artifact; conversationTitle: string; 
+/**
+ * The start of the newest version (for a preview line).
+ */
+excerpt: string }
+/**
+ * One version of an artifact.
+ */
+export type ArtifactVersion = { artifactId: string; version: number; kind: ArtifactKind; title: string; language: string | null; content: string; 
+/**
+ * The reply that made it.
+ */
+messageId: string | null; createdAt: number }
 /**
  * A prepared attachment, ready to send.
  */
@@ -1627,6 +1736,11 @@ export type StreamEvent =
  */
 { type: "toolUse"; id: string; name: string } | 
 /**
+ * More of a tool call's arguments (JSON text, in pieces). Lets the UI show an artifact
+ * while it's being written.
+ */
+{ type: "toolInputDelta"; id: string; partialJson: string } | 
+/**
  * A tool call's arguments are complete. `server` is the MCP server (`None` for built-in
  * tools, `Some("anthropic")` for a tool the provider runs itself); `tool` is the tool's
  * own name and `title` its display name.
@@ -1742,7 +1856,11 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * A search of the project's knowledge.
  */
-"projectSearch"
+"projectSearch" | 
+/**
+ * An artifact made or changed (the label is its title).
+ */
+"artifact"
 /**
  * Token counts for one reply.
  */

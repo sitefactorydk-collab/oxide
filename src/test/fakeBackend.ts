@@ -1,5 +1,8 @@
 import type {
   AppSettings,
+  Artifact,
+  ArtifactKind,
+  ArtifactVersion,
   Attachment,
   AttachmentLimits,
   ContentBlock,
@@ -83,6 +86,10 @@ interface FakeState {
   grants: Map<string, string[]>;
   searchKeys: WebSearchKeys;
   clock: { offset: number; zone: string | null } | null;
+  artifacts: Artifact[];
+  artifactVersions: ArtifactVersion[];
+  /** Downloads asked for: artifact id and version. */
+  artifactDownloads: Array<{ id: string; version: number | null }>;
 }
 
 export interface FakeSeed {
@@ -125,6 +132,9 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     grants: new Map(),
     searchKeys: { brave: null, tavily: null },
     clock: null,
+    artifacts: [],
+    artifactVersions: [],
+    artifactDownloads: [],
   };
   resetFakeMcp();
 }
@@ -438,6 +448,56 @@ export function logToolUse(entries: ToolUsage[]): void {
   state.toolUsage.push(...entries);
 }
 
+/**
+ * Saves an artifact version as the `artifact` tool would (a new artifact, or the next version
+ * of `key` in the chat), and returns the `artifactRef` block its tool result carries.
+ */
+export function saveArtifact(input: {
+  conversationId: string;
+  key: string;
+  kind: ArtifactKind;
+  title: string;
+  content: string;
+  language?: string | null;
+  messageId?: string | null;
+}): Extract<ContentBlock, { type: "artifactRef" }> {
+  const now = Date.now() + state.artifactVersions.length;
+  let a = state.artifacts.find(
+    (x) => x.conversationId === input.conversationId && x.key === input.key,
+  );
+  if (a) {
+    a.version += 1;
+    a.kind = input.kind;
+    a.title = input.title;
+    a.language = input.language ?? null;
+    a.updatedAt = now;
+  } else {
+    a = {
+      id: nextId("art"),
+      conversationId: input.conversationId,
+      key: input.key,
+      kind: input.kind,
+      title: input.title,
+      language: input.language ?? null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.artifacts.push(a);
+  }
+  state.artifactVersions.push({
+    artifactId: a.id,
+    version: a.version,
+    kind: input.kind,
+    title: input.title,
+    language: input.language ?? null,
+    content: input.content,
+    messageId: input.messageId ?? null,
+    createdAt: now,
+  });
+  return { type: "artifactRef", artifactId: a.id, title: a.title, version: a.version };
+}
+
 /** Switches how later replies behave. */
 export function setReplyMode(mode: ReplyMode): void {
   state.replies = mode;
@@ -690,6 +750,44 @@ export const fakeCommands: typeof RealCommands = {
   deleteKnowledgeFile: (id) => {
     state.knowledge = state.knowledge.filter((k) => k.file.id !== id);
     return ok(null);
+  },
+  listArtifacts: () =>
+    ok(
+      [...state.artifacts]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((a) => {
+          const latest = state.artifactVersions.find(
+            (v) => v.artifactId === a.id && v.version === a.version,
+          );
+          return {
+            artifact: { ...a },
+            conversationTitle:
+              state.conversations.find((c) => c.id === a.conversationId)?.title ?? "",
+            excerpt: (latest?.content ?? "").replace(/\s+/g, " ").slice(0, 160),
+          };
+        }),
+    ),
+  conversationArtifacts: (conversationId) =>
+    ok(state.artifacts.filter((a) => a.conversationId === conversationId).map((a) => ({ ...a }))),
+  getArtifact: (id) => {
+    const a = state.artifacts.find((x) => x.id === id);
+    if (!a) return fail("notFound", "artifact not found");
+    return ok({
+      artifact: { ...a },
+      versions: state.artifactVersions
+        .filter((v) => v.artifactId === id)
+        .sort((x, y) => x.version - y.version),
+    });
+  },
+  deleteArtifact: (id) => {
+    if (!state.artifacts.some((a) => a.id === id)) return fail("notFound", "artifact not found");
+    state.artifacts = state.artifacts.filter((a) => a.id !== id);
+    state.artifactVersions = state.artifactVersions.filter((v) => v.artifactId !== id);
+    return ok(null);
+  },
+  saveArtifactFile: (id, version) => {
+    state.artifactDownloads.push({ id, version });
+    return ok(`C:\\Downloads\\${id}.txt`);
   },
   listMemory: () => ok([...state.memory]),
   addMemory: (input) => {
