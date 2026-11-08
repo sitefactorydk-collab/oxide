@@ -7,6 +7,7 @@
 
 pub mod files;
 pub mod html;
+pub mod python;
 pub mod shell;
 pub mod web;
 
@@ -89,6 +90,8 @@ pub enum Builtin {
     TaskList,
     /// A shell command in a granted folder (run by the chat service).
     RunCommand,
+    /// Python code in the managed environment (run by the chat service).
+    RunPython,
 }
 
 impl Builtin {
@@ -102,6 +105,7 @@ impl Builtin {
             Builtin::File(op) => op.name(),
             Builtin::TaskList => oxide_core::workspace::TASK_LIST,
             Builtin::RunCommand => oxide_core::workspace::RUN_COMMAND,
+            Builtin::RunPython => oxide_core::RUN_PYTHON,
         }
     }
 }
@@ -157,6 +161,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::File(_)) => ToolUsageKind::File,
             ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
             ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
+            ToolKind::Builtin(Builtin::RunPython) => ToolUsageKind::Python,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -253,6 +258,7 @@ pub struct Tools {
     pub web: WebTools,
     attachments: Option<AttachmentStore>,
     skills: Option<Skills>,
+    python: Option<oxide_pyenv::PythonEnv>,
 }
 
 impl Tools {
@@ -266,7 +272,18 @@ impl Tools {
             web: WebTools::new(secrets),
             attachments,
             skills: None,
+            python: None,
         }
+    }
+
+    /// Gives models `run_python`, running in this managed environment.
+    pub fn with_python(mut self, python: oxide_pyenv::PythonEnv) -> Self {
+        self.python = Some(python);
+        self
+    }
+
+    pub fn python(&self) -> Option<&oxide_pyenv::PythonEnv> {
+        self.python.as_ref()
     }
 
     /// Gives models the skills in this folder (`load_skill`).
@@ -386,9 +403,9 @@ impl Tools {
                 ToolOutput::error("Artifacts are made in the chat, not here.")
             }
             ToolKind::Builtin(Builtin::LoadSkill) => self.load_skill(input).await,
-            ToolKind::Builtin(Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand) => {
-                ToolOutput::error("This tool runs in the chat, not here.")
-            }
+            ToolKind::Builtin(
+                Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand | Builtin::RunPython,
+            ) => ToolOutput::error("This tool runs in the chat, not here."),
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp
@@ -510,7 +527,12 @@ impl Tools {
     }
 
     /// An image block, stored as an attachment file when possible (keeps the database small).
-    async fn image_block(&self, media_type: &str, data: String, name: &str) -> ContentBlock {
+    pub(crate) async fn image_block(
+        &self,
+        media_type: &str,
+        data: String,
+        name: &str,
+    ) -> ContentBlock {
         if let Some(store) = &self.attachments {
             let ext = media_type.rsplit('/').next().unwrap_or("png");
             match store
@@ -619,6 +641,7 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::File(op) => return files::file_entry(op, false),
         Builtin::TaskList => return crate::tasks::task_list_entry(),
         Builtin::RunCommand => return shell::shell_entry(&shell::Shell::detect()),
+        Builtin::RunPython => return python::python_entry(),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \

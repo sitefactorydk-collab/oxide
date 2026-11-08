@@ -213,6 +213,8 @@ pub struct PromptContext<'a> {
     pub shell: Option<&'a str>,
     /// The `task_list` tool is on.
     pub task_list: bool,
+    /// The `run_python` tool is on.
+    pub python: bool,
 }
 
 fn os_name(os: &str) -> &str {
@@ -329,6 +331,16 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                  tools for reading and changing files."
             ));
         }
+    }
+    if ctx.python {
+        s.push_str(
+            "\n\nYou can run Python with run_python (pandas, numpy, matplotlib and openpyxl are \
+             installed). Use it for calculations, data analysis, charts and for making files such \
+             as spreadsheets; print the results you need, and save charts with plt.savefig. Prefer \
+             it over doing arithmetic or tabulating data in your head. The user approves each run \
+             and sees your code, so keep scripts short and readable, and don't touch files you \
+             weren't asked to.",
+        );
     }
     if ctx.task_list {
         s.push_str(

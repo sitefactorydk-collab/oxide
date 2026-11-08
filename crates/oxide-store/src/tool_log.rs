@@ -16,6 +16,7 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::File => "file",
         ToolUsageKind::Shell => "shell",
         ToolUsageKind::Tasks => "tasks",
+        ToolUsageKind::Python => "python",
     }
 }
 
@@ -30,6 +31,7 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "file" => ToolUsageKind::File,
         "shell" => ToolUsageKind::Shell,
         "tasks" => ToolUsageKind::Tasks,
+        "python" => ToolUsageKind::Python,
         _ => ToolUsageKind::Connector,
     }
 }

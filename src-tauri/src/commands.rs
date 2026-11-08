@@ -11,6 +11,7 @@ pub mod memory;
 pub mod models;
 pub mod projects;
 pub mod providers;
+pub mod python;
 pub mod settings;
 pub mod system;
 pub mod tools;

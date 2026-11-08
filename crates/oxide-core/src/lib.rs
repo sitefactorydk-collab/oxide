@@ -16,6 +16,7 @@ pub mod message;
 pub mod model;
 pub mod project;
 pub mod provider;
+pub mod python;
 pub mod settings;
 pub mod tools;
 pub mod workspace;
@@ -51,6 +52,10 @@ pub use project::{
     ProjectKnowledge, ProjectPatch,
 };
 pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, TestProvider};
+pub use python::{
+    PYTHON_PACKAGES, PYTHON_VERSION, PythonPackage, PythonSettings, PythonState, PythonStatus,
+    PythonStep, RUN_PYTHON,
+};
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,
     ProfileSettings, ProjectSettings, ShellSettings, ThemePref, ToolSettings, WebSearchProvider,

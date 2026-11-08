@@ -23,6 +23,7 @@ oxide-store.workspace = true
 oxide-llm.workspace = true
 oxide-agent.workspace = true
 oxide-mcp.workspace = true
+oxide-pyenv.workspace = true
 oxide-computer.workspace = true
 
 tauri = { version = "2", features = ["tray-icon"] }

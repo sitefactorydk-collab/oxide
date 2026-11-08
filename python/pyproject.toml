@@ -1,0 +1,20 @@
+# The packages Oxide's `run_python` tool offers. Oxide installs them into its managed
+# virtual environment (app data folder) with `uv sync`, from the lock file next to this one.
+#
+# Changing this file? Run `uv lock --project python` (scripts\win\phase12.ps1 does it), commit
+# `python/uv.lock`, and rebuild: both files are embedded into the app.
+[project]
+name = "oxide-python-env"
+version = "0.1.0"
+description = "Packages for Oxide's run_python tool"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "pandas>=2.2",
+  "numpy>=2.0",
+  "matplotlib>=3.9",
+  "openpyxl>=3.1",
+]
+
+[tool.uv]
+# A set of packages, not an installable project.
+package = false

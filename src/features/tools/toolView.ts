@@ -148,7 +148,24 @@ const LABEL_KEYS = [
   "command",
 ];
 
-/** What a call was about: the query, URL or path. */
+/** The first non-empty line of a script, cut to 80 characters (as the backend labels it). */
+export function codeLabel(code: string): string {
+  const line =
+    code
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "") ?? "";
+  const chars = [...line];
+  return chars.length > 80 ? `${chars.slice(0, 80).join("")}…` : line;
+}
+
+/** The script of a `run_python` call (empty until the arguments are complete JSON). */
+export function pythonCode(inputJson: string): string {
+  const code = parse(inputJson).code;
+  return typeof code === "string" ? code : "";
+}
+
+/** What a tool call was about: the query, URL or path. */
 export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJson">): string {
   const input = parse(call.inputJson);
   const str = (k: string) => {
@@ -167,6 +184,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
     return str("text") ?? str("query") ?? str("name") ?? "";
   }
   if (call.server === null && call.tool === "task_list") return taskDetail(input);
+  if (call.server === null && call.tool === "run_python") return codeLabel(str("code") ?? "");
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -208,7 +226,16 @@ export const FILE_TOOL_VERBS: Record<string, [string, string]> = {
 };
 
 export type ToolKind =
-  "search" | "fetch" | "project" | "artifact" | "skill" | "file" | "tasks" | "shell" | "connector";
+  | "search"
+  | "fetch"
+  | "project"
+  | "artifact"
+  | "skill"
+  | "file"
+  | "tasks"
+  | "shell"
+  | "python"
+  | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
   if (call.tool === "web_search" && (call.server === null || call.server === "anthropic")) {
@@ -221,6 +248,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.server === null && call.tool in FILE_TOOL_VERBS) return "file";
   if (call.server === null && call.tool === "task_list") return "tasks";
   if (call.server === null && call.tool === "run_command") return "shell";
+  if (call.server === null && call.tool === "run_python") return "python";
   return "connector";
 }
 
@@ -255,6 +283,8 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       return { action: busy ? "Updating task list" : "Updated task list", detail };
     case "shell":
       return { action: busy ? "Running" : "Ran", detail };
+    case "python":
+      return { action: busy ? "Running Python" : "Ran Python", detail };
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -303,7 +333,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                     ? "Files"
                     : u.kind === "shell"
                       ? "Commands"
-                      : (u.server ?? "Connector");
+                      : u.kind === "python"
+                        ? "Python"
+                        : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

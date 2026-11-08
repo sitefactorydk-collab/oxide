@@ -69,6 +69,8 @@ struct Inner {
     platform: String,
     staged: Mutex<HashMap<String, Staged>>,
     problems: Mutex<HashMap<String, Problem>>,
+    /// Oxide's own `uv` (Phase 12), preferred over one on the PATH.
+    uv: Mutex<Option<PathBuf>>,
     /// One install, update or uninstall at a time.
     busy: tokio::sync::Mutex<()>,
 }
@@ -112,6 +114,7 @@ impl Extensions {
                 platform,
                 staged: Mutex::new(HashMap::new()),
                 problems: Mutex::new(HashMap::new()),
+                uv: Mutex::new(None),
                 busy: tokio::sync::Mutex::new(()),
             }),
         }
@@ -119,6 +122,20 @@ impl Extensions {
 
     pub fn root(&self) -> &Path {
         &self.inner.root
+    }
+
+    /// Sets Oxide's own `uv`, used for Python and uv extensions before any `uv` on the PATH.
+    /// Call [`Extensions::refresh`] afterwards if servers were already built.
+    pub fn set_uv(&self, uv: Option<PathBuf>) {
+        *lock(&self.inner.uv) = uv;
+    }
+
+    /// The `uv` extensions run with: Oxide's own, else one on the PATH.
+    fn uv(&self) -> Option<String> {
+        lock(&self.inner.uv)
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| find_program("uv"))
     }
 
     fn dir_of(&self, name: &str) -> PathBuf {
@@ -129,7 +146,7 @@ impl Extensions {
     /// the manager has started, and after anything changes.
     pub async fn refresh(&self) {
         let cfg = self.inner.manager.config_snapshot();
-        let uv = find_program("uv");
+        let uv = self.uv();
         let mut servers = HashMap::new();
         let mut problems = HashMap::new();
         for (name, entry) in cfg.extensions() {
@@ -300,7 +317,7 @@ impl Extensions {
                 platforms_text(&m.info.platforms)
             ));
         }
-        warnings.extend(runtime_warnings(&m));
+        warnings.extend(runtime_warnings(&m, self.uv().is_some()));
         let mut values: BTreeMap<String, ExtensionValue> = m
             .info
             .fields
@@ -637,7 +654,7 @@ fn find_program(name: &str) -> Option<String> {
 }
 
 /// What the extension needs that this computer may not have.
-fn runtime_warnings(m: &Manifest) -> Vec<String> {
+fn runtime_warnings(m: &Manifest, has_uv: bool) -> Vec<String> {
     let want = |k: &str| {
         m.info
             .runtimes
@@ -651,7 +668,7 @@ fn runtime_warnings(m: &Manifest) -> Vec<String> {
              restart Oxide.",
             want("node")
         )],
-        ExtensionServerType::Python if find_program("uv").is_none() => {
+        ExtensionServerType::Python if !has_uv => {
             if find_program("python").is_none() && find_program("python3").is_none() {
                 vec![format!(
                     "It needs Python{}. Install uv from https://docs.astral.sh/uv/ (Oxide uses it \
@@ -666,7 +683,7 @@ fn runtime_warnings(m: &Manifest) -> Vec<String> {
                 ]
             }
         }
-        ExtensionServerType::Uv if find_program("uv").is_none() => vec![
+        ExtensionServerType::Uv if !has_uv => vec![
             "It needs uv, which wasn't found. Install it from https://docs.astral.sh/uv/, then \
              restart Oxide."
                 .into(),

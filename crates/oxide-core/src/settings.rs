@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::python::PythonSettings;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ThemePref {
@@ -235,6 +237,7 @@ pub struct AppSettings {
     pub memory: MemorySettings,
     pub desktop: DesktopSettings,
     pub shell: ShellSettings,
+    pub python: PythonSettings,
 }
 
 impl AppSettings {
@@ -278,6 +281,10 @@ impl AppSettings {
         }
         allow.truncate(100);
         self.shell.allowlist = allow;
+        self.python.timeout_secs = self
+            .python
+            .timeout_secs
+            .clamp(1, crate::python::MAX_PYTHON_TIMEOUT_SECS);
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());
@@ -294,6 +301,17 @@ mod tests {
         let s: AppSettings = serde_json::from_str(r#"{"profile":{"name":"Ada"}}"#).expect("parses");
         assert_eq!(s.profile.name, "Ada");
         assert_eq!(s.appearance, AppearanceSettings::default());
+    }
+
+    #[test]
+    fn python_settings_default_on_and_are_clamped() {
+        let mut s = AppSettings::default();
+        assert!(s.python.enabled);
+        assert_eq!(s.python.timeout_secs, 120);
+        s.python.timeout_secs = 0;
+        assert_eq!(s.clone().normalized().python.timeout_secs, 1);
+        s.python.timeout_secs = 999_999;
+        assert_eq!(s.normalized().python.timeout_secs, 3_600);
     }
 
     #[test]

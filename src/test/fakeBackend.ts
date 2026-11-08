@@ -22,6 +22,7 @@ import type {
   PingResponse,
   Project,
   ProviderConfig,
+  PythonChanged,
   ProviderModels,
   Result,
   SearchHit,
@@ -36,6 +37,7 @@ import type {
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
+import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
 import {
   seedConversations,
   seedMessages,
@@ -150,6 +152,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         notifications: true,
       },
       shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
+      python: { enabled: true, timeoutSecs: 120 },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -182,6 +185,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   };
   resetFakeMcp();
   resetFakeExtensions();
+  resetFakePython();
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -266,7 +270,9 @@ const mcpChanged = fakeEvent<McpEvent>("mcp-changed");
 const memoryChanged = fakeEvent<MemoryChanged>("memory-changed");
 const desktopRequest = fakeEvent<DesktopAction>("desktop-request");
 const taskListChanged = fakeEvent<TaskList>("task-list-changed");
+const pythonChanged = fakeEvent<PythonChanged>("python-changed");
 setMcpEmitter((e) => void mcpChanged.emit(e));
+setPythonEmitter((s) => void pythonChanged.emit(s));
 
 export const fakeEvents = {
   chatStream,
@@ -275,6 +281,7 @@ export const fakeEvents = {
   memoryChanged,
   desktopRequest,
   taskListChanged,
+  pythonChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -616,6 +623,7 @@ export function setReplyMode(mode: ReplyMode): void {
 export const fakeCommands: typeof RealCommands = {
   ...fakeMcpCommands,
   ...fakeExtensionCommands,
+  ...fakePythonCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

@@ -4,6 +4,7 @@ import { MemorySection } from "@/features/memory/MemorySection";
 import { DesktopSection } from "@/features/desktop/DesktopSection";
 import { ExtensionsSection } from "@/features/extensions/ExtensionsSection";
 import { SkillsSection } from "@/features/extensions/SkillsSection";
+import { PythonSection } from "@/features/python/PythonSection";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
@@ -117,6 +118,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <ExtensionsSection />;
     case "skills":
       return <SkillsSection />;
+    case "advanced":
+      return <PythonSection />;
     case "about":
       return <AboutSection />;
     default:

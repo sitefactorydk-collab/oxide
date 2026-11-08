@@ -7,6 +7,7 @@ use oxide_agent::{
     AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Skills, Tools,
 };
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
+use oxide_pyenv::{PythonConfig, PythonEnv, PythonSink};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
 pub struct AppState {
@@ -24,6 +25,24 @@ pub struct AppState {
     pub extensions: Extensions,
     /// Skills under `<data dir>/skills`.
     pub skills: Skills,
+    /// The managed Python environment under `<data dir>/python`.
+    pub python: PythonEnv,
+}
+
+/// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
+/// `npm run fetch-uv` fills in a development build.
+fn uv_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.to_path_buf());
+    }
+    dirs.push(PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/binaries"
+    )));
+    dirs
 }
 
 /// Where the app keeps its files.
@@ -47,6 +66,7 @@ impl AppState {
         dirs: &AppDirs,
         service: &str,
         sink: Arc<dyn EventSink>,
+        python_sink: Arc<dyn PythonSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -68,13 +88,19 @@ impl AppState {
         );
         let extensions = Extensions::new(data_dir.join("extensions"), mcp.clone(), parts.tokens);
         let skills = Skills::new(data_dir.join("skills"));
+        let mut python_config = PythonConfig::new(data_dir.join("python"));
+        python_config.uv_dirs = uv_dirs();
+        let python = PythonEnv::new(python_config, python_sink);
+        // Python extensions run through the same uv.
+        extensions.set_uv(python.find_uv());
         // Models get the running MCP servers' tools plus Oxide's web tools.
         let tools = Tools::new(
             Some(Arc::new(mcp.clone()) as Arc<dyn McpTools>),
             secrets.clone(),
             Some(attachments.clone()),
         )
-        .with_skills(skills.clone());
+        .with_skills(skills.clone())
+        .with_python(python.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
@@ -85,6 +111,7 @@ impl AppState {
             mcp,
             extensions,
             skills,
+            python,
         })
     }
 }

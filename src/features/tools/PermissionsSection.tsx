@@ -3,6 +3,7 @@ import { NumberSetting } from "@/components/NumberSetting";
 import { Toggle } from "@/features/models/ModelsSection";
 import {
   DEFAULT_SETTINGS,
+  useSetPythonSettings,
   useSetShellSettings,
   useSetToolSettings,
   useSettings,
@@ -41,6 +42,7 @@ export function PermissionsSection() {
         <code>_to_delete</code> folder unless the chat’s panel allows deleting for good.
       </p>
       <ShellSection />
+      <PythonToolSection />
     </div>
   );
 }
@@ -102,6 +104,34 @@ function ShellSection() {
             />
           </label>
         </>
+      )}
+    </section>
+  );
+}
+
+/** The Python tool: on by default, but every run asks first. */
+function PythonToolSection() {
+  const { data } = useSettings();
+  const python = (data ?? DEFAULT_SETTINGS).python;
+  const set = useSetPythonSettings();
+  return (
+    <section aria-label="Python" className="flex flex-col gap-4 border-t border-line pt-5">
+      <h3 className="text-md font-semibold text-fg">Python</h3>
+      <Toggle
+        label="Let models run Python code"
+        hint="Code runs on this computer as you, in Oxide’s own Python with pandas, numpy, matplotlib and openpyxl, in a folder for the chat (or a folder you share with it). It is not sandboxed, so each run asks first; Allow always applies to the current chat only. Set up and repair Python in Settings → Advanced."
+        checked={python.enabled}
+        onChange={(enabled) => set({ enabled })}
+      />
+      {python.enabled && (
+        <NumberSetting
+          label="Time limit per script (seconds)"
+          hint="A script still running after this is stopped. 1–3600."
+          value={python.timeoutSecs}
+          min={1}
+          max={3600}
+          onChange={(timeoutSecs) => set({ timeoutSecs })}
+        />
       )}
     </section>
   );

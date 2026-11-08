@@ -69,6 +69,8 @@ pub enum ToolUsageKind {
     Shell,
     /// The chat's task list was set (the label is the current step).
     Tasks,
+    /// Python code ran (the label is the script's first line).
+    Python,
 }
 
 /// One tool call, logged per chat.

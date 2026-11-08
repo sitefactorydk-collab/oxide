@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Braces,
   CheckCircle2,
   Circle,
   CircleDot,
@@ -241,6 +242,7 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
     skill: BookOpen,
     file: FolderOpen,
     shell: SquareTerminal,
+    python: Braces,
   };
   const Icon = icons[kind] ?? Plug;
   return <Icon aria-hidden className="size-4" />;

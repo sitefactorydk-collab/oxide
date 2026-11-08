@@ -30,7 +30,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | MCP config | Oxide owns `oxide_config.json` in the app config dir. Its `mcpServers` block uses **exactly** Claude desktop's schema (`command`, `args`, `env`), so entries paste 1:1. Remote servers add `"type": "http", "url", "headers"`. Oxide-only keys live under a separate top-level `"oxide"` object, never inside a server entry. Settings has a one-click **"Import from Claude desktop"** that reads `claude_desktop_config.json` read-only and merges after confirmation |
 | Desktop extensions | `.mcpb` bundles unpack into `<app data>\extensions\<name>` with Oxide's own zip reader (`oxide-mcp/src/archive.rs`). Each has a managed entry under `oxide.extensions.<name>` in `oxide_config.json` (enabled, version, non-sensitive settings); sensitive settings live in the OS keychain. The command line is built from the manifest at start-up and run by the MCP manager like any server (Phase 10) |
 | Skills | Folders with a `SKILL.md` in `<app data>\skills`; names and descriptions go into the system prompt and the built-in `load_skill` tool returns the rest (Phase 10) |
-| Python | Oxide manages its own `uv` (shipped as a Tauri sidecar per target) and creates a venv in app data on first run |
+| Python | Oxide manages its own `uv` (a Tauri sidecar per target, pinned to one release in `scripts/uv-pins.json` and fetched by `npm run fetch-uv`). On first use it installs CPython 3.12 and a venv under `<app data>\python\` with the packages in the locked `python/uv.lock` (embedded in the app). `run_python` always asks for approval: the code is not sandboxed (Phase 12) |
 | Browser agent | Browser-Use wrapped as a local MCP server (`oxide-browser-agent`, Python, runs in the uv venv) |
 | Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
 | Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring`. Project knowledge search uses SQLite FTS5 with BM25 ranking (Phase 7) |
@@ -323,8 +323,8 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 
 ### Phase 12 — Managed Python (uv) & code execution
 - `oxide-pyenv`:
-  - The `uv` sidecar per target triple is fetched by a build script into `src-tauri/binaries/` and checksum-pinned.
-  - First run: `uv python install` a pinned CPython, then `uv venv` in `<app_data>/python/.venv`, then `uv sync` from `python/` using a locked `uv.lock`.
+  - The `uv` sidecar per target triple is fetched by `scripts/fetch-uv.mjs` (`npm run fetch-uv`) into `src-tauri/binaries/` and checksum-pinned in `scripts/uv-pins.json` (a hash is recorded the first time a target is downloaded; release builds fail when the sidecar is missing).
+  - First run: `uv python install` a pinned CPython, then `uv venv` in `<app_data>/python/venv` (changed from `.venv` in Phase 12), then `uv sync` from `python/` using a locked `uv.lock`.
   - Progress UI on first run, with repair and reset in Settings → Advanced.
 - `run_python` built-in tool: executes in a per-chat working dir inside app data (or a granted folder) with a timeout and stdout/stderr/file capture. Generated files (charts, CSV) attach to the reply and can open in Artifacts.
 - Pre-installed analysis packages: pandas, numpy, matplotlib, openpyxl.

@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "bindings": "cargo test -p oxide --lib export_bindings"
+    "bindings": "cargo test -p oxide --lib export_bindings",
+    "fetch-uv": "node scripts/fetch-uv.mjs"
   },
   "dependencies": {
     "@babel/standalone": "^7.28.0",

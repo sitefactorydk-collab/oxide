@@ -30,7 +30,7 @@ const BINDINGS_HEADER: &str =
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         artifacts, attachments, chats, desktop, extensions, mcp, memory, models, projects,
-        providers, settings, system, tools, workspace,
+        providers, python, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -39,6 +39,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::McpChanged,
             events::MemoryChanged,
             events::TaskListChanged,
+            events::PythonChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -133,6 +134,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             workspace::set_chat_allow_delete,
             workspace::chat_task_list,
             workspace::open_chat_folder,
+            // Managed Python
+            python::python_status,
+            python::python_setup,
+            python::python_repair,
+            python::python_reset,
+            python::open_python_folder,
             // System
             system::open_external,
             // Desktop integration
@@ -301,6 +308,7 @@ pub fn run() -> anyhow::Result<()> {
                 &dirs,
                 &service,
                 sink,
+                Arc::new(events::TauriPythonSink::new(app.handle().clone())),
                 move |models, secrets| state::McpParts {
                     sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
                     agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use futures_util::future::join_all;
+use oxide_core::RUN_PYTHON;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
@@ -40,6 +41,7 @@ use crate::memory::{MEMORY_SYSTEM, Scope, memory_prompt, parse_proposals};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
 use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
+use crate::tools::python::{python_entry, run_python};
 use crate::tools::shell::{Shell, command_of, run_command, shell_entry};
 use crate::tools::{
     Builtin, ToolEntry, ToolKind, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label,
@@ -195,6 +197,13 @@ impl ChatService {
     pub fn forget(&self, conversation_id: &str) {
         self.stop(conversation_id);
         lock(&self.approvals).retain(|_, p| p.request.conversation_id != conversation_id);
+        // Its Python working folder goes too.
+        if let Some(python) = self.tools.python().cloned()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            let id = conversation_id.to_owned();
+            rt.spawn(async move { python.forget_chat(&id).await });
+        }
     }
 
     /// Tool calls waiting for the user (all chats), oldest first.
@@ -569,6 +578,12 @@ impl ChatService {
                 own.push(shell_entry(&sh));
                 shell = Some(sh);
             }
+            if settings.python.enabled
+                && self.tools.python().is_some()
+                && chat_tools.allows_builtin(RUN_PYTHON)
+            {
+                own.push(python_entry());
+            }
             tool_set.entries.splice(at..at, own);
         }
         let project = match &conversation.project_id {
@@ -632,6 +647,10 @@ impl ChatService {
             },
             delete_for_good: sandbox.allows_delete(),
             shell: shell.as_ref().map(|s| s.label.as_str()),
+            python: tool_set
+                .entries
+                .iter()
+                .any(|e| e.kind == ToolKind::Builtin(Builtin::RunPython)),
             task_list: tool_set
                 .entries
                 .iter()
@@ -879,6 +898,8 @@ impl ChatService {
             ToolKind::Builtin(Builtin::LoadSkill) => false,
             // The user granted the folder: looking is fine, changing asks.
             ToolKind::Builtin(Builtin::File(op)) => !op.read_only(),
+            // Python code runs as the user, unsandboxed: each run asks until "Allow always".
+            ToolKind::Builtin(Builtin::RunPython) => true,
             ToolKind::Builtin(Builtin::RunCommand) => match command_of(input) {
                 Ok(c) => !command_allowed(&c, &setup.settings.shell.allowlist),
                 // Runs (and fails with a message) without bothering the user.
@@ -1051,12 +1072,15 @@ impl ChatService {
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
                 } else if let ToolKind::Builtin(
-                    b @ (Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand),
+                    b @ (Builtin::File(_)
+                    | Builtin::TaskList
+                    | Builtin::RunCommand
+                    | Builtin::RunPython),
                 ) = r.entry.kind
                 {
                     let started = Instant::now();
                     let mut out = self
-                        .run_workspace_tool(cid, b, &r.input, sandbox, shell, settings)
+                        .run_workspace_tool(cid, reply_id, b, &r.input, sandbox, shell, settings)
                         .await;
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
@@ -1097,9 +1121,11 @@ impl ChatService {
     }
 
     /// Runs a file tool, the task list or a shell command for a chat.
+    #[allow(clippy::too_many_arguments)]
     async fn run_workspace_tool(
         &self,
         cid: &str,
+        reply_id: &str,
         tool: Builtin,
         input: &Value,
         sandbox: &Sandbox,
@@ -1148,6 +1174,19 @@ impl ChatService {
                     Err(e) => ToolOutput::error(e),
                 }
             }
+            Builtin::RunPython => {
+                let limit = Duration::from_secs(u64::from(settings.python.timeout_secs.max(1)));
+                run_python(
+                    &self.tools,
+                    &self.store,
+                    cid,
+                    reply_id,
+                    sandbox,
+                    input,
+                    limit,
+                )
+                .await
+            }
             _ => ToolOutput::error("This tool isn't a workspace tool."),
         }
     }
@@ -1195,6 +1234,11 @@ impl ChatService {
                 entry.tool().to_owned(),
                 match entry.kind {
                     ToolKind::Builtin(Builtin::File(op)) => file_label(op, input),
+                    ToolKind::Builtin(Builtin::RunPython) => input
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .map(oxide_core::python::code_label)
+                        .filter(|l| !l.is_empty()),
                     ToolKind::Builtin(Builtin::TaskList) => crate::tasks::parse_tasks(input)
                         .ok()
                         .and_then(|t| crate::tasks::label(&t)),
@@ -3182,6 +3226,294 @@ pub(crate) mod tests {
         );
         let system = f.fake.requests()[0].system.clone().unwrap_or_default();
         assert!(system.contains("run_command (sh"), "{system}");
+    }
+
+    // ---- Python ---------------------------------------------------------------------------
+
+    #[cfg(unix)]
+    fn system_python() -> Option<std::path::PathBuf> {
+        let out = std::process::Command::new("sh")
+            .args(["-c", "command -v python3"])
+            .output()
+            .ok()?;
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        (!p.is_empty()).then(|| std::path::PathBuf::from(p))
+    }
+
+    /// Like `fixture`, with `run_python` available.
+    #[cfg(unix)]
+    async fn fixture_python(scripts: Vec<Vec<Step>>, env: oxide_pyenv::PythonEnv) -> Fixture {
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let fake = FakeProvider::new(scripts);
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let tools = Tools::new(None, secrets, None).with_python(env);
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Plot it".into(),
+                model: "lmstudio/fake-model".into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+            })
+            .await
+            .expect("chat");
+        Fixture {
+            store,
+            service,
+            fake,
+            sink,
+            chat,
+            first,
+        }
+    }
+
+    #[cfg(unix)]
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_python_asks_until_allowed_and_returns_images_and_files() {
+        let Some(py) = system_python() else { return };
+        let tmp = tempfile::tempdir().expect("tmp");
+        let env = oxide_pyenv::PythonEnv::for_tests(&tmp.path().join("python"), &py);
+        let code = format!(
+            "import base64\\nprint('hello')\\nopen('data.csv','w').write('a,b\\\\n1,2\\\\n')\\n\
+             open('chart.png','wb').write(base64.b64decode('{PNG_1X1}'))\\nopen('big.bin','wb').write(b'x')\\n"
+        );
+        let first = call("p1", "run_python", &format!("{{\"code\":\"{code}\"}}"));
+        let second = call("p2", "run_python", r#"{"code":"print(40 + 2)"}"#);
+        let f = fixture_python(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(second, StopReason::ToolUse),
+                turn(vec![text("Done.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            env,
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Code runs as the user: it asks, and shows the code.
+        let req = wait_approval(&f, "p1").await;
+        assert_eq!(req.tool, "run_python");
+        assert!(req.input_json.contains("hello"));
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "p1", ApprovalDecision::AllowChat)
+        );
+        // "Allow always" covers the next run in this chat.
+        f.sink.wait_finished().await;
+        assert!(f.service.pending_approvals().is_empty());
+        let m = saved(&f);
+        let (r1, bad1) = result_of(&m, "p1");
+        assert!(!bad1, "{r1}");
+        assert!(r1.contains("Exit code 0") && r1.contains("hello"), "{r1}");
+        assert!(
+            r1.contains("chart.png") && r1.contains("shown to the user"),
+            "{r1}"
+        );
+        assert!(r1.contains("data.csv") && r1.contains("artifact"), "{r1}");
+        assert!(
+            r1.contains("big.bin") && r1.contains("saved in the folder"),
+            "{r1}"
+        );
+        let blocks: Vec<&ContentBlock> = m
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } if tool_use_id == "p1" => Some(content.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(blocks.iter().any(
+            |b| matches!(b, ContentBlock::Image { media_type, .. } if media_type == "image/png")
+        ));
+        assert!(
+            blocks.iter().any(
+                |b| matches!(b, ContentBlock::ArtifactRef { title, .. } if title == "data.csv")
+            )
+        );
+        let (r2, bad2) = result_of(&m, "p2");
+        assert!(!bad2 && r2.contains("42"), "{r2}");
+        // The csv became an artifact of the chat.
+        let arts = f
+            .store
+            .conversation_artifacts(&f.chat.id)
+            .await
+            .expect("artifacts");
+        assert_eq!(arts.len(), 1);
+        assert_eq!(arts[0].title, "data.csv");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(
+            |u| u.kind == ToolUsageKind::Python && u.label.as_deref() == Some("import base64")
+        ));
+        let system = f.fake.requests()[0].system.clone().unwrap_or_default();
+        assert!(system.contains("run_python"), "{system}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_python_runs_in_a_shared_folder_and_stops_at_the_time_limit() {
+        let Some(py) = system_python() else { return };
+        let tmp = tempfile::tempdir().expect("tmp");
+        let shared = tmp.path().join("shared");
+        std::fs::create_dir_all(&shared).expect("mkdir");
+        std::fs::write(shared.join("in.txt"), "from the folder").expect("write");
+        let env = oxide_pyenv::PythonEnv::for_tests(&tmp.path().join("python"), &py);
+        let mut first = call(
+            "p1",
+            "run_python",
+            r#"{"code":"print(open('in.txt').read())"}"#,
+        );
+        first.extend(call(
+            "p2",
+            "run_python",
+            r#"{"code":"import time\ntime.sleep(30)"}"#,
+        ));
+        first.extend(call(
+            "p3",
+            "run_python",
+            r#"{"code":"print(1)","cwd":"../elsewhere"}"#,
+        ));
+        let f = fixture_python(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("Done.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            env,
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.python.timeout_secs = 1;
+        f.store.save_app_settings(settings).await.expect("saves");
+        let root = crate::tools::files::resolve_grant(&shared.to_string_lossy()).expect("grant");
+        f.store
+            .add_chat_folder(&f.chat.id, &root)
+            .await
+            .expect("adds");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        for id in ["p1", "p2", "p3"] {
+            wait_approval(&f, id).await;
+        }
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "p1", ApprovalDecision::AllowChat)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let (r1, bad1) = result_of(&m, "p1");
+        assert!(!bad1 && r1.contains("from the folder"), "{r1}");
+        let (r2, bad2) = result_of(&m, "p2");
+        assert!(bad2 && r2.contains("time limit"), "{r2}");
+        let (r3, bad3) = result_of(&m, "p3");
+        assert!(bad3 && r3.contains("outside"), "{r3}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_python_follows_the_setting_and_its_folder_goes_with_the_chat() {
+        let Some(py) = system_python() else { return };
+        let tmp = tempfile::tempdir().expect("tmp");
+        let env = oxide_pyenv::PythonEnv::for_tests(&tmp.path().join("python"), &py);
+        let f = fixture_python(
+            vec![
+                turn(
+                    call(
+                        "p1",
+                        "run_python",
+                        r#"{"code":"open('note.txt','w').write('x')"}"#,
+                    ),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("Done.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            env.clone(),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_approval(&f, "p1").await;
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "p1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        // Without shared folders the code ran in the chat's own folder.
+        let dir = env.work_dir(&f.chat.id);
+        assert!(dir.join("note.txt").is_file());
+        f.service.forget(&f.chat.id);
+        for _ in 0..50 {
+            if !dir.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_python_is_not_offered_when_switched_off_in_settings() {
+        let Some(py) = system_python() else { return };
+        let tmp = tempfile::tempdir().expect("tmp");
+        let env = oxide_pyenv::PythonEnv::for_tests(&tmp.path().join("python"), &py);
+        let f = fixture_python(
+            vec![turn(vec![text("ok")], StopReason::EndTurn), title_step()],
+            env,
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.python.enabled = false;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert!(reqs[0].tools.iter().all(|t| t.name != "run_python"));
+    }
+
+    #[tokio::test]
+    async fn run_python_is_not_offered_without_a_managed_environment() {
+        let f = fixture(vec![
+            turn(vec![text("Hi")], StopReason::EndTurn),
+            title_step(),
+        ])
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert!(
+            reqs[0].tools.iter().all(|t| t.name != "run_python"),
+            "{:?}",
+            reqs[0].tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
     }
 
     // ---- Projects & memory ---------------------------------------------------------------

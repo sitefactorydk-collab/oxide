@@ -2,7 +2,8 @@
 
 use oxide_agent::EventSink;
 use oxide_core::{
-    ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent, TaskList,
+    ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent, PythonStatus,
+    TaskList,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -34,10 +35,34 @@ pub struct MemoryChanged {
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct TaskListChanged(pub TaskList);
 
+/// The managed Python environment is installing, or finished or failed doing so
+/// (`events.pythonChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct PythonChanged(pub PythonStatus);
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct DesktopRequest(pub DesktopAction);
+
+/// Forwards the Python environment's progress to every window.
+pub struct TauriPythonSink {
+    app: AppHandle,
+}
+
+impl TauriPythonSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_pyenv::PythonSink for TauriPythonSink {
+    fn changed(&self, status: &PythonStatus) {
+        if let Err(e) = PythonChanged(status.clone()).emit(&self.app) {
+            tracing::warn!("couldn't send a Python update: {e}");
+        }
+    }
+}
 
 /// Forwards reply events from `oxide-agent` to every window.
 pub struct TauriSink {

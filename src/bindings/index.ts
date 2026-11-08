@@ -845,6 +845,64 @@ async openChatFolder(conversationId: string, path: string) : Promise<Result<null
 }
 },
 /**
+ * Where the environment stands (also how much space it takes).
+ */
+async pythonStatus() : Promise<Result<PythonStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("python_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Installs the environment now, as the first `run_python` would. Returns at once; progress
+ * arrives as `pythonChanged` events.
+ */
+async pythonSetup() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("python_setup") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Throws the virtual environment away and installs it again (downloaded Pythons and the
+ * package cache stay). Returns at once; progress arrives as `pythonChanged` events.
+ */
+async pythonRepair() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("python_repair") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes the environment, the downloaded Pythons and the cache. Chats' working folders
+ * stay.
+ */
+async pythonReset() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("python_reset") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the environment's folder in the file manager.
+ */
+async openPythonFolder() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_python_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1150,6 +1208,7 @@ conversationUpdated: ConversationUpdated,
 desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
 memoryChanged: MemoryChanged,
+pythonChanged: PythonChanged,
 taskListChanged: TaskListChanged
 }>({
 chatStream: "chat-stream",
@@ -1157,6 +1216,7 @@ conversationUpdated: "conversation-updated",
 desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
 memoryChanged: "memory-changed",
+pythonChanged: "python-changed",
 taskListChanged: "task-list-changed"
 })
 
@@ -1166,7 +1226,7 @@ taskListChanged: "task-list-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -2195,6 +2255,105 @@ message: string; modelCount: number;
  */
 models: string[]; latencyMs: number }
 /**
+ * The managed Python environment is installing, or finished or failed doing so
+ * (`events.pythonChanged`).
+ */
+export type PythonChanged = PythonStatus
+/**
+ * An installed package.
+ */
+export type PythonPackage = { name: string; version: string }
+/**
+ * The Python tool (Settings → Permissions). Every run asks for approval until the user
+ * chooses "Allow always for this chat".
+ */
+export type PythonSettings = { 
+/**
+ * Models may run Python code (`run_python`).
+ */
+enabled: boolean; 
+/**
+ * Time limit of one script, in seconds.
+ */
+timeoutSecs: number }
+/**
+ * Where the managed environment stands.
+ */
+export type PythonState = 
+/**
+ * Not installed yet (or out of date: the packages changed with an update).
+ */
+"missing" | 
+/**
+ * Being installed or repaired.
+ */
+"installing" | "ready" | 
+/**
+ * The last install failed; `PythonStatus::error` says why.
+ */
+"failed"
+/**
+ * The managed Python environment, as Settings → Advanced shows it. Also sent as the
+ * `pythonChanged` event while it installs.
+ */
+export type PythonStatus = { state: PythonState; 
+/**
+ * The step running (or that failed).
+ */
+step: PythonStep | null; 
+/**
+ * What is happening now, in a few words.
+ */
+message: string | null; 
+/**
+ * Why the last install failed.
+ */
+error: string | null; 
+/**
+ * The latest lines `uv` printed (newest last).
+ */
+log: string[]; 
+/**
+ * Which `uv` is used: its path, or `None` when none was found.
+ */
+uvPath: string | null; uvVersion: string | null; 
+/**
+ * The Python's full version (3.12.x), once installed.
+ */
+pythonVersion: string | null; packages: PythonPackage[]; 
+/**
+ * The folder with the environment (`<app data>/python`).
+ */
+folder: string; 
+/**
+ * Space the environment takes, when known.
+ */
+diskBytes: number | null }
+/**
+ * One step of setting up the environment, in order.
+ */
+export type PythonStep = 
+/**
+ * Find Oxide's `uv`.
+ */
+"uv" | 
+/**
+ * Install CPython.
+ */
+"python" | 
+/**
+ * Create the virtual environment.
+ */
+"venv" | 
+/**
+ * Install the packages from the lock file.
+ */
+"packages" | 
+/**
+ * Import them once to check.
+ */
+"check"
+/**
  * Thumbs up or down on a reply.
  */
 export type Rating = "good" | "bad"
@@ -2509,7 +2668,11 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * The chat's task list was set (the label is the current step).
  */
-"tasks"
+"tasks" | 
+/**
+ * Python code ran (the label is the script's first line).
+ */
+"python"
 /**
  * Token counts for one reply.
  */

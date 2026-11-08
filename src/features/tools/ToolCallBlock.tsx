@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Braces,
   ChevronRight,
   FileText,
   FolderOpen,
@@ -15,15 +16,18 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
+import { useParams } from "react-router";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
 import { ArtifactCard } from "@/features/artifacts/ArtifactCard";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
 import { useStreams, type ToolCallView } from "@/features/chat/streams";
+import { useArtifactPanel } from "@/features/artifacts/store";
 import { useMcpUi } from "@/features/mcp/store";
+import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAnswerApproval } from "./queries";
-import { callHeadline, prettyJson, toolKind } from "./toolView";
+import { callHeadline, prettyJson, pythonCode, toolKind } from "./toolView";
 
 function KindIcon({ call }: { call: ToolCallView }) {
   const kind = toolKind(call);
@@ -44,12 +48,16 @@ function KindIcon({ call }: { call: ToolCallView }) {
                   ? ListChecks
                   : kind === "shell"
                     ? SquareTerminal
-                    : Plug;
+                    : kind === "python"
+                      ? Braces
+                      : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
 function StatusBadge({ call }: { call: ToolCallView }) {
   const progress = useMcpUi((s) => s.progress[call.id]);
+  const isPython = toolKind(call) === "python";
+  const settingUp = usePythonInstalling(isPython) && isPython;
   switch (call.status) {
     case "streaming":
     case "ready":
@@ -57,11 +65,13 @@ function StatusBadge({ call }: { call: ToolCallView }) {
       return (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-subtle">
           <Loader2 aria-hidden className="size-3.5 animate-spin" />
-          {call.status === "running" && progress
-            ? `${progress.message ?? "Working"}${progress.total ? ` ${Math.round((progress.progress / progress.total) * 100)}%` : ""}`
-            : call.status === "running"
-              ? "Running"
-              : "Preparing"}
+          {call.status === "running" && settingUp
+            ? "Setting up Python"
+            : call.status === "running" && progress
+              ? `${progress.message ?? "Working"}${progress.total ? ` ${Math.round((progress.progress / progress.total) * 100)}%` : ""}`
+              : call.status === "running"
+                ? "Running"
+                : "Preparing"}
         </span>
       );
     case "awaitingApproval":
@@ -122,9 +132,29 @@ export function ToolResultView({
             />
           );
         }
+        if (b.type === "artifactRef") {
+          return <ArtifactLink key={i} id={b.artifactId} title={b.title} version={b.version} />;
+        }
         return null;
       })}
     </div>
+  );
+}
+
+/** A file a script produced that opened as an artifact: a button that shows it in the panel. */
+function ArtifactLink({ id, title, version }: { id: string; title: string; version: number }) {
+  const { id: conversationId = "" } = useParams();
+  const open = useArtifactPanel((s) => s.open);
+  return (
+    <button
+      type="button"
+      aria-label={`Open artifact ${title}`}
+      onClick={() => open(conversationId, id, version)}
+      className="inline-flex w-fit max-w-full items-center gap-2 rounded-lg border border-line bg-raised px-3 py-1.5 text-left text-sm text-fg hover:border-line-strong"
+    >
+      <Shapes aria-hidden className="size-4 shrink-0 text-fg-muted" />
+      <span className="truncate">{title}</span>
+    </button>
   );
 }
 
@@ -185,17 +215,28 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
                 ? "The server says this tool can change or delete data."
                 : request.tool === "run_command"
                   ? "Commands run on your computer and can change or delete files."
-                  : "This changes files in a folder you shared."}
+                  : request.tool === "run_python"
+                    ? "Python runs on your computer, not in a sandbox. It can read, change or delete your files."
+                    : "This changes files in a folder you shared."}
             </p>
           )}
         </div>
       </div>
-      <pre
-        aria-label="Arguments"
-        className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted"
-      >
-        {prettyJson(request.inputJson)}
-      </pre>
+      {request.server === null && request.tool === "run_python" ? (
+        <pre
+          aria-label="Code"
+          className="max-h-72 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg"
+        >
+          {pythonCode(request.inputJson) || prettyJson(request.inputJson)}
+        </pre>
+      ) : (
+        <pre
+          aria-label="Arguments"
+          className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted"
+        >
+          {prettyJson(request.inputJson)}
+        </pre>
+      )}
       <div className="flex flex-wrap justify-end gap-2">
         <button
           type="button"
@@ -287,7 +328,9 @@ function ToolLine({ call }: { call: ToolCallView }) {
                 Request
               </div>
               <pre className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted">
-                {prettyJson(call.inputJson)}
+                {toolKind(call) === "python"
+                  ? pythonCode(call.inputJson) || prettyJson(call.inputJson)
+                  : prettyJson(call.inputJson)}
               </pre>
             </>
           )}
@@ -301,7 +344,21 @@ function ToolLine({ call }: { call: ToolCallView }) {
           )}
         </div>
       )}
+      {!open && toolKind(call) === "python" && call.result && !call.isError && (
+        <PythonOutputs content={call.result} />
+      )}
       {waiting && call.approval && <ApprovalCard request={call.approval} />}
+    </div>
+  );
+}
+
+/** Charts and files a script produced, shown under the call so nobody has to open it. */
+function PythonOutputs({ content }: { content: ContentBlock[] }) {
+  const shown = content.filter((b) => b.type === "image" || b.type === "artifactRef");
+  if (shown.length === 0) return null;
+  return (
+    <div className="border-t border-line px-3 py-3">
+      <ToolResultView content={shown} isError={false} />
     </div>
   );
 }

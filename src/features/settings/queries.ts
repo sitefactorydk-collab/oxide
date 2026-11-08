@@ -8,6 +8,7 @@ import {
   type MemorySettings,
   type ModelSettings,
   type ProjectSettings,
+  type PythonSettings,
   type ShellSettings,
   type ThemePref,
   type ToolSettings,
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     notifications: true,
   },
   shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
+  python: { enabled: true, timeoutSecs: 120 },
 };
 
 export function useSettings() {
@@ -140,6 +142,12 @@ export function useSetShellSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ShellSettings>) =>
     update((s) => ({ ...s, shell: { ...s.shell, ...patch } }));
+}
+
+export function useSetPythonSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<PythonSettings>) =>
+    update((s) => ({ ...s, python: { ...s.python, ...patch } }));
 }
 
 export function useSetToolSettings() {

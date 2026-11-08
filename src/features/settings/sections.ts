@@ -112,7 +112,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "advanced",
     label: "Advanced",
     icon: Server,
-    phase: 12,
     blurb: "Managed Python environment: repair and reset.",
   },
   { id: "about", label: "About", icon: Info, blurb: "Version information." },
