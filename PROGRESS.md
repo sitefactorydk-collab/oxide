@@ -3,9 +3,8 @@
 The current phase and hand-off notes live here. Every phase chat reads this file first and appends to it last (template in PLAN.md §4).
 
 ## Status
-- **Last completed:** Phase 11 — Agentic tasks (Cowork-style) (`f312ced`, fixes `11cbe6b` and `e5822b0`; exit check passed on Windows on 2026-11-07)
-- **In progress:** Phase 12 — Managed Python (uv) & code execution: committed `b8fbacc` (2026-11-08, all scripted checks green on Windows); the by-hand exit checks in the Phase 12 section are still open.
-- **Next phase:** Phase 12b — Docker sandbox workspace (after Phase 12's exit check)
+- **Last completed:** Phase 12 — Managed Python (uv) & code execution (`b8fbacc`, fix `e9455ff`; exit check passed on Windows on 2026-11-08)
+- **Next phase:** Phase 12b — Docker sandbox workspace
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -31,7 +30,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 12 — Managed Python (uv) & code execution — 2026-11-08
-Status: **committed, by-hand exit checks open.** `b8fbacc phase 12: managed Python (uv) and run_python` on the third run of `scripts\win\phase12.cmd` (2026-11-08 11:36): fetch uv, `uv lock` (CPython 3.12.14), bindings, fmt, prettier, clippy, cargo test, typecheck, lint, Vitest, vite build and the real-uv exit check (no Python → chart, with the sidecar) all passed. Agent-side: Rust fmt, clippy and tests on Linux (core 60, store 47, llm 45, agent 107, mcp 46 + 21 integration, pyenv 13 + 1 ignored real-uv test); tsc, eslint and prettier on the device VM.
+Status: done. Every exit check passed by hand on Windows (2026-11-08, Strata `swift-iq2_xs`) after the fix `e9455ff phase 12: Settings shows Python as ready after a run installed it`. `b8fbacc phase 12: managed Python (uv) and run_python` on the third run of `scripts\win\phase12.cmd` (2026-11-08 11:36): fetch uv, `uv lock` (CPython 3.12.14), bindings, fmt, prettier, clippy, cargo test, typecheck, lint, Vitest, vite build and the real-uv exit check (no Python → chart, with the sidecar) all passed. Agent-side: Rust fmt, clippy and tests on Linux (core 60, store 47, llm 45, agent 107, mcp 46 + 21 integration, pyenv 13 + 1 ignored real-uv test); tsc, eslint and prettier on the device VM.
 
 First Windows run (2026-11-08 11:17): not committed. The bindings, cargo test, typecheck, lint, vite build and the real-uv exit check passed (the exit check used the uv on the PATH, since the sidecar was missing). Three failures, fixed:
 - `fetch uv`: GitHub answered 504, so there was no sidecar and no `uv.lock`. `fetch-uv.mjs` now retries network errors and 5xx answers (3 retries, 2/4/6 s).
@@ -56,13 +55,13 @@ Things to know before the first run:
 
 Exit criteria (check by hand in `cargo tauri dev` once the script has committed; ideally on a fresh Windows profile):
 - [x] **No Python → working `run_python`, no manual steps.** (2026-11-08, Strata `swift-iq2_xs`: the chart came back into the chat.) New chat with a tools model: “Make a bar chart of 3, 5, 2 with matplotlib and save it.” An approval card shows the code; Allow once. The tool line shows **Setting up Python** the first time; the chart appears under the call without opening it.
-- [ ] **Progress UI.** (2026-11-08: **failed first** — after check 1 had installed Python, Settings → Advanced still said “Not set up yet”. Cause: the last event after setup was built from the live state, which never says “ready”, and the status query is cached forever. Fix (`scripts\win\phase12-fix.cmd`): setup and reset end with the full status read from disk (`emit_settled`), the status query has `staleTime: 0`, and the pyenv test now checks the last event (it fails on the old code). Recheck pending.) Settings → Advanced → Reset, then **Set up Python**: the steps tick off (Find uv, Install Python, Create the environment, Install the packages, Check that they import), then Ready with Python 3.12.x, the four packages and the disk space.
-- Also found by the fix run (11:44): `oxide-mcp`'s Phase 10 test `install_configure_toggle_update_uninstall` failed once on Windows with os error 32 (the old extension folder was still in use). `drop_extension_server` only signalled the server to stop, and the folder swap's 5 s of retries could run out before the process had exited (2 s grace + kill + antivirus). It is now async and waits (up to 10 s) for the server's task, which ends only after the process has exited; install and uninstall await it.
-- [ ] **Repair and reset.** Repair rebuilds the venv (disabled while a script runs); Reset asks first and removes the environment, the downloaded Pythons and the cache.
-- [ ] **Files.** “Write a CSV of 5 rows with pandas.” → the CSV opens as an artifact card; the chart is a thumbnail.
-- [ ] **Granted folder.** With a folder added to the chat, a script writing a file there writes into it (the working dir is the first folder, or `cwd` inside one); without folders it runs in `<app data>\python\work\<chat id>` and files persist between runs.
-- [ ] **Time limit.** `import time; time.sleep(999)` with the limit at 5 s (Settings → Permissions → Python) ends with “timed out” and no leftover `python.exe`.
-- [ ] Python off in Settings → Permissions removes the tool from new replies.
+- [x] **Progress UI.** (2026-11-08: **failed first** — after check 1 had installed Python, Settings → Advanced still said “Not set up yet”. Cause: the last event after setup was built from the live state, which never says “ready”, and the status query is cached forever. Fix (`scripts\win\phase12-fix.cmd`): setup and reset end with the full status read from disk (`emit_settled`), the status query has `staleTime: 0`, and the pyenv test now checks the last event (it fails on the old code). Rechecked after `e9455ff`: Ready, then Reset → Set up Python ticked off the steps.) Settings → Advanced → Reset, then **Set up Python**: the steps tick off (Find uv, Install Python, Create the environment, Install the packages, Check that they import), then Ready with Python 3.12.x, the four packages and the disk space.
+  - Also found by the fix run (11:44): `oxide-mcp`'s Phase 10 test `install_configure_toggle_update_uninstall` failed once on Windows with os error 32 (the old extension folder was still in use). `drop_extension_server` only signalled the server to stop, and the folder swap's 5 s of retries could run out before the process had exited (2 s grace + kill + antivirus). It is now async and waits (up to 10 s) for the server's task, which ends only after the process has exited; install and uninstall await it.
+- [x] **Repair and reset.** Repair rebuilds the venv (disabled while a script runs); Reset asks first and removes the environment, the downloaded Pythons and the cache.
+- [x] **Files.** “Write a CSV of 5 rows with pandas.” → the CSV opens as an artifact card; the chart is a thumbnail.
+- [x] **Granted folder.** With a folder added to the chat, a script writing a file there writes into it (the working dir is the first folder, or `cwd` inside one); without folders it runs in `<app data>\python\work\<chat id>` and files persist between runs.
+- [x] **Time limit.** `import time; time.sleep(999)` with the limit at 5 s (Settings → Permissions → Python) ends with “timed out” and no leftover `python.exe`.
+- [x] Python off in Settings → Permissions removes the tool from new replies.
 
 Done:
 - **`oxide-core` (`python.rs`):** constants (`RUN_PYTHON`, `PYTHON_VERSION` 3.12, `PYTHON_PACKAGES`, timeouts 120 s default / 3,600 max, limits: 6 images ≤ 8 MB, 4 artifacts ≤ 200 KB, code ≤ 200k characters), `PythonSettings { enabled (on), timeoutSecs }` in `AppSettings.python` (clamped), `PythonState` (missing, installing, ready, failed), `PythonStep` (uv, python, venv, packages, check), `PythonStatus`, `PythonPackage`, `OutputFile`/`classify_output` (image / text artifact / other by extension), `code_label`. `ToolUsageKind::Python` (stored as `"python"`).
@@ -94,7 +93,7 @@ Notes for Phase 13:
 - The browser agent's Python package goes in `python/` next to `pyproject.toml`; add its dependencies to the same lock (the project hash in `state.json` makes the app reinstall).
 - `PythonEnv::ensure` is the way to get a ready environment; `venv_python()` is the interpreter for sidecar processes.
 
-Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest) typecheck ✅ lint ✅ vite build ✅ real uv ✅ (Windows, phase12.cmd). Open: by-hand exit checks in `cargo tauri dev`.
+Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest) typecheck ✅ lint ✅ vite build ✅ real uv ✅ (Windows, phase12.cmd). tauri dev on Windows ✅ (manual exit check by the user, after `e9455ff`).
 
 ## Phase 11 — Agentic tasks (Cowork-style) — 2026-11-07
 Status: done. Committed `f312ced phase 11: agentic tasks (folder grants, task list, session panel, shell)` on the second run of `scripts\win\phase11.cmd` (Vitest 186/186), then `11cbe6b` (notification fixes); every exit check passed by hand on Windows. `e5822b0` (deleted chats' approvals, stop race) after the recheck; the user confirmed everything works. Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 56, store 47, llm 45, agent 98, mcp 46 + 21 integration); typecheck, lint and prettier on the device VM. Vitest and `src-tauri` (bindings export) run only on Windows.
