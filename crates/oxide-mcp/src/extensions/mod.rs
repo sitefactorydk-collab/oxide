@@ -392,7 +392,7 @@ impl Extensions {
 
         // Swap the folders: stop the running server first, since Windows keeps its files open.
         let target = self.dir_of(&name);
-        self.inner.manager.drop_extension_server(&name);
+        self.inner.manager.drop_extension_server(&name).await;
         if target.exists() {
             let old = self
                 .inner
@@ -517,7 +517,7 @@ impl Extensions {
         let entry = cfg
             .extension(name)
             .ok_or_else(|| bad(format!("there's no extension called \"{name}\"")))?;
-        self.inner.manager.drop_extension_server(name);
+        self.inner.manager.drop_extension_server(name).await;
         self.inner
             .manager
             .edit(|c| {

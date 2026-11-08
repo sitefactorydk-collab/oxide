@@ -438,11 +438,24 @@ impl McpManager {
     }
 
     /// Stops one extension's server (before its files are replaced or removed).
-    pub fn drop_extension_server(&self, name: &str) {
+    ///
+    /// Waits (up to 10 s) until its process has exited, so its folder can be replaced or
+    /// deleted right after: Windows won't move a folder while a process runs from it.
+    pub async fn drop_extension_server(&self, name: &str) {
         let removed = lock(&self.inner.extensions).remove(name).is_some();
         if removed {
+            let task = lock(&self.inner.slots)
+                .get_mut(name)
+                .and_then(|s| s.task.take());
             let cfg = lock(&self.inner.config).clone();
             self.inner.apply(cfg);
+            if let Some(task) = task
+                && tokio::time::timeout(Duration::from_secs(10), task)
+                    .await
+                    .is_err()
+            {
+                tracing::warn!("the server of extension {name} took long to stop");
+            }
         }
     }
 

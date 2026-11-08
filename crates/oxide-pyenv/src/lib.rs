@@ -253,6 +253,10 @@ mod tests {
             assert!(steps.contains(&want), "missing {want:?} in {steps:?}");
         }
         assert!(seen.iter().any(|s| s.state == PythonState::Installing));
+        // The last event says it's ready (Settings shows events as they come).
+        let last = seen.last().expect("events");
+        assert_eq!(last.state, PythonState::Ready, "{last:?}");
+        assert!(last.packages.iter().any(|p| p.name == "pip"));
         assert!(
             seen.iter()
                 .any(|s| s.log.iter().any(|l| l.contains("synced")))
@@ -272,6 +276,14 @@ mod tests {
         assert_eq!(env.status(false).await.state, PythonState::Ready);
         env.reset().await.expect("reset");
         assert_eq!(env.status(false).await.state, PythonState::Missing);
+        let last = sink
+            .0
+            .lock()
+            .expect("lock")
+            .last()
+            .cloned()
+            .expect("events");
+        assert_eq!(last.state, PythonState::Missing);
         assert!(env.work_dir("c1").is_dir());
         assert!(!env.venv_dir().exists());
     }

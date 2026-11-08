@@ -322,6 +322,15 @@ impl PythonEnv {
         self.0.sink.changed(&status);
     }
 
+    /// Sends the full status (read from disk, so it says "ready" once installed) when setup
+    /// or reset has finished. Progress events use the live state, which only knows installing,
+    /// failed and missing.
+    async fn emit_settled(&self) {
+        let status = self.status(true).await;
+        lock(&self.0.live).last_emit = Some(Instant::now());
+        self.0.sink.changed(&status);
+    }
+
     fn push_log(&self, line: String) {
         let mut live = lock(&self.0.live);
         if live.log.len() >= LOG_LINES {
@@ -383,7 +392,7 @@ impl PythonEnv {
         if let Err(e) = &result {
             tracing::warn!("Python setup failed: {e}");
         }
-        self.emit(true);
+        self.emit_settled().await;
         result
     }
 
@@ -670,7 +679,7 @@ impl PythonEnv {
             let mut live = lock(&self.0.live);
             *live = Live::default();
         }
-        self.emit(true);
+        self.emit_settled().await;
         Ok(())
     }
 }

@@ -10,6 +10,9 @@ export function usePythonStatus(enabled = true) {
   return useQuery({
     queryKey: pythonKeys.status,
     queryFn: () => unwrap(commands.pythonStatus()),
+    // Read again whenever a page using it opens: the environment changes outside the app's
+    // own mutations (a run installs it).
+    staleTime: 0,
     enabled,
   });
 }
