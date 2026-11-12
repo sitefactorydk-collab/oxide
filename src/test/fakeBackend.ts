@@ -462,6 +462,7 @@ export function emitStream(conversationId: string, event: StreamEvent): void {
 export function compactHeldReply(
   conversationId: string,
   summary = "## Task\nA sheet.",
+  trigger: Compaction["trigger"] = "auto",
 ): Compaction {
   const r = state.held.get(conversationId);
   if (!r) throw new Error(`no held reply in ${conversationId}`);
@@ -471,7 +472,7 @@ export function compactHeldReply(
     messageId: r.messageId,
     afterToolUseId: null,
     summary,
-    trigger: "auto",
+    trigger,
     tokensBefore: 98_000,
     tokensAfter: 6_000,
     model: r.model,

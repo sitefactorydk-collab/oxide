@@ -26,6 +26,8 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase13.cmd` | Phase 13: `uv lock` (new `browser` group), bindings, checks, vite build, the real-browser exit check (installs Python and the browser packages into `target\browser-test-python`; uses Edge/Chrome; runs Browser-Use too when Strata or LM Studio is running), the agent's Python tests, commit when green, then starts the app | `phase13*`, `check*`, `commit*`, `dev.log` |
 | `phase13-fix.cmd` | Phase 13 fix: a new chat's “+” menu switches are saved with the chat; bindings, checks, commit when green, then starts the app | `phase13-fix*`, `check*`, `commit*`, `dev.log` |
 | `phase13-search.cmd` | Phase 13 follow-up: Google search in the browser; checks, vite build, the real-browser test with a real Google search, the agent's Python tests, commit when green, then starts the app | `phase13s-*`, `check*`, `commit*`, `dev.log` |
+| `phase13b.cmd` | Phase 13b: context management & compaction; bindings, checks, vite build, saves Strata's and LM Studio's model listings to `logs\phase13b-models.json`, commit when green, then starts the app | `phase13b-*`, `check*`, `commit*`, `dev.log` |
+| `phase13b-fix.cmd` | Phase 13b fix: repetition guard, gentler clearing shown in the transcript; bindings, checks, vite build, commit when green, then starts the app | `phase13bf-*`, `check*`, `commit*`, `dev.log` |
 | `phase12-fix.cmd` | Phase 12 fix (Python status after setup): checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 

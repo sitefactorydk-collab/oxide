@@ -5,7 +5,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 ## Status
 - **Last completed:** Phase 12b — Docker sandbox workspace (committed 2026-11-12 as `phase 12b: Docker sandbox workspace`; exit check passed on Windows on 2026-11-12)
 - **Phase 13** — Browser agent (Browser-Use): done (`1af53b2`, fix `86f147d`; all exit checks passed by hand on 2026-11-12). Follow-up (Google search instead of guessed addresses) committed as `09c1ca2` (2026-11-12 13:53, all checks and the real-browser test green; the hidden test browser's real Google search was refused with a robot check and reported plainly, as designed); then click fixes `23e3fd5` and Google's AI Overview + longer extension-folder retries `4412e21` (2026-11-12 15:16, all green)
-- **Phase 13b** — Context management & chat compaction: built 2026-11-12; waiting for the Windows run of `scripts\win\phase13b.cmd` and the manual exit checks (see its section)
+- **Phase 13b** — Context management & chat compaction: committed `d58672b` (2026-11-12 18:08, all checks green); fix after the first real run built, waiting for `scripts\win\phase13b-fix.cmd` and the manual exit checks (see its section)
 - **Next phase:** Phase 14 — Chrome extension & WebSocket bridge
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -34,7 +34,15 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 13b — Context management & chat compaction — 2026-11-12
-Status: built; agent-side checks green; waiting for the Windows run of `scripts\win\phase13b.cmd` (bindings, all checks, vite build, commit) and the manual exit checks below.
+Status: committed (`d58672b`); first real run found a repetition loop and silent clearing — fix built, waiting for `scripts\win\phase13b-fix.cmd` and the manual exit checks below.
+
+**Windows run 1 (2026-11-12 18:08):** every check green, committed as `d58672b phase 13b: context management & chat compaction`. `logs\phase13b-models.json`: Strata's `/v1/models` names no context window (only `id`, `meta.label` “Swift 1.5 IQ2_XS”), so its window must be set in Settings → Models (131072).
+
+**First real badminton run (export `docs\can you make me a spread sheet…test-2.json`, not committed):** no context error, but (1) the model used `web_fetch` (Wikipedia) and never the browser, though it was on — its choice, the fetches worked; it ignored the 404 hint to use `browser__search`; (2) it checked for openpyxl with `sandbox_exec` (the sandbox image has none and no network); (3) the meter went from ~80K to ~35K tokens with nothing in the transcript (clearing all but the last 2 result turns at once); (4) after that its thinking, which isn't sent back to Strata, held the only copy of the facts it had read, and the next step's thinking turned into “No, 2017 Worlds MS champion:” ×3,228 (108K characters, 650 s) until the user stopped it. Fix (`scripts\win\phase13b-fix.cmd`, message `logs\commit-msg-phase13b-fix.txt`):
+- **Repetition guard** (`compaction::is_repeating`): every 1,000 characters of text or thinking, the last 6,000 are checked; under 10 % distinct 32-character pieces (prose ≈ 0.95, fetched tables ≈ 0.3, that loop 0.005) the stream is dropped, the block cut where the loop began with “[Oxide cut this off here: …]”, and the step retried with a note to use the conversation or look things up again instead of recalling; after 2 retries the reply ends with a plain message. Tests: `a_model_repeating_itself_is_cut_off_and_nudged`, `a_model_that_keeps_repeating_ends_the_reply_plainly`, unit test on prose/table/loop.
+- **Gentler clearing:** oldest result turns first, one at a time, only until the estimate is 15 % of the window under the trigger (`Budget::clear_goal`; 131K window: 98K → 79K), never the last 2 result turns.
+- **Clearing is shown:** each clearing round is saved as a `cleared` compaction (never used as a summary; `pick_compaction` skips it) and shown as an **“Old tool results cleared”** note at that point of the reply (tokens before → after; click for the list of cleared calls).
+- System prompt: facts go in the visible reply text (thinking isn't kept between steps); never fill gaps from memory.
 
 Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 72, store 49, llm 48, agent 134 + 2 ignored, mcp, pyenv, sandbox unchanged); tsc, eslint and prettier on the device VM. Vitest and `src-tauri` run only on Windows; `src/bindings/index.ts` was edited by hand and `phase13b.ps1` regenerates it.
 

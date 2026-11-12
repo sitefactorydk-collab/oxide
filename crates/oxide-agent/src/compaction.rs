@@ -147,6 +147,14 @@ impl Budget {
         self.window - self.reserve
     }
 
+    /// Clearing old results stops once the prompt is below this: 15 % of the window under
+    /// the trigger, so it clears only what it must and isn't needed again at once.
+    pub fn clear_goal(&self) -> u32 {
+        self.trigger
+            .saturating_sub(self.window / 100 * 15)
+            .max(self.window / 4)
+    }
+
     /// Characters one tool result may have: about a tenth of the window.
     pub fn result_cap_chars(&self) -> usize {
         (self.window as usize * 4 / 10).clamp(2_000, MAX_RESULT_CHARS)
@@ -221,6 +229,44 @@ pub fn clear_results(messages: &mut [ChatMessage], turns: usize) -> u32 {
         }
     }
     cleared
+}
+
+/// The calls whose results are cleared notes in `messages`: (call id, "tool detail").
+pub fn cleared_calls(messages: &[ChatMessage]) -> Vec<(String, String)> {
+    let calls: std::collections::HashMap<&str, (&str, &str)> = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|b| match b {
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input_json,
+                ..
+            } => Some((id.as_str(), (name.as_str(), input_json.as_str()))),
+            _ => None,
+        })
+        .collect();
+    messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|b| match b {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } if content.iter().any(is_stub) => {
+                let (name, input) = calls
+                    .get(tool_use_id.as_str())
+                    .copied()
+                    .unwrap_or(("a tool", ""));
+                let label = call_detail(input)
+                    .map(|d| format!("{name} {d}"))
+                    .unwrap_or_else(|| name.to_owned());
+                Some((tool_use_id.clone(), label))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// How many results in `messages` are cleared notes.
@@ -306,6 +352,48 @@ pub fn fit_output(out: &mut ToolOutput, cap: usize) {
     }
 }
 
+/// Length of the tail checked for repetition.
+const REPEAT_WINDOW: usize = 6_000;
+/// Share of distinct 32-character pieces below which text counts as repeating. Model prose
+/// sits near 0.95, tables of fetched pages near 0.3, a loop like “No, 2017 Worlds MS
+/// champion: No, 2017 …” near 0.01.
+const REPEAT_RATIO: f64 = 0.1;
+
+/// Share of distinct 32-character pieces in `s` (1.0: nothing repeats).
+fn distinct_share(s: &[char]) -> f64 {
+    const K: usize = 32;
+    if s.len() <= K {
+        return 1.0;
+    }
+    let n = s.len() - K;
+    let set: std::collections::HashSet<&[char]> = (0..n).map(|i| &s[i..i + K]).collect();
+    set.len() as f64 / n as f64
+}
+
+/// Whether the end of `text` is the same words over and over.
+pub fn is_repeating(text: &str) -> bool {
+    let tail: Vec<char> = text.chars().rev().take(REPEAT_WINDOW).collect();
+    tail.len() == REPEAT_WINDOW && distinct_share(&tail) < REPEAT_RATIO
+}
+
+/// Where the repeating at the end of `text` started (a byte index on a character boundary),
+/// to the nearest 1,000 characters.
+pub fn repetition_start(text: &str) -> usize {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let only: Vec<char> = chars.iter().map(|(_, c)| *c).collect();
+    let mut start = only.len().saturating_sub(REPEAT_WINDOW);
+    while start >= 1_000 {
+        let probe = &only[start - 1_000..(start - 1_000 + 2_000).min(only.len())];
+        if distinct_share(probe) >= 0.3 {
+            break;
+        }
+        start -= 1_000;
+    }
+    // Keep a little of the start of the loop, so it's clear what it was.
+    let keep = (start + 300).min(only.len());
+    chars.get(keep).map(|(i, _)| *i).unwrap_or(text.len())
+}
+
 /// The index just after the tool results of the step that ended with call `anchor`, in a
 /// reply's blocks.
 pub fn cut_after(content: &[ContentBlock], anchor: &str) -> Option<usize> {
@@ -337,9 +425,10 @@ pub fn summary_text(summary: &str) -> String {
 
 /// The latest compaction that applies to `thread` (its message is on the thread).
 pub fn pick_compaction<'a>(thread: &[Message], all: &'a [Compaction]) -> Option<&'a Compaction> {
-    all.iter()
-        .rev()
-        .find(|c| thread.iter().any(|m| m.id == c.message_id))
+    all.iter().rev().find(|c| {
+        c.trigger != oxide_core::CompactionTrigger::Cleared
+            && thread.iter().any(|m| m.id == c.message_id)
+    })
 }
 
 /// The thread as the model sees it when `c` stands in for its start. `None` when `c`'s
@@ -606,6 +695,32 @@ mod tests {
             matches!(&m[6].content[0], ContentBlock::ToolResult { content, .. }
             if matches!(&content[0], ContentBlock::Text { text } if text.len() == 40_000))
         );
+    }
+
+    #[test]
+    fn repetition_is_found_and_cut_where_it_starts() {
+        let prose: String = (0..400)
+            .map(|i| {
+                format!(
+                    "Sentence {i} talks about player number {} and a title. ",
+                    i * 7
+                )
+            })
+            .collect();
+        assert!(!is_repeating(&prose));
+        let table: String = (0..300)
+            .map(|i| format!("| {} | Viktor Axelsen | Denmark | {} |\n", 2000 + i, i % 9))
+            .collect();
+        assert!(!is_repeating(&table));
+        let looped = format!("{prose}{}", "No, 2017 Worlds MS champion: ".repeat(600));
+        assert!(is_repeating(&looped));
+        let cut = repetition_start(&looped);
+        assert!(
+            cut >= prose.len() - 1_000 && cut <= prose.len() + 1_300,
+            "{cut} vs {}",
+            prose.len()
+        );
+        assert!(looped.is_char_boundary(cut));
     }
 
     #[test]

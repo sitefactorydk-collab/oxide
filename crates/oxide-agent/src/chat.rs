@@ -40,8 +40,9 @@ use crate::AgentError;
 use crate::artifacts::run_artifact;
 use crate::compaction::{
     Budget, KEEP_RESULT_TURNS, KEEP_STEPS, SUMMARY_SYSTEM, anchor_before, chunks, clear_results,
-    cleared_count, default_window, fit_output, history_for, messages_tokens, overhead_tokens,
-    result_turns, summary_prompt, summary_text, text_tokens, transcript, with_latest_request,
+    cleared_calls, cleared_count, default_window, fit_output, history_for, messages_tokens,
+    overhead_tokens, result_turns, summary_prompt, summary_text, text_tokens, transcript,
+    with_latest_request,
 };
 use crate::context::{PromptContext, SandboxPrompt, plan_request, request_messages, system_prompt};
 use crate::knowledge::{
@@ -67,6 +68,15 @@ const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
 const MEMORY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Longest wait for one summarizing request.
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(300);
+/// Steps cut off for repeating before the reply is given up.
+const MAX_REPEATS: u32 = 2;
+/// Added to the request after a step was cut off for repeating itself.
+const REPEAT_NUDGE: &str = "[Note from Oxide] Your last answer got stuck repeating the same \
+words, so it was cut off. Don't try to recall facts from memory: use what is in this \
+conversation, or look it up again with your tools. Then continue the task.";
+/// How a reply ends when the model keeps repeating itself.
+const REPEAT_FAILURE: &str = "The model got stuck repeating the same words, so Oxide stopped \
+it. Try again, or use a stronger model for this task.";
 /// Prompt overhead (system prompt, tools) assumed for a chat before its first request.
 const DEFAULT_OVERHEAD: u32 = 2_500;
 
@@ -145,6 +155,8 @@ enum Outcome {
     Finished(StopReason),
     Stopped,
     Failed(String),
+    /// The model kept repeating the same words; the step was cut off.
+    Repeating,
     /// The provider said the prompt doesn't fit, before any of the step's output.
     ContextFull {
         error: String,
@@ -171,6 +183,10 @@ struct ContextState {
     last_raw: u32,
     /// A "context full" answer was already retried in this step.
     overflow_retried: bool,
+    /// Steps cut off because the model repeated itself.
+    repeats: u32,
+    /// A note for the model, added to the next request only.
+    nudge: Option<&'static str>,
 }
 
 impl ContextState {
@@ -513,6 +529,10 @@ impl ChatService {
         let (stop_reason, error) = match outcome {
             Outcome::Finished(r) => (r, None),
             Outcome::Stopped => (StopReason::Stopped, None),
+            Outcome::Repeating => {
+                let e = REPEAT_FAILURE.to_owned();
+                (StopReason::Error, Some(e))
+            }
             Outcome::Failed(e) | Outcome::ContextFull { error: e, .. } => {
                 let e = if provider_label.is_empty() {
                     e
@@ -925,6 +945,8 @@ impl ChatService {
             overhead: memo.overhead,
             last_raw: 0,
             overflow_retried: false,
+            repeats: 0,
+            nudge: None,
         };
         let max_steps = setup.settings.tools.max_steps;
         let mut steps = 0u32;
@@ -963,6 +985,13 @@ impl ChatService {
                 )
                 .await;
             force = false;
+            let mut messages = messages;
+            if let Some(note) = ctx.nudge.take() {
+                match messages.last_mut() {
+                    Some(m) if m.role == Role::User => m.content.push(ContentBlock::text(note)),
+                    _ => messages.push(ChatMessage::user(note)),
+                }
+            }
             ctx.last_raw = ctx.overhead.saturating_add(messages_tokens(&messages));
             request.messages = messages;
             self.remember_context(cid, &ctx, request.max_tokens);
@@ -990,6 +1019,15 @@ impl ChatService {
                     ctx.overflow_retried = true;
                     self.learn_overflow(cid, &setup, &mut ctx, numbers);
                     force = true;
+                }
+                // The model got stuck repeating itself: cut off, nudge it, try again (twice).
+                Outcome::Repeating => {
+                    ctx.repeats += 1;
+                    tracing::info!(conversation = %cid, "the model repeated itself; step cut off");
+                    if ctx.repeats > MAX_REPEATS {
+                        return Ok(Outcome::Repeating);
+                    }
+                    ctx.nudge = Some(REPEAT_NUDGE);
                 }
                 // Anthropic proxies that don't know context editing: send without it.
                 Outcome::Failed(e) if setup.server_clearing && e.contains("context_management") => {
@@ -1156,16 +1194,27 @@ impl ChatService {
             m
         };
         let mut messages = build(ctx);
+        let cleared_before: std::collections::HashSet<String> = cleared_calls(&messages)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let est_before = ctx.estimate(&messages);
+        let mut compacted_now = false;
         // Anthropic clears old results on its side; Oxide clears only when forced there.
         let client_clearing = !setup.server_clearing || force;
-        if (on || force) && (force || ctx.estimate(&messages) > trigger) {
+        // Oldest result turns first, only until the prompt is comfortably below the trigger.
+        let clear_some = |ctx: &mut ContextState, messages: &mut Vec<ChatMessage>, keep: usize| {
+            let most = result_turns(messages).saturating_sub(keep);
+            let goal = ctx.budget.clear_goal();
+            while ctx.clear_turns < most && (force || ctx.estimate(messages) > goal) {
+                ctx.clear_turns += 1;
+                *messages = build(ctx);
+            }
+        };
+        if (on || force) && (force || est_before > trigger) {
             let keep = if force { 1 } else { KEEP_RESULT_TURNS };
             if client_clearing {
-                let target = result_turns(&messages).saturating_sub(keep);
-                if target > ctx.clear_turns {
-                    ctx.clear_turns = target;
-                    messages = build(ctx);
-                }
+                clear_some(ctx, &mut messages, keep);
             }
             if force || ctx.estimate(&messages) > trigger {
                 let before = ctx.estimate(&messages);
@@ -1188,12 +1237,32 @@ impl ChatService {
                     )
                     .await
                 {
+                    compacted_now = true;
                     messages = build(ctx);
                     if client_clearing && ctx.estimate(&messages) > trigger {
-                        ctx.clear_turns = result_turns(&messages).saturating_sub(keep);
-                        messages = build(ctx);
+                        clear_some(ctx, &mut messages, keep);
                     }
                 }
+            }
+        }
+        if !compacted_now {
+            let newly: Vec<String> = cleared_calls(&messages)
+                .into_iter()
+                .filter(|(id, _)| !cleared_before.contains(id))
+                .map(|(_, label)| label)
+                .collect();
+            if !newly.is_empty() {
+                let after = ctx.estimate(&messages);
+                self.note_cleared(
+                    conversation,
+                    thread,
+                    reply_id,
+                    reply,
+                    &newly,
+                    est_before,
+                    after,
+                )
+                .await;
             }
         }
         let usage = ContextUsage {
@@ -1206,6 +1275,53 @@ impl ChatService {
             cleared_results: cleared_count(&messages),
         };
         (messages, usage)
+    }
+
+    /// Saves and shows where old tool results were cleared (a divider in the transcript).
+    #[allow(clippy::too_many_arguments)]
+    async fn note_cleared(
+        &self,
+        conversation: &Conversation,
+        thread: &[Message],
+        reply_id: &str,
+        reply: &ReplyBuilder,
+        calls: &[String],
+        before: u32,
+        after: u32,
+    ) {
+        let cid = conversation.id.as_str();
+        let (message_id, anchor) = match anchor_before(&reply.blocks, reply.blocks.len()) {
+            Some(a) => (reply_id.to_owned(), Some(a)),
+            None => match thread.last() {
+                Some(m) => (m.id.clone(), None),
+                None => return,
+            },
+        };
+        let list = calls
+            .iter()
+            .map(|c| format!("- {c}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let note = Compaction {
+            id: new_id(),
+            conversation_id: cid.to_owned(),
+            message_id,
+            after_tool_use_id: anchor,
+            summary: format!(
+                "From here on, these results are sent to the model as short notes (the calls \
+                 stay, so it can run them again):\n\n{list}"
+            ),
+            trigger: CompactionTrigger::Cleared,
+            tokens_before: before,
+            tokens_after: after,
+            model: None,
+            created_at: now_ms(),
+        };
+        if let Err(e) = self.store.add_compaction(&note).await {
+            tracing::warn!("couldn't save a clearing note: {e}");
+        }
+        tracing::info!(conversation = %cid, cleared = calls.len(), before, after, "old tool results cleared");
+        self.emit(cid, StreamEvent::Compacted { compaction: note });
     }
 
     /// Summarizes the start of the conversation while a reply runs: the thread before it,
@@ -1552,6 +1668,10 @@ impl ChatService {
                 },
             };
             let events = reply.apply(event);
+            if reply.repeating() {
+                reply.cut_repetition();
+                break Outcome::Repeating;
+            }
             if !events.is_empty() {
                 self.flush(cid, reply);
             }
@@ -2473,6 +2593,8 @@ struct ReplyBuilder {
     pending_input: Vec<(String, String)>,
     /// Where each step's blocks start.
     step_starts: Vec<usize>,
+    /// (block index, length) of the text last checked for repetition.
+    repeat_checked: (usize, usize),
 }
 
 fn add_usage(a: Option<Usage>, b: Option<Usage>) -> Option<Usage> {
@@ -2488,6 +2610,39 @@ fn add_usage(a: Option<Usage>, b: Option<Usage>) -> Option<Usage> {
 }
 
 impl ReplyBuilder {
+    /// Whether the text or thinking being written has turned into the same words over and
+    /// over (checked every 1,000 characters).
+    fn repeating(&mut self) -> bool {
+        let at = self.blocks.len().saturating_sub(1);
+        let text = match self.blocks.last() {
+            Some(ContentBlock::Text { text } | ContentBlock::Thinking { text, .. }) => text,
+            _ => return false,
+        };
+        let (block, checked) = self.repeat_checked;
+        let since = if block == at { checked } else { 0 };
+        if text.len() < since + 1_000 {
+            return false;
+        }
+        self.repeat_checked = (at, text.len());
+        crate::compaction::is_repeating(text)
+    }
+
+    /// Cuts the repeated part off the block being written and says so.
+    fn cut_repetition(&mut self) {
+        if let Some(ContentBlock::Text { text } | ContentBlock::Thinking { text, .. }) =
+            self.blocks.last_mut()
+        {
+            let cut = crate::compaction::repetition_start(text);
+            text.truncate(cut);
+            text.push_str(
+                "\n\n[Oxide cut this off here: the model kept repeating the same words.]",
+            );
+        }
+        self.pending_text.clear();
+        self.pending_thinking.clear();
+        self.end_thinking();
+    }
+
     fn begin_step(&mut self) {
         self.end_thinking();
         self.usage_done = add_usage(self.usage_done, self.usage_step.take());
@@ -5608,13 +5763,28 @@ class Agent:
             })
             .max();
         assert!(cleared.is_some_and(|c| c >= 8), "{cleared:?}");
+        // Where results were cleared is saved for the transcript (no summaries were made).
+        let notes = f.store.compactions(&f.chat.id).await.expect("lists");
+        assert!(!notes.is_empty());
         assert!(
-            f.store
-                .compactions(&f.chat.id)
-                .await
-                .expect("lists")
-                .is_empty()
+            notes
+                .iter()
+                .all(|c| c.trigger == CompactionTrigger::Cleared)
         );
+        assert!(
+            notes[0].summary.contains("fs__read r0.txt"),
+            "{}",
+            notes[0].summary
+        );
+        assert!(notes.iter().all(|c| c.after_tool_use_id.is_some()));
+        assert!(notes.iter().all(|c| c.tokens_after < c.tokens_before));
+        // A clearing note never stands in for the history.
+        let usage = f
+            .service
+            .context_usage(&f.chat.id, Some(&m.id))
+            .await
+            .expect("usage");
+        assert!(!usage.compacted);
     }
 
     #[tokio::test]
@@ -5713,7 +5883,10 @@ class Agent:
             assert!(estimate(&r) <= budget.hard_limit(), "{}", estimate(&r));
         }
         let all = f.store.compactions(&f.chat.id).await.expect("lists");
-        let inside: Vec<&Compaction> = all.iter().filter(|c| c.message_id == reply.id).collect();
+        let inside: Vec<&Compaction> = all
+            .iter()
+            .filter(|c| c.message_id == reply.id && c.trigger != CompactionTrigger::Cleared)
+            .collect();
         assert!(!inside.is_empty(), "{all:?}");
         let anchor = inside
             .last()
@@ -5901,5 +6074,66 @@ class Agent:
         wait_done(&f, 2).await;
         let text = request_text(&f.fake.requests()[1]);
         assert!(text.contains("SUMMARY 1") && !text.contains("Here's a plan."));
+    }
+
+    fn looping_thinking() -> Vec<Step> {
+        let mut steps = vec![ev(ChatEvent::ThinkingDelta(
+            "Let me list the champions I found. ".into(),
+        ))];
+        for _ in 0..400 {
+            steps.push(ev(ChatEvent::ThinkingDelta(
+                "No, 2017 Worlds MS champion: ".into(),
+            )));
+        }
+        steps.push(ev(ChatEvent::Stop(StopReason::EndTurn)));
+        steps
+    }
+
+    #[tokio::test]
+    async fn a_model_repeating_itself_is_cut_off_and_nudged() {
+        let fake = FakeProvider::new(vec![looping_thinking(), answer("Here it is.")]);
+        let f = context_fixture(fake, 0, "Champions?").await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert_eq!(m.stop_reason, Some(StopReason::EndTurn));
+        assert_eq!(text_blocks(&m.content), "Here it is.");
+        let Some(ContentBlock::Thinking { text, .. }) = m.content.first() else {
+            panic!("thinking first: {:?}", m.content);
+        };
+        assert!(
+            text.ends_with("the model kept repeating the same words.]"),
+            "{text}"
+        );
+        assert!(text.len() < 2_000, "{}", text.len());
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 2);
+        assert!(request_text(&reqs[1]).contains("got stuck repeating the same words"));
+        assert!(!request_text(&reqs[0]).contains("got stuck"));
+    }
+
+    #[tokio::test]
+    async fn a_model_that_keeps_repeating_ends_the_reply_plainly() {
+        let fake = FakeProvider::new(vec![
+            looping_thinking(),
+            looping_thinking(),
+            looping_thinking(),
+        ]);
+        let f = context_fixture(fake, 0, "Champions?").await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        match f.sink.events().last() {
+            Some(StreamEvent::Failed { error, .. }) => {
+                assert!(error.contains("stuck repeating"), "{error}");
+            }
+            other => panic!("fails: {other:?}"),
+        }
+        assert_eq!(f.fake.requests().len(), 3);
     }
 }

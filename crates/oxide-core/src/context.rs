@@ -107,6 +107,9 @@ pub enum CompactionTrigger {
     Manual,
     /// The provider answered that the context was full; Oxide compacted and tried again.
     Overflow,
+    /// Not a summary: old tool results were replaced by short notes in the requests from
+    /// here on (`summary` lists them). Only shown in the transcript.
+    Cleared,
 }
 
 impl CompactionTrigger {
@@ -116,6 +119,7 @@ impl CompactionTrigger {
             CompactionTrigger::Auto => "auto",
             CompactionTrigger::Manual => "manual",
             CompactionTrigger::Overflow => "overflow",
+            CompactionTrigger::Cleared => "cleared",
         }
     }
 
@@ -123,6 +127,7 @@ impl CompactionTrigger {
         match s {
             "manual" => CompactionTrigger::Manual,
             "overflow" => CompactionTrigger::Overflow,
+            "cleared" => CompactionTrigger::Cleared,
             _ => CompactionTrigger::Auto,
         }
     }
@@ -229,6 +234,7 @@ mod tests {
             CompactionTrigger::Auto,
             CompactionTrigger::Manual,
             CompactionTrigger::Overflow,
+            CompactionTrigger::Cleared,
         ] {
             assert_eq!(CompactionTrigger::parse(t.as_str()), t);
             let json = serde_json::to_string(&t).expect("serializes");

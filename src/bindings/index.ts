@@ -1799,7 +1799,12 @@ export type CompactionTrigger =
 /**
  * The provider answered that the context was full; Oxide compacted and tried again.
  */
-"overflow"
+"overflow" | 
+/**
+ * Not a summary: old tool results were replaced by short notes in the requests from
+ * here on (`summary` lists them). Only shown in the transcript.
+ */
+"cleared"
 /**
  * A piece of message content. Mirrors the block types of the model APIs.
  */

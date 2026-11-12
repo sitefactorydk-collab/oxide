@@ -462,9 +462,10 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
         s.push_str(
             "\n\nLong tasks: once a conversation grows, old tool results are replaced by short \
              notes to save room (your calls stay), and the start of a long chat may be replaced by \
-             a summary. So while you work, write down briefly in your reply the facts you will \
-             need from long results (with their sources) before moving on, rather than reading \
-             the same pages again later.",
+             a summary. So while you work, write the facts you will need from long results \
+             (briefly, with their sources) in your visible reply text before moving on: your \
+             thinking is not kept between steps, and results may be gone later. Never fill gaps \
+             from memory; look things up again instead.",
         );
     }
     if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {

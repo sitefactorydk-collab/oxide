@@ -52,6 +52,21 @@ describe("context management", () => {
     expect(await screen.findByRole("note", { name: "Conversation compacted" })).toBeInTheDocument();
   });
 
+  it("cleared tool results show as their own note", async () => {
+    renderApp("/chat/c2", { backend: { replies: "hold" } });
+    await screen.findByText(/warm neutral palette/);
+    await send("Research more");
+    const live = await screen.findByLabelText("Reply in progress");
+    expect(await within(live).findByText("Partial")).toBeInTheDocument();
+    act(() => {
+      compactHeldReply("c2", "- web_fetch https://en.wikipedia.org/wiki/A", "cleared");
+    });
+    const note = await within(live).findByRole("note", { name: "Old tool results cleared" });
+    expect(note).toHaveTextContent("Replaced by short notes to save room");
+    fireEvent.click(within(note).getByRole("button", { name: /Old tool results cleared/ }));
+    expect(await within(note).findByText(/web_fetch/)).toBeInTheDocument();
+  });
+
   it("Settings → Models: compaction switch, threshold and a model's window", async () => {
     renderApp("/settings/models");
     const toggle = await screen.findByRole("switch", { name: "Compact long chats automatically" });
