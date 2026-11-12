@@ -74,6 +74,9 @@ pub enum ToolUsageKind {
     /// The Docker sandbox: a command, its file tools or a copy in or out (the label is the
     /// command or the path).
     Sandbox,
+    /// The browser agent: a page opened, read or clicked, or a whole browsing task (the
+    /// label is the URL or the goal).
+    Browser,
 }
 
 /// One tool call, logged per chat.

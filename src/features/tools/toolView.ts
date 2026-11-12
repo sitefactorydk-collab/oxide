@@ -172,6 +172,28 @@ export const SANDBOX_TOOL_VERBS: Record<string, [string, string]> = {
   sandbox_copy_out: ["Copying out of the sandbox", "Copied out of the sandbox"],
 };
 
+/** The browser agent's tools (Phase 13): verbs while running and after. */
+export const BROWSER_TOOL_VERBS: Record<string, [string, string]> = {
+  browser_task: ["Browsing", "Browsed"],
+  navigate: ["Opening", "Opened"],
+  read_page: ["Reading the page", "Read the page"],
+  click: ["Clicking", "Clicked"],
+  type: ["Typing", "Typed"],
+  screenshot: ["Taking a screenshot", "Took a screenshot"],
+  close: ["Closing the browser", "Closed the browser"],
+};
+
+/** Whether a call is one of the browser agent's. */
+export function isBrowserCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
+  return call.server === "browser" && call.tool in BROWSER_TOOL_VERBS;
+}
+
+/** The goal of a `browser_task` call (empty until the arguments are complete JSON). */
+export function browserGoal(inputJson: string): string {
+  const g = parse(inputJson).goal;
+  return typeof g === "string" ? g : "";
+}
+
 /** The sandbox file server's tools that have their own verbs. */
 const SANDBOX_FILE_VERBS: Record<string, [string, string]> = {
   read_text_file: ["Reading", "Read"],
@@ -229,6 +251,19 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
     const to = str("to");
     return to ? `${from} → ${to}` : from;
   }
+  if (isBrowserCall(call)) {
+    if (call.tool === "browser_task") return str("goal") ?? "";
+    if (call.tool === "navigate") return str("url") ?? "";
+    if (call.tool === "click") {
+      const ref = input.ref;
+      return typeof ref === "number" ? `[${ref}]` : (str("text") ?? "");
+    }
+    if (call.tool === "type") {
+      const t = str("text");
+      return t ? `“${t}”` : "";
+    }
+    return "";
+  }
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -280,6 +315,7 @@ export type ToolKind =
   | "shell"
   | "python"
   | "sandbox"
+  | "browser"
   | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
@@ -295,6 +331,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.server === null && call.tool === "run_command") return "shell";
   if (call.server === null && call.tool === "run_python") return "python";
   if (isSandboxCall(call)) return "sandbox";
+  if (isBrowserCall(call)) return "browser";
   return "connector";
 }
 
@@ -339,6 +376,10 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
         action: `${busy ? doing : did} in the sandbox`,
         detail: detail.replace(/^\/workspace\/?/, "") || "/workspace",
       };
+    }
+    case "browser": {
+      const [doing, did] = BROWSER_TOOL_VERBS[call.tool] ?? ["Browsing", "Browsed"];
+      return { action: busy ? doing : did, detail };
     }
     case "connector": {
       const name = call.title ?? call.tool;
@@ -392,7 +433,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                         ? "Python"
                         : u.kind === "sandbox"
                           ? "Sandbox"
-                          : (u.server ?? "Connector");
+                          : u.kind === "browser"
+                            ? "Browser"
+                            : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

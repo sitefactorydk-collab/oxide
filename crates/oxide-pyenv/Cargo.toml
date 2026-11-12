@@ -11,6 +11,8 @@ build = "build.rs"
 
 [dependencies]
 oxide-core.workspace = true
+oxide-mcp.workspace = true
+futures-util.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

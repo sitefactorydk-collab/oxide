@@ -3,6 +3,7 @@ import {
   Box,
   Braces,
   ChevronRight,
+  Compass,
   FileText,
   FolderOpen,
   FolderSearch,
@@ -20,6 +21,7 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
 import { ArtifactCard } from "@/features/artifacts/ArtifactCard";
+import { useBrowserFrame } from "@/features/browser/queries";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
 import { useStreams, type ToolCallView } from "@/features/chat/streams";
 import { useArtifactPanel } from "@/features/artifacts/store";
@@ -28,7 +30,14 @@ import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAnswerApproval } from "./queries";
-import { callHeadline, prettyJson, pythonCode, sandboxCommand, toolKind } from "./toolView";
+import {
+  browserGoal,
+  callHeadline,
+  prettyJson,
+  pythonCode,
+  sandboxCommand,
+  toolKind,
+} from "./toolView";
 
 function KindIcon({ call }: { call: ToolCallView }) {
   const kind = toolKind(call);
@@ -53,12 +62,15 @@ function KindIcon({ call }: { call: ToolCallView }) {
                       ? Braces
                       : kind === "sandbox"
                         ? Box
-                        : Plug;
+                        : kind === "browser"
+                          ? Compass
+                          : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
 function StatusBadge({ call }: { call: ToolCallView }) {
   const progress = useMcpUi((s) => s.progress[call.id]);
+  const frame = useBrowserFrame(call.id);
   const isPython = toolKind(call) === "python";
   const settingUp = usePythonInstalling(isPython) && isPython;
   switch (call.status) {
@@ -68,13 +80,17 @@ function StatusBadge({ call }: { call: ToolCallView }) {
       return (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-subtle">
           <Loader2 aria-hidden className="size-3.5 animate-spin" />
-          {call.status === "running" && settingUp
-            ? "Setting up Python"
-            : call.status === "running" && progress
-              ? `${progress.message ?? "Working"}${progress.total ? ` ${Math.round((progress.progress / progress.total) * 100)}%` : ""}`
-              : call.status === "running"
-                ? "Running"
-                : "Preparing"}
+          {call.status === "running" && settingUp ? (
+            "Setting up Python"
+          ) : call.status === "running" && frame?.text ? (
+            <span className="max-w-48 truncate">{frame.text}</span>
+          ) : call.status === "running" && progress ? (
+            `${progress.message ?? "Working"}${progress.total ? ` ${Math.round((progress.progress / progress.total) * 100)}%` : ""}`
+          ) : call.status === "running" ? (
+            "Running"
+          ) : (
+            "Preparing"
+          )}
         </span>
       );
     case "awaitingApproval":
@@ -225,6 +241,17 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           )}
         </div>
       </div>
+      {request.server === "browser" && (
+        <p className="text-sm text-fg-muted">
+          {request.tool === "browser_task"
+            ? "An autonomous agent browses on its own until the goal is done, opening pages, clicking and typing as you would."
+            : request.tool === "navigate"
+              ? "The chat's browser opens this page."
+              : request.tool === "close"
+                ? "The chat's browser closes."
+                : "The chat's browser acts on the website as you would."}
+        </p>
+      )}
       {request.server === null && request.tool.startsWith("sandbox_copy") && (
         <p className="text-sm text-fg-muted">
           {request.tool === "sandbox_copy_in"
@@ -238,6 +265,13 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           className="max-h-72 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg"
         >
           {sandboxCommand(request.inputJson) || prettyJson(request.inputJson)}
+        </pre>
+      ) : request.server === "browser" && request.tool === "browser_task" ? (
+        <pre
+          aria-label="Goal"
+          className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-sunken px-3 py-2 font-sans text-sm leading-5 text-fg"
+        >
+          {browserGoal(request.inputJson) || prettyJson(request.inputJson)}
         </pre>
       ) : request.server === null && request.tool === "run_python" ? (
         <pre
@@ -364,8 +398,44 @@ function ToolLine({ call }: { call: ToolCallView }) {
       {!open && toolKind(call) === "python" && call.result && !call.isError && (
         <PythonOutputs content={call.result} />
       )}
+      {!open && toolKind(call) === "browser" && <BrowserView call={call} />}
       {waiting && call.approval && <ApprovalCard request={call.approval} />}
     </div>
+  );
+}
+
+/**
+ * What the browser shows: the live screenshot while a call runs, then the screenshots a task
+ * or `screenshot` returned (or, for other calls, the last live screenshot of this session).
+ */
+function BrowserView({ call }: { call: ToolCallView }) {
+  const frame = useBrowserFrame(call.id);
+  const running = call.status === "running";
+  const images = (call.result ?? []).filter((b) => b.type === "image");
+  if (!running && images.length > 0 && !call.isError) {
+    return (
+      <div className="border-t border-line px-3 py-3">
+        <ToolResultView content={images} isError={false} />
+      </div>
+    );
+  }
+  if (!frame?.image || (!running && call.isError)) return null;
+  return (
+    <figure className="flex flex-col gap-1.5 border-t border-line px-3 py-3">
+      <img
+        alt={running ? "Live view of the browser" : "The browser after this step"}
+        src={`data:image/jpeg;base64,${frame.image}`}
+        className={cn(
+          "w-full rounded-lg border border-line object-contain",
+          running ? "max-h-80" : "max-h-40 w-auto self-start",
+        )}
+      />
+      {frame.url && (
+        <figcaption className="truncate text-xs text-fg-subtle" title={frame.url}>
+          {frame.url}
+        </figcaption>
+      )}
+    </figure>
   );
 }
 

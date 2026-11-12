@@ -1,6 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import {
   Box,
+  Compass,
   FileText,
   FolderPlus,
   Globe,
@@ -68,7 +69,9 @@ export function PlusMenu({
   const [promptToFill, setPromptToFill] = useState<McpPrompt | null>(null);
   const { data: servers } = useMcpServers();
   const switches = useToolSwitches(conversationId);
-  const sandboxEnabled = (useSettings().data ?? DEFAULT_SETTINGS).sandbox.enabled;
+  const settings = useSettings().data ?? DEFAULT_SETTINGS;
+  const sandboxEnabled = settings.sandbox.enabled;
+  const browserEnabled = settings.browser.enabled;
   const running = servers.filter((s) => s.status === "running");
   const lists = useQueries({
     queries: running.map((s) => ({
@@ -190,6 +193,16 @@ export function PlusMenu({
             >
               <Box />
               Sandbox
+            </MenuCheckboxItem>
+          )}
+          {browserEnabled && (
+            <MenuCheckboxItem
+              checked={switches.browserOn}
+              onCheckedChange={(v) => switches.toggleBrowser(v === true)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <Compass />
+              Browser
             </MenuCheckboxItem>
           )}
           <MenuSub>

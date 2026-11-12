@@ -29,6 +29,8 @@ import type {
   SearchHit,
   StreamEvent,
   ApprovalDecision,
+  BrowserFrame,
+  BrowserStatus,
   ChatWorkspace,
   TaskList,
   ToolApprovalRequest,
@@ -36,6 +38,7 @@ import type {
   WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
+import { fakeBrowserCommands, resetFakeBrowser, setBrowserEmitters } from "./fakeBrowser";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -124,6 +127,8 @@ export interface FakeSeed {
     theme: AppSettings["appearance"]["theme"];
     /** Changes to the sandbox settings (off by default). */
     sandbox: Partial<AppSettings["sandbox"]>;
+    /** Changes to the browser settings (off by default). */
+    browser: Partial<AppSettings["browser"]>;
   }>;
   empty?: boolean;
   replies?: ReplyMode;
@@ -174,6 +179,18 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         ask: true,
         ...seed.settings?.sandbox,
       },
+      browser: {
+        enabled: false,
+        source: "auto",
+        cdpUrl: "http://127.0.0.1:9222",
+        showWindow: false,
+        ask: true,
+        maxSteps: 25,
+        taskTimeoutSecs: 600,
+        idleMinutes: 15,
+        agentModel: null,
+        ...seed.settings?.browser,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -208,6 +225,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeExtensions();
   resetFakePython();
   resetFakeSandbox();
+  resetFakeBrowser();
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -297,6 +315,12 @@ setMcpEmitter((e) => void mcpChanged.emit(e));
 setPythonEmitter((s) => void pythonChanged.emit(s));
 const sandboxChanged = fakeEvent<SandboxChange>("sandbox-changed");
 setSandboxEmitter((c) => void sandboxChanged.emit(c));
+const browserChanged = fakeEvent<BrowserStatus>("browser-changed");
+const browserLive = fakeEvent<BrowserFrame>("browser-live");
+setBrowserEmitters(
+  (s) => void browserChanged.emit(s),
+  (f) => void browserLive.emit(f),
+);
 
 export const fakeEvents = {
   chatStream,
@@ -307,6 +331,8 @@ export const fakeEvents = {
   taskListChanged,
   pythonChanged,
   sandboxChanged,
+  browserChanged,
+  browserLive,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -650,6 +676,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeExtensionCommands,
   ...fakePythonCommands,
   ...fakeSandboxCommands,
+  ...fakeBrowserCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

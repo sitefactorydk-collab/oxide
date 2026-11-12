@@ -72,6 +72,17 @@ impl ModelRegistry {
         Ok((config, provider))
     }
 
+    /// An endpoint's settings and its stored key, for a helper that calls the endpoint itself
+    /// (the browser agent's Browser-Use).
+    pub async fn endpoint(
+        &self,
+        provider_id: &str,
+    ) -> Result<(ProviderConfig, Option<String>), AgentError> {
+        let config = self.store.get_provider(provider_id).await?;
+        let key = self.store.provider_key(&self.secrets, &config.id).await?;
+        Ok((config, key.map(|k| k.expose().to_owned())))
+    }
+
     async fn connect(&self, config: &ProviderConfig) -> Result<Arc<dyn Provider>, AgentError> {
         let key = self.store.provider_key(&self.secrets, &config.id).await?;
         let endpoint = Endpoint::new(

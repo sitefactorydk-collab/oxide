@@ -18,6 +18,7 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::Tasks => "tasks",
         ToolUsageKind::Python => "python",
         ToolUsageKind::Sandbox => "sandbox",
+        ToolUsageKind::Browser => "browser",
     }
 }
 
@@ -34,6 +35,7 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "tasks" => ToolUsageKind::Tasks,
         "python" => ToolUsageKind::Python,
         "sandbox" => ToolUsageKind::Sandbox,
+        "browser" => ToolUsageKind::Browser,
         _ => ToolUsageKind::Connector,
     }
 }

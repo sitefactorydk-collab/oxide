@@ -24,5 +24,6 @@ pub async fn save_settings(
     let saved = state.store.save_app_settings(settings).await?;
     crate::desktop::apply_settings(&app, &saved.desktop);
     state.sandboxes.configure(&saved.sandbox);
+    state.browser.configure(&saved.browser);
     Ok(saved)
 }

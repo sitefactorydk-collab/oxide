@@ -6,13 +6,24 @@
 [project]
 name = "oxide-python-env"
 version = "0.1.0"
-description = "Packages for Oxide's run_python tool"
+description = "Packages for Oxide's run_python tool and browser agent"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "pandas>=2.2",
   "numpy>=2.0",
   "matplotlib>=3.9",
   "openpyxl>=3.1",
+]
+
+# The browser agent (Phase 13): installed only when the browser is first used, with
+# `uv sync --group browser` (the base sync leaves it out). `mcp` is the official SDK (2.x);
+# Browser-Use 1.0 talks to Chrome over CDP; Playwright drives the granular tools and
+# downloads Chromium.
+[dependency-groups]
+browser = [
+  "browser-use[anthropic]>=1.0.2,<1.1",
+  "mcp>=2.3,<3",
+  "playwright>=1.55",
 ]
 
 [tool.uv]

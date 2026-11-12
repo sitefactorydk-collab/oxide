@@ -7,7 +7,7 @@ use oxide_agent::{
     AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Skills, Tools,
 };
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
-use oxide_pyenv::{PythonConfig, PythonEnv, PythonSink};
+use oxide_pyenv::{BrowserAgents, BrowserSink, PythonConfig, PythonEnv, PythonSink};
 use oxide_sandbox::{SandboxSink, Sandboxes};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
@@ -30,6 +30,8 @@ pub struct AppState {
     pub python: PythonEnv,
     /// The Docker sandbox: a workspace container per chat.
     pub sandboxes: Sandboxes,
+    /// The browser agent: a server (and browser) per chat, in the managed Python.
+    pub browser: BrowserAgents,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -71,6 +73,7 @@ impl AppState {
         sink: Arc<dyn EventSink>,
         python_sink: Arc<dyn PythonSink>,
         sandbox_sink: Arc<dyn SandboxSink>,
+        browser_sink: Arc<dyn BrowserSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -102,8 +105,12 @@ impl AppState {
             Some(dirs.logs.clone()),
             sandbox_sink,
         );
+        let browser = BrowserAgents::new(python.clone(), browser_sink, Some(dirs.logs.clone()));
         match store.app_settings().await {
-            Ok(s) => sandboxes.configure(&s.sandbox),
+            Ok(s) => {
+                sandboxes.configure(&s.sandbox);
+                browser.configure(&s.browser);
+            }
             Err(e) => tracing::warn!("settings: {e}"),
         }
         // Models get the running MCP servers' tools plus Oxide's web tools.
@@ -114,7 +121,8 @@ impl AppState {
         )
         .with_skills(skills.clone())
         .with_python(python.clone())
-        .with_sandboxes(sandboxes.clone());
+        .with_sandboxes(sandboxes.clone())
+        .with_browser(browser.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
@@ -127,6 +135,7 @@ impl AppState {
             skills,
             python,
             sandboxes,
+            browser,
         })
     }
 }

@@ -6,6 +6,7 @@
 
 pub mod artifact;
 pub mod attachment;
+pub mod browser;
 pub mod chat;
 pub mod conversation;
 pub mod desktop;
@@ -27,6 +28,9 @@ pub use artifact::{
 };
 pub use attachment::{
     ATTACHMENT_LIMITS, Attachment, AttachmentKind, AttachmentLimits, AttachmentSource,
+};
+pub use browser::{
+    BrowserFrame, BrowserSettings, BrowserSource, BrowserStatus, BrowserStep, InstalledBrowser,
 };
 pub use chat::{
     ChatStreamEvent, ConversationChanged, GenerateOptions, StopReason, StreamEvent, Usage,

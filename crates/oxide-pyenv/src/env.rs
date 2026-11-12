@@ -87,6 +87,13 @@ struct Marker {
     packages: Vec<PythonPackage>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupMarker {
+    project_hash: String,
+    packages: Vec<PythonPackage>,
+}
+
 #[derive(Default)]
 struct Live {
     installing: bool,
@@ -167,6 +174,18 @@ impl PythonEnv {
 
     fn marker_path(&self) -> PathBuf {
         self.root().join("state.json")
+    }
+
+    fn groups_dir(&self) -> PathBuf {
+        self.root().join("groups")
+    }
+
+    fn group_marker(&self, group: &str) -> PathBuf {
+        let safe: String = group
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        self.groups_dir().join(format!("{safe}.json"))
     }
 
     /// The `uv` this environment would use.
@@ -398,6 +417,9 @@ impl PythonEnv {
 
     async fn install(&self) -> Result<Ready> {
         let root = self.root().to_path_buf();
+        // The base sync is exact: it removes packages of optional groups, so they install
+        // again the next time they're needed.
+        remove_dir(&self.groups_dir()).await?;
         self.step(PythonStep::Uv, "Looking for uv");
         let uv = self.find_uv().ok_or(PythonError::NoUv)?;
         let version = self.uv_version(&uv).await?;
@@ -644,6 +666,165 @@ impl PythonEnv {
         }
     }
 
+    // ---- Optional package groups ----------------------------------------------------------
+
+    /// Packages of an optional group, if they are installed for the current project.
+    pub async fn group_ready(&self, group: &str) -> Option<Vec<PythonPackage>> {
+        self.ready().await?;
+        let text = tokio::fs::read_to_string(self.group_marker(group))
+            .await
+            .ok()?;
+        let m: GroupMarker = serde_json::from_str(&text).ok()?;
+        (m.project_hash == project::project_hash()).then_some(m.packages)
+    }
+
+    /// Installs a dependency group of `python/pyproject.toml` (the browser's packages) on top
+    /// of the environment, installing that first when needed. `check` are `(module,
+    /// distribution)` pairs that must import afterwards; their versions are returned.
+    pub async fn ensure_group(
+        &self,
+        group: &str,
+        check: &[(&str, &str)],
+    ) -> Result<Vec<PythonPackage>> {
+        if let Some(p) = self.group_ready(group).await {
+            return Ok(p);
+        }
+        self.ensure().await?;
+        let _one_at_a_time = self.0.setup.lock().await;
+        if let Some(p) = self.group_ready(group).await {
+            return Ok(p);
+        }
+        {
+            let mut live = lock(&self.0.live);
+            live.installing = true;
+            live.error = None;
+            live.log.clear();
+        }
+        let result = self.install_group(group, check).await;
+        {
+            let mut live = lock(&self.0.live);
+            live.installing = false;
+            live.step = None;
+            live.message = None;
+            // A failed optional group doesn't make the environment itself failed.
+            live.error = None;
+        }
+        if let Err(e) = &result {
+            tracing::warn!("installing the {group} packages failed: {e}");
+        }
+        self.emit_settled().await;
+        result
+    }
+
+    async fn install_group(
+        &self,
+        group: &str,
+        check: &[(&str, &str)],
+    ) -> Result<Vec<PythonPackage>> {
+        let uv = self.find_uv().ok_or(PythonError::NoUv)?;
+        let what = format!("Installing the {group} packages");
+        self.step(PythonStep::Packages, &what);
+        let project_arg = self.project_dir().to_string_lossy().into_owned();
+        let mut sync = vec![
+            "sync",
+            "--project",
+            &project_arg,
+            "--python",
+            PYTHON_VERSION,
+            "--no-install-project",
+            "--group",
+            group,
+        ];
+        if !project::LOCK.trim().is_empty() {
+            sync.push("--locked");
+        }
+        self.uv(&uv, &sync, &what).await?;
+        self.step(PythonStep::Check, "Checking the packages");
+        let packages = self.check_modules(check).await?;
+        tokio::fs::create_dir_all(self.groups_dir())
+            .await
+            .map_err(|e| PythonError::io("Couldn't create the groups folder", e))?;
+        let marker = GroupMarker {
+            project_hash: project::project_hash(),
+            packages: packages.clone(),
+        };
+        let text =
+            serde_json::to_string_pretty(&marker).map_err(|e| PythonError::Spawn(e.to_string()))?;
+        write(&self.group_marker(group), &text).await?;
+        self.note("Ready");
+        Ok(packages)
+    }
+
+    /// Imports modules and reads their distributions' versions.
+    async fn check_modules(&self, check: &[(&str, &str)]) -> Result<Vec<PythonPackage>> {
+        let pairs: Vec<[&str; 2]> = check.iter().map(|(m, d)| [*m, *d]).collect();
+        let pairs = serde_json::to_string(&pairs).map_err(|e| PythonError::Spawn(e.to_string()))?;
+        let script = format!(
+            "import importlib, json\n\
+             from importlib import metadata\n\
+             out = []\n\
+             for module, dist in {pairs}:\n\
+             \x20   importlib.import_module(module)\n\
+             \x20   out.append({{'name': dist, 'version': metadata.version(dist)}})\n\
+             print(json.dumps(out))\n"
+        );
+        let (ok, stdout, stderr) = self.python_c(&script, Duration::from_secs(300)).await?;
+        if !ok {
+            let detail = tail_text(&String::from_utf8_lossy(&stderr), 12);
+            self.push_log(detail.clone());
+            return Err(PythonError::Setup {
+                step: "Checking the packages".into(),
+                detail,
+            });
+        }
+        serde_json::from_slice(&stdout).map_err(|e| PythonError::Setup {
+            step: "Checking the packages".into(),
+            detail: format!("Unexpected answer from Python: {e}"),
+        })
+    }
+
+    /// Runs `python -I -c <script>` in the environment: (success, stdout, stderr).
+    pub(crate) async fn python_c(
+        &self,
+        script: &str,
+        limit: Duration,
+    ) -> Result<(bool, Vec<u8>, Vec<u8>)> {
+        let mut cmd = tokio::process::Command::new(self.venv_python());
+        cmd.args(["-I", "-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (k, v) in self.script_env() {
+            match v {
+                Some(v) => cmd.env(k, v),
+                None => cmd.env_remove(k),
+            };
+        }
+        process::prepare(&mut cmd);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| PythonError::Spawn(format!("{}: {e}", self.venv_python().display())))?;
+        let pid = child.id();
+        let mut out = child.stdout.take();
+        let mut err = child.stderr.take();
+        let waited = tokio::time::timeout(limit, async {
+            tokio::join!(
+                process::capture(out.as_mut(), 1 << 20),
+                process::capture(err.as_mut(), 1 << 20),
+                child.wait()
+            )
+        })
+        .await;
+        let Ok((stdout, stderr, status)) = waited else {
+            process::kill_tree(pid).await;
+            return Err(PythonError::Setup {
+                step: "Running Python".into(),
+                detail: format!("Python didn't answer within {} seconds.", limit.as_secs()),
+            });
+        };
+        Ok((status.is_ok_and(|s| s.success()), stdout, stderr))
+    }
+
     // ---- Repair and reset ------------------------------------------------------------------
 
     fn refuse_while_running(&self) -> Result<()> {
@@ -671,7 +852,8 @@ impl PythonEnv {
         let _one_at_a_time = self.0.setup.lock().await;
         let _ = tokio::fs::remove_file(self.marker_path()).await;
         for dir in [
-            "venv", "pythons", "uv-cache", "project", "runner", "runs", "mpl",
+            "venv", "pythons", "uv-cache", "project", "runner", "runs", "mpl", "groups", "agents",
+            "browsers",
         ] {
             remove_dir(&self.root().join(dir)).await?;
         }

@@ -2,6 +2,7 @@ import {
   AppWindow,
   Box,
   Brain,
+  Compass,
   Database,
   Globe,
   Info,
@@ -95,6 +96,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Box,
     blurb:
       "An isolated Docker container per chat, where models can build, run and test code without touching your computer.",
+  },
+  {
+    id: "browser",
+    label: "Browser",
+    icon: Compass,
+    blurb:
+      "A web browser models can open, read, click and type in, and an autonomous browsing agent for whole tasks.",
   },
   {
     id: "memory",

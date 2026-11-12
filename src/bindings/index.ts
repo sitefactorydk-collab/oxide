@@ -997,6 +997,52 @@ async sandboxSave(conversationId: string, path: string) : Promise<Result<string 
 }
 },
 /**
+ * What is installed, which browser a chat gets, and which chats have one open.
+ */
+async browserStatus() : Promise<Result<BrowserStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("browser_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Installs what the browser needs now, as its first use would: the packages and, when
+ * needed (or `chromium`), Chromium. Returns at once; progress arrives as `browserChanged`
+ * events.
+ */
+async browserSetup(chromium: boolean) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("browser_setup", { chromium }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Closes a chat's browser (the next browser call opens a new one).
+ */
+async browserClose(conversationId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("browser_close", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes the Chromium Oxide downloaded.
+ */
+async browserRemoveChromium() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("browser_remove_chromium") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1297,6 +1343,8 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 
 
 export const events = __makeEvents__<{
+browserChanged: BrowserChanged,
+browserLive: BrowserLive,
 chatStream: ChatStream,
 conversationUpdated: ConversationUpdated,
 desktopRequest: DesktopRequest,
@@ -1306,6 +1354,8 @@ pythonChanged: PythonChanged,
 sandboxChanged: SandboxChanged,
 taskListChanged: TaskListChanged
 }>({
+browserChanged: "browser-changed",
+browserLive: "browser-live",
 chatStream: "chat-stream",
 conversationUpdated: "conversation-updated",
 desktopRequest: "desktop-request",
@@ -1322,7 +1372,7 @@ taskListChanged: "task-list-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -1452,6 +1502,143 @@ export type AttachmentSource =
  * Bytes from the clipboard or a browser file input, base64-encoded.
  */
 { kind: "bytes"; name: string; data: string }
+/**
+ * The browser agent is being set up, or a chat's browser opened or closed
+ * (`events.browserChanged`).
+ */
+export type BrowserChanged = BrowserStatus
+/**
+ * A live view of the browser while a call runs (a screenshot and where it is).
+ */
+export type BrowserFrame = { conversationId: string; toolUseId: string; 
+/**
+ * What it is doing ("Browsing: Opening hours – The Little Bakery").
+ */
+text: string; url: string | null; 
+/**
+ * A JPEG screenshot, base64.
+ */
+image: string | null }
+/**
+ * A live screenshot of a chat's browser while a browser call runs (`events.browserLive`).
+ */
+export type BrowserLive = BrowserFrame
+/**
+ * Settings → Browser. Off by default: it installs extra packages and a browser.
+ */
+export type BrowserSettings = { 
+/**
+ * Models get the browser's tools.
+ */
+enabled: boolean; source: BrowserSource; 
+/**
+ * With `Cdp`: where the running Chrome listens.
+ */
+cdpUrl: string; 
+/**
+ * Show the browser window (otherwise it runs headless; the chat shows screenshots).
+ */
+showWindow: boolean; 
+/**
+ * Browsing actions (open, click, type, tasks) ask first. Reading the page and
+ * screenshots never ask.
+ */
+ask: boolean; 
+/**
+ * Most steps of one `browser_task`.
+ */
+maxSteps: number; 
+/**
+ * Time limit of one `browser_task`, in seconds.
+ */
+taskTimeoutSecs: number; 
+/**
+ * Minutes without use before a chat's browser is closed.
+ */
+idleMinutes: number; 
+/**
+ * Model for `browser_task` (`provider:model`); `None`: the chat's own model.
+ */
+agentModel: string | null }
+/**
+ * Which browser the agent drives.
+ */
+export type BrowserSource = 
+/**
+ * Chrome or Edge installed on this computer (with a profile of Oxide's own), else the
+ * Chromium Oxide downloads.
+ */
+"auto" | 
+/**
+ * Always the Chromium Oxide downloads (Playwright's build).
+ */
+"bundled" | 
+/**
+ * A Chrome the user started with remote debugging, reached at `cdp_url` (their tabs
+ * and sign-ins; Oxide works in a tab of its own).
+ */
+"cdp"
+/**
+ * The browser agent as Settings shows it.
+ */
+export type BrowserStatus = { 
+/**
+ * The browser packages are installed in the managed environment.
+ */
+packages: boolean; 
+/**
+ * Versions of what is installed (`browser-use`, `playwright`, `mcp`).
+ */
+versions: PythonPackage[]; 
+/**
+ * The Chromium Oxide downloaded, when it has.
+ */
+chromium: string | null; 
+/**
+ * Chrome, Edge or Chromium installed on this computer.
+ */
+installed: InstalledBrowser[]; 
+/**
+ * What a new chat's browser will be (e.g. "Microsoft Edge"), or `None` when it still
+ * has to be downloaded.
+ */
+using: string | null; installing: boolean; step: BrowserStep | null; message: string | null; 
+/**
+ * Download progress of the current step, 0–100, when known.
+ */
+percent: number | null; 
+/**
+ * Why the last setup failed, written for users.
+ */
+error: string | null; 
+/**
+ * The last lines of the setup's output.
+ */
+log: string[]; 
+/**
+ * Chats whose browser is open now.
+ */
+openChats: string[]; 
+/**
+ * Where Oxide keeps its own Chromium.
+ */
+browsersDir: string }
+/**
+ * Steps of setting the browser up.
+ */
+export type BrowserStep = 
+/**
+ * The managed Python environment (Phase 12).
+ */
+"python" | 
+/**
+ * The browser packages (Browser-Use, MCP SDK, Playwright).
+ */
+"packages" | 
+/**
+ * Playwright's Chromium (a one-time download).
+ */
+"chromium"
 /**
  * A folder the user gave a chat. Its file tools can only reach paths inside it.
  */
@@ -1889,6 +2076,14 @@ export type ImportStatus =
  * Oxide has a different entry under that name; importing replaces it.
  */
 "changed"
+/**
+ * A browser found on this computer.
+ */
+export type InstalledBrowser = { 
+/**
+ * "Google Chrome", "Microsoft Edge", "Chromium".
+ */
+name: string; path: string }
 /**
  * One file in a project's knowledge. Its text lives in the database.
  */
@@ -2938,7 +3133,12 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  * The Docker sandbox: a command, its file tools or a copy in or out (the label is the
  * command or the path).
  */
-"sandbox"
+"sandbox" | 
+/**
+ * The browser agent: a page opened, read or clicked, or a whole browsing task (the
+ * label is the URL or the goal).
+ */
+"browser"
 /**
  * Token counts for one reply.
  */

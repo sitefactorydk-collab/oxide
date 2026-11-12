@@ -38,6 +38,8 @@ pub async fn python_repair(state: State<'_, AppState>) -> CmdResult<()> {
         ));
     }
     let python = state.python.clone();
+    // Chats' browsers run from the environment: they close first.
+    state.browser.shutdown().await;
     tauri::async_runtime::spawn(async move {
         if let Err(e) = python.repair().await {
             tracing::warn!("Python repair: {e}");
@@ -51,6 +53,8 @@ pub async fn python_repair(state: State<'_, AppState>) -> CmdResult<()> {
 #[tauri::command]
 #[specta::specta]
 pub async fn python_reset(state: State<'_, AppState>) -> CmdResult<()> {
+    // Chats' browsers run from the environment: they close first.
+    state.browser.shutdown().await;
     state
         .python
         .reset()

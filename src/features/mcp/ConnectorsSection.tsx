@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import type { McpServerConfig, McpServerState, McpTransport } from "@/bindings";
+import { useBrowserStatus } from "@/features/browser/queries";
 import { useDockerStatus } from "@/features/sandbox/queries";
-import { DEFAULT_SETTINGS, useSettings } from "@/features/settings/queries";
+import { DEFAULT_SETTINGS, useSetBrowserSettings, useSettings } from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -84,6 +85,7 @@ export function ConnectorsSection() {
         servers.map((s) => <ServerCard key={s.name} server={s} />)
       )}
 
+      <BuiltInBrowserServer />
       <BuiltInSandboxServer />
 
       <p className="mt-2 text-sm text-fg-subtle">
@@ -470,6 +472,54 @@ function ServerFormFields({
           ))}
       </div>
     </form>
+  );
+}
+
+/**
+ * The browser agent (Phase 13): Oxide's own MCP server, run per chat in the managed Python, so
+ * it isn't an entry of the config file. Its switch is Settings → Browser's.
+ */
+function BuiltInBrowserServer() {
+  const { data } = useSettings();
+  const browser = (data ?? DEFAULT_SETTINGS).browser;
+  const setBrowser = useSetBrowserSettings();
+  const { data: status } = useBrowserStatus(browser.enabled);
+  const openSettings = useOpenSettings();
+  const state = !browser.enabled
+    ? "Off"
+    : status?.installing
+      ? "Setting up"
+      : status && !status.packages
+        ? "Sets up the first time a chat uses it"
+        : status && status.openChats.length > 0
+          ? `Open in ${status.openChats.length} chat${status.openChats.length === 1 ? "" : "s"}`
+          : "Starts with each chat's first browser call";
+  return (
+    <section
+      aria-label="browser (built in)"
+      className="flex items-start gap-3 rounded-xl border border-line bg-raised p-4"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-md font-medium text-fg">browser</span>
+          <span className="rounded bg-sunken px-1.5 text-xs text-fg-subtle">Built in</span>
+        </div>
+        <p className="mt-1 text-sm text-fg-subtle">
+          Oxide&apos;s browser agent (Browser-Use and Playwright), run in Oxide&apos;s Python for
+          each chat with a browser of its own. Its tools reach models as{" "}
+          <span className="font-mono">browser__…</span> and go through the browser&apos;s approvals.{" "}
+          {state}.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button onClick={() => openSettings("browser")}>Browser settings</Button>
+        <Switch
+          checked={browser.enabled}
+          label="Use browser"
+          onChange={(enabled) => setBrowser({ enabled })}
+        />
+      </div>
+    </section>
   );
 }
 

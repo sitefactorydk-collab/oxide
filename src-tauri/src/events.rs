@@ -2,8 +2,8 @@
 
 use oxide_agent::EventSink;
 use oxide_core::{
-    ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent, PythonStatus,
-    SandboxChange, TaskList,
+    BrowserFrame, BrowserStatus, ChatStreamEvent, Conversation, ConversationChanged, DesktopAction,
+    McpEvent, PythonStatus, SandboxChange, TaskList,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -44,6 +44,15 @@ pub struct PythonChanged(pub PythonStatus);
 /// it again.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct SandboxChanged(pub SandboxChange);
+
+/// The browser agent is being set up, or a chat's browser opened or closed
+/// (`events.browserChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct BrowserChanged(pub BrowserStatus);
+
+/// A live screenshot of a chat's browser while a browser call runs (`events.browserLive`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct BrowserLive(pub BrowserFrame);
 
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
@@ -87,6 +96,31 @@ impl oxide_sandbox::SandboxSink for TauriSandboxSink {
         };
         if let Err(e) = SandboxChanged(change).emit(&self.app) {
             tracing::warn!("couldn't send a sandbox update: {e}");
+        }
+    }
+}
+
+/// Forwards the browser agent's setup progress and live screenshots to every window.
+pub struct TauriBrowserSink {
+    app: AppHandle,
+}
+
+impl TauriBrowserSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_pyenv::BrowserSink for TauriBrowserSink {
+    fn status(&self, status: &BrowserStatus) {
+        if let Err(e) = BrowserChanged(status.clone()).emit(&self.app) {
+            tracing::warn!("couldn't send a browser update: {e}");
+        }
+    }
+
+    fn frame(&self, frame: BrowserFrame) {
+        if let Err(e) = BrowserLive(frame).emit(&self.app) {
+            tracing::warn!("couldn't send a browser screenshot: {e}");
         }
     }
 }

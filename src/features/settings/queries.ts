@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import {
   commands,
   type AppSettings,
+  type BrowserSettings,
   type ChatFont,
   type DesktopSettings,
   type MemorySettings,
@@ -51,6 +52,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     idleMinutes: 15,
     timeoutSecs: 600,
     ask: true,
+  },
+  browser: {
+    enabled: false,
+    source: "auto",
+    cdpUrl: "http://127.0.0.1:9222",
+    showWindow: false,
+    ask: true,
+    maxSteps: 25,
+    taskTimeoutSecs: 600,
+    idleMinutes: 15,
+    agentModel: null,
   },
 };
 
@@ -168,6 +180,12 @@ export function useSetSandboxSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<SandboxSettings>) =>
     update((s) => ({ ...s, sandbox: { ...s.sandbox, ...patch } }));
+}
+
+export function useSetBrowserSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<BrowserSettings>) =>
+    update((s) => ({ ...s, browser: { ...s.browser, ...patch } }));
 }
 
 export function useSetToolSettings() {

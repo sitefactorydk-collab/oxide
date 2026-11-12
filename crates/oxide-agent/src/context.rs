@@ -217,6 +217,8 @@ pub struct PromptContext<'a> {
     pub python: bool,
     /// The Docker sandbox's tools are on.
     pub sandbox: Option<SandboxPrompt>,
+    /// The browser agent's tools are on.
+    pub browser: bool,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -390,6 +392,20 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                  sandbox_copy_out.",
             );
         }
+    }
+    if ctx.browser {
+        s.push_str(
+            "\n\nYou can use a web browser through the browser__ tools: browser__navigate opens \
+             a page and returns its text with links, buttons and fields numbered (like [3] \
+             button \"Search\"), browser__read_page reads the current page, browser__click and \
+             browser__type act on those numbers, browser__screenshot shows the page, and \
+             browser__browser_task hands a whole multi-step goal to an autonomous browsing \
+             agent. Use the browser for pages that need JavaScript, clicking or forms; plain \
+             public pages are quicker with web_fetch when you have it. Never type passwords, \
+             payment details or other sensitive data, and don't buy, post, send or sign up for \
+             anything unless the user asked for exactly that. Close the browser with \
+             browser__close when you're done.",
+        );
     }
     if ctx.task_list {
         s.push_str(
@@ -608,6 +624,20 @@ mod tests {
         assert!(p.contains("install packages"), "{p}");
         assert!(p.contains("No folder is shared"), "{p}");
         assert!(!system_prompt(&PromptContext::default()).contains("sandbox"));
+    }
+
+    #[test]
+    fn browser_paragraph_only_when_on() {
+        let p = system_prompt(&PromptContext {
+            browser: true,
+            ..Default::default()
+        });
+        assert!(
+            p.contains("browser__navigate") && p.contains("browser__browser_task"),
+            "{p}"
+        );
+        assert!(p.contains("Never type passwords"), "{p}");
+        assert!(!system_prompt(&PromptContext::default()).contains("browser__"));
     }
 
     #[test]

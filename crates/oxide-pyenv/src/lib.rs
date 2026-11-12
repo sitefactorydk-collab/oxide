@@ -1,8 +1,13 @@
 //! Managed Python for Oxide (Phase 12): finds Oxide's `uv`, installs CPython and a fixed set of
 //! packages into a virtual environment in the app's data folder, and runs scripts in it.
 //!
-//! No Tauri here: progress goes to a [`PythonSink`], which the app turns into an event.
+//! Phase 13 adds the browser agent ([`BrowserAgents`]): a per-chat MCP server in this
+//! environment that drives a browser.
+//!
+//! No Tauri here: progress goes to a [`PythonSink`] (and a [`BrowserSink`]), which the app
+//! turns into events.
 
+pub mod browser;
 mod env;
 mod error;
 mod files;
@@ -11,6 +16,7 @@ mod project;
 mod run;
 pub mod uv;
 
+pub use browser::{BrowserAgents, BrowserError, BrowserLlm, BrowserSink, NoBrowserSink};
 pub use env::{NoSink, PythonConfig, PythonEnv, PythonSink, Ready};
 pub use error::{PythonError, Result};
 pub use files::{ChangedFile, Snapshot};
@@ -37,6 +43,19 @@ impl PythonEnv {
         std::fs::write(root.join("state.json"), marker.to_string())
             .expect("the test folder is writable");
         env
+    }
+
+    /// Marks a package group as installed (tests that run a system Python that has them).
+    #[doc(hidden)]
+    pub fn mark_group_for_tests(&self, group: &str) {
+        let dir = self.root().join("groups");
+        std::fs::create_dir_all(&dir).expect("the test folder is writable");
+        let marker = serde_json::json!({
+            "projectHash": project::project_hash(),
+            "packages": [],
+        });
+        std::fs::write(dir.join(format!("{group}.json")), marker.to_string())
+            .expect("the test folder is writable");
     }
 }
 
@@ -286,6 +305,79 @@ mod tests {
         assert_eq!(last.state, PythonState::Missing);
         assert!(env.work_dir("c1").is_dir());
         assert!(!env.venv_dir().exists());
+    }
+
+    #[tokio::test]
+    async fn optional_groups_install_on_top_and_go_when_the_base_reinstalls() {
+        let Some(py) = system_python() else { return };
+        if !std::process::Command::new(&py)
+            .args(["-c", "import pip"])
+            .status()
+            .is_ok_and(|s| s.success())
+        {
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tmp");
+        let mut cfg = PythonConfig::new(tmp.path().join("python"));
+        let uv = fake_uv(tmp.path(), &py, false);
+        // Record the arguments of each call.
+        let script = std::fs::read_to_string(&uv).expect("read");
+        let args_log = tmp.path().join("uv-args.txt");
+        std::fs::write(
+            &uv,
+            script.replacen(
+                "case",
+                &format!("echo \"$@\" >> '{}'\ncase", args_log.display()),
+                1,
+            ),
+        )
+        .expect("write");
+        cfg.uv = Some(uv);
+        cfg.packages = vec!["pip".into()];
+        let env = PythonEnv::new(cfg, Arc::new(NoSink));
+        assert!(env.group_ready("browser").await.is_none());
+
+        let pkgs = env
+            .ensure_group("browser", &[("json", "pip")])
+            .await
+            .expect("installs");
+        assert_eq!(pkgs[0].name, "pip");
+        assert!(env.group_ready("browser").await.is_some());
+        let log = std::fs::read_to_string(&args_log).expect("log");
+        assert!(
+            log.lines()
+                .any(|l| l.starts_with("sync") && l.contains("--group browser")),
+            "{log}"
+        );
+        assert!(
+            log.lines()
+                .any(|l| l.starts_with("sync") && !l.contains("--group")),
+            "{log}"
+        );
+        // Quick the second time: nothing runs.
+        let before = log.lines().count();
+        env.ensure_group("browser", &[("json", "pip")])
+            .await
+            .expect("ready");
+        let after = std::fs::read_to_string(&args_log)
+            .expect("log")
+            .lines()
+            .count();
+        assert_eq!(before, after);
+
+        // A failing import is reported and nothing is marked.
+        let err = env
+            .ensure_group("other", &[("no_such_module_here", "pip")])
+            .await
+            .expect_err("fails");
+        assert!(err.to_string().contains("no_such_module_here"), "{err}");
+        assert!(env.group_ready("other").await.is_none());
+        // The environment itself is still fine.
+        assert_eq!(env.status(false).await.state, PythonState::Ready);
+
+        // Repairing reinstalls the base exactly, which drops the group's packages.
+        env.repair().await.expect("repair");
+        assert!(env.group_ready("browser").await.is_none());
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@
 
 pub mod artifacts;
 pub mod attachments;
+pub mod browser;
 pub mod chats;
 pub mod desktop;
 pub mod extensions;

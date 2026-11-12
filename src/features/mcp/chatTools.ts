@@ -67,10 +67,22 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "sandbox"])],
     });
 
+  /** The browser ("Browser" in the "+" menu, when it's on in Settings). */
+  const browserOn = !tools.disabledBuiltins.includes("browser");
+  const toggleBrowser = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "browser")
+        : [...new Set([...tools.disabledBuiltins, "browser"])],
+    });
+
   return {
     tools,
     sandboxOn,
     toggleSandbox,
+    browserOn,
+    toggleBrowser,
     webOn,
     toggleWeb,
     artifactsOn,

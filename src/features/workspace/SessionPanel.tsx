@@ -2,6 +2,7 @@ import {
   BookOpen,
   Box,
   Braces,
+  Compass,
   CheckCircle2,
   Circle,
   CircleDot,
@@ -30,6 +31,8 @@ import { useMcpServers } from "@/features/mcp/queries";
 import { EFFORT_LABELS, effectiveEffort, findModel } from "@/features/models/models";
 import { useModelLabel, useModels } from "@/features/models/queries";
 import { useChatGrants, useRevokeGrant, useToolUsage } from "@/features/tools/queries";
+import { BrowserPanelSection } from "@/features/browser/BrowserPanel";
+import { useBrowserEnabled } from "@/features/browser/queries";
 import { SandboxSection } from "@/features/sandbox/SandboxPanel";
 import { useShowSandbox } from "@/features/sandbox/queries";
 import { usageRows, type UsageRow } from "@/features/tools/toolView";
@@ -58,6 +61,7 @@ export function SessionPanel({
 }) {
   const panel = useSessionPanel(id);
   const showSandbox = useShowSandbox(id);
+  const showBrowser = useBrowserEnabled();
   return (
     <aside aria-label="Chat details" className="flex w-80 shrink-0 flex-col p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl border border-line bg-raised p-4 shadow-sm">
@@ -71,6 +75,16 @@ export function SessionPanel({
         <Folders id={id} />
         {showSandbox && (
           <SandboxSection
+            id={id}
+            wrap={(title, aside, body) => (
+              <Section title={title} aside={aside}>
+                {body}
+              </Section>
+            )}
+          />
+        )}
+        {showBrowser && (
+          <BrowserPanelSection
             id={id}
             wrap={(title, aside, body) => (
               <Section title={title} aside={aside}>
@@ -258,6 +272,7 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
     shell: SquareTerminal,
     python: Braces,
     sandbox: Box,
+    browser: Compass,
   };
   const Icon = icons[kind] ?? Plug;
   return <Icon aria-hidden className="size-4" />;

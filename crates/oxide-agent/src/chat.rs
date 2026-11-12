@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use oxide_core::RUN_PYTHON;
+use oxide_core::browser::{BROWSER_SWITCH, browser_tool_reads_only};
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
@@ -41,6 +42,7 @@ use crate::knowledge::{
 use crate::memory::{MEMORY_SYSTEM, Scope, memory_prompt, parse_proposals};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
+use crate::tools::browser as browser_tools;
 use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
 use crate::tools::python::{python_entry, run_python};
 use crate::tools::sandbox as sandbox_tools;
@@ -130,6 +132,8 @@ struct Setup {
     sandbox: Sandbox,
     /// The shell `run_command` uses (`None`: the shell tool is off).
     shell: Option<Shell>,
+    /// The model `browser_task` runs with (the browser is on).
+    browser_llm: Option<oxide_pyenv::BrowserLlm>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -205,6 +209,13 @@ impl ChatService {
         {
             let id = conversation_id.to_owned();
             rt.spawn(async move { python.forget_chat(&id).await });
+        }
+        // Its browser.
+        if let Some(b) = self.tools.browser().cloned()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            let id = conversation_id.to_owned();
+            rt.spawn(async move { b.forget(&id).await });
         }
         // And its sandbox, with the files in it.
         if let Some(sb) = self.tools.sandboxes().cloned()
@@ -561,6 +572,8 @@ impl ChatService {
             .unwrap_or_default();
         let mut shell = None;
         let mut sandbox_prompt = None;
+        let mut browser_llm = None;
+        let mut browser_on = false;
         if caps.tools {
             let at = tool_set
                 .entries
@@ -623,6 +636,21 @@ impl ChatService {
                     files: files.is_some_and(|t| !t.is_empty()),
                     copies,
                 });
+            }
+            // The browser agent: its tools, and the model its `browser_task` uses.
+            if settings.browser.enabled
+                && chat_tools.allows_builtin(BROWSER_SWITCH)
+                && let Some(b) = self.tools.browser()
+            {
+                b.configure(&settings.browser);
+                own.extend(browser_tools::browser_entries());
+                browser_on = true;
+                let model_id = settings
+                    .browser
+                    .agent_model
+                    .clone()
+                    .unwrap_or_else(|| conversation.model.clone());
+                browser_llm = self.browser_llm(&model_id).await;
             }
             tool_set.entries.splice(at..at, own);
         }
@@ -696,6 +724,7 @@ impl ChatService {
                 .iter()
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::TaskList)),
             sandbox: sandbox_prompt,
+            browser: browser_on,
         });
         Ok(Setup {
             provider,
@@ -711,6 +740,32 @@ impl ChatService {
             grants,
             sandbox,
             shell,
+            browser_llm,
+        })
+    }
+
+    /// The endpoint, key and abilities of a model, for Browser-Use. `None` when the model's
+    /// endpoint is gone (`browser_task` then says it has no model).
+    async fn browser_llm(&self, model_id: &str) -> Option<oxide_pyenv::BrowserLlm> {
+        let (provider_id, model) = split_model_id(model_id)?;
+        let (config, api_key) = match self.registry.endpoint(provider_id).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::info!("no endpoint for the browser's model: {e}");
+                return None;
+            }
+        };
+        let vision = match (self.registry.find(model_id).await, config.kind) {
+            (Some(i), _) => i.capabilities.images,
+            (None, ProviderKind::Anthropic) => anthropic_curated(model).images,
+            (None, _) => false,
+        };
+        Some(oxide_pyenv::BrowserLlm {
+            kind: config.kind,
+            base_url: config.base_url,
+            model: model.to_owned(),
+            api_key,
+            vision,
         })
     }
 
@@ -951,6 +1006,11 @@ impl ChatService {
             ToolKind::Builtin(Builtin::SandboxExec) => setup.settings.sandbox.ask,
             ToolKind::Builtin(Builtin::SandboxCopyIn | Builtin::SandboxCopyOut) => true,
             ToolKind::SandboxFile { .. } => !entry.read_only && setup.settings.sandbox.ask,
+            // Browsing acts on websites as the user: opening, clicking, typing and tasks ask
+            // unless Settings → Browser says not to. Reading and screenshots never ask.
+            ToolKind::Browser { tool } => {
+                !browser_tool_reads_only(tool) && setup.settings.browser.ask
+            }
             ToolKind::Builtin(_) => setup.settings.tools.ask_before_web,
             ToolKind::Mcp { .. } => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -1072,6 +1132,7 @@ impl ChatService {
         let project_id = setup.project_id.as_deref();
         let sandbox = &setup.sandbox;
         let shell = setup.shell.as_ref();
+        let browser_llm = setup.browser_llm.as_ref();
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
@@ -1138,6 +1199,14 @@ impl ChatService {
                     let started = Instant::now();
                     let mut out = self
                         .run_sandbox_tool(cid, b, &r.input, sandbox, settings)
+                        .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let ToolKind::Browser { tool } = &r.entry.kind {
+                    let started = Instant::now();
+                    let mut out = self
+                        .run_browser_tool(cid, tool, &r.input, &r.call.id, browser_llm)
                         .await;
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
@@ -1301,6 +1370,28 @@ impl ChatService {
         }
     }
 
+    /// Calls one of the browser agent's tools for the chat (setting the browser up and
+    /// starting the chat's agent when needed).
+    async fn run_browser_tool(
+        &self,
+        cid: &str,
+        tool: &str,
+        input: &Value,
+        call_id: &str,
+        llm: Option<&oxide_pyenv::BrowserLlm>,
+    ) -> ToolOutput {
+        let Some(b) = self.tools.browser() else {
+            return ToolOutput::error("The browser isn't available in this build.");
+        };
+        match b
+            .call(cid, tool, input.clone(), call_id, llm.cloned())
+            .await
+        {
+            Ok(r) => self.tools.mcp_output(r).await,
+            Err(e) => ToolOutput::error(e.to_string()),
+        }
+    }
+
     fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
         self.emit(
             cid,
@@ -1357,6 +1448,7 @@ impl ChatService {
                         | Builtin::SandboxCopyIn
                         | Builtin::SandboxCopyOut),
                     ) => sandbox_tools::label(b, input),
+                    ToolKind::Browser { ref tool } => browser_tools::browser_label(tool, input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,
@@ -3445,6 +3537,307 @@ pub(crate) mod tests {
         assert!(used.iter().any(|u| u.kind == ToolUsageKind::Sandbox
             && u.label.as_deref() == Some("make test")
             && u.is_error));
+    }
+
+    // ---- Browser agent -----------------------------------------------------------------------
+
+    /// Like `fixture`, with the browser agent's tools in a Python environment `env`.
+    #[cfg(unix)]
+    async fn fixture_browser(
+        scripts: Vec<Vec<Step>>,
+        env: oxide_pyenv::PythonEnv,
+        installed: Vec<oxide_core::InstalledBrowser>,
+    ) -> (Fixture, oxide_pyenv::BrowserAgents) {
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let fake = FakeProvider::new(scripts);
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let browser = oxide_pyenv::BrowserAgents::with_installed(
+            env,
+            installed,
+            Arc::new(oxide_pyenv::NoBrowserSink),
+        );
+        let tools = Tools::new(None, secrets, None).with_browser(browser.clone());
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Find the opening hours".into(),
+                model: "lmstudio/fake-model".into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+            })
+            .await
+            .expect("chat");
+        (
+            Fixture {
+                store,
+                service,
+                fake,
+                sink,
+                chat,
+                first,
+            },
+            browser,
+        )
+    }
+
+    /// A Python environment whose `uv` always fails (nothing can be installed).
+    #[cfg(unix)]
+    fn broken_python(root: &std::path::Path) -> oxide_pyenv::PythonEnv {
+        use std::os::unix::fs::PermissionsExt;
+        let uv = root.join("uv");
+        std::fs::write(&uv, "#!/bin/sh\necho 'error: no network' >&2\nexit 2\n").expect("write");
+        std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let mut cfg = oxide_pyenv::PythonConfig::new(root.join("python"));
+        cfg.uv = Some(uv);
+        oxide_pyenv::PythonEnv::new(cfg, Arc::new(oxide_pyenv::NoSink))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_tools_follow_the_setting_ask_for_actions_and_explain_a_failed_setup() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let mut both = call(
+            "b1",
+            "browser__navigate",
+            r#"{"url":"https://example.com"}"#,
+        );
+        both.extend(call("b2", "browser__read_page", "{}"));
+        let (f, _b) = fixture_browser(
+            vec![
+                turn(both, StopReason::ToolUse),
+                turn(
+                    vec![text("The browser couldn't start.")],
+                    StopReason::EndTurn,
+                ),
+                title_step(),
+            ],
+            broken_python(tmp.path()),
+            Vec::new(),
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.browser.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Opening a page asks; reading it doesn't.
+        let req = wait_approval(&f, "b1").await;
+        assert_eq!(req.tool, "navigate");
+        assert_eq!(req.server.as_deref(), Some("browser"));
+        assert_eq!(f.service.pending_approvals().len(), 1);
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "b1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        for id in ["b1", "b2"] {
+            let (r, bad) = result_of(&m, id);
+            assert!(bad, "{r}");
+            assert!(
+                r.contains("Setting up the browser failed") || r.contains("uv"),
+                "{r}"
+            );
+        }
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        for want in [
+            "browser__browser_task",
+            "browser__navigate",
+            "browser__read_page",
+            "browser__click",
+            "browser__type",
+            "browser__screenshot",
+            "browser__close",
+        ] {
+            assert!(names.contains(&want), "{names:?}");
+        }
+        let system = reqs[0].system.clone().unwrap_or_default();
+        assert!(system.contains("browser__navigate opens"), "{system}");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(|u| u.kind == ToolUsageKind::Browser
+            && u.label.as_deref() == Some("https://example.com")
+            && u.server.as_deref() == Some("browser")
+            && u.is_error));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_tools_are_off_by_default_and_per_chat() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (f, _b) = fixture_browser(
+            vec![
+                turn(vec![text("ok")], StopReason::EndTurn),
+                title_step(),
+                turn(vec![text("ok")], StopReason::EndTurn),
+            ],
+            broken_python(tmp.path()),
+            Vec::new(),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert!(
+            reqs[0]
+                .tools
+                .iter()
+                .all(|t| !t.name.starts_with("browser__"))
+        );
+        assert!(
+            !reqs[0]
+                .system
+                .clone()
+                .unwrap_or_default()
+                .contains("browser__")
+        );
+        // On in Settings, off in this chat ("+" menu): still not offered.
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.browser.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        let mut tools = f.store.chat_tools(&f.chat.id).await.expect("tools");
+        tools.disabled_builtins.push(BROWSER_SWITCH.into());
+        f.store
+            .set_chat_tools(&f.chat.id, &tools)
+            .await
+            .expect("saves");
+        // Wait for the title too, so the next reply gets the next script.
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .any(|e| matches!(e, StreamEvent::Done { .. }))
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Done { .. }))
+                    .count()
+                    >= 2
+            })
+            .await;
+        let reqs = f.fake.requests();
+        let last = reqs.last().expect("a request");
+        assert!(last.tools.iter().all(|t| !t.name.starts_with("browser__")));
+    }
+
+    /// A stand-in for Browser-Use that reports the model it was given.
+    #[cfg(unix)]
+    const ECHO_BROWSER_USE: &str = r#"
+class ChatOpenAI:
+    def __init__(self, model, api_key=None, base_url=None):
+        self.model, self.base_url, self.api_key = model, base_url, api_key
+class ChatAnthropic(ChatOpenAI):
+    pass
+class Browser:
+    def __init__(self, cdp_url=None, keep_alive=None):
+        self.cdp_url = cdp_url
+class History:
+    def __init__(self, t): self.t = t
+    def final_result(self): return self.t
+    def is_done(self): return True
+    def is_successful(self): return True
+class Agent:
+    def __init__(self, task, llm=None, browser=None, use_vision=True):
+        self.llm, self.browser, self.vision = llm, browser, use_vision
+    async def run(self, max_steps=100):
+        return History(f"model={self.llm.model} base={self.llm.base_url} key={self.llm.api_key} vision={self.vision} steps={max_steps}")
+"#;
+
+    /// `browser_task` through a chat: the chat's model reaches Browser-Use. Needs a Python with
+    /// `mcp` 2.x and Playwright (`OXIDE_TEST_SYSTEM_PYTHON`) and a Chrome (`OXIDE_TEST_CHROME`).
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "needs Python with mcp and Playwright, and Chrome"]
+    async fn browser_task_through_a_chat_uses_the_chats_model() {
+        let py = std::env::var_os("OXIDE_TEST_SYSTEM_PYTHON").expect("OXIDE_TEST_SYSTEM_PYTHON");
+        let chrome = std::env::var("OXIDE_TEST_CHROME").expect("OXIDE_TEST_CHROME");
+        let tmp = tempfile::tempdir().expect("tmp");
+        let env = oxide_pyenv::PythonEnv::for_tests(
+            &tmp.path().join("python"),
+            std::path::Path::new(&py),
+        );
+        env.mark_group_for_tests("browser");
+        let agents = tmp.path().join("python/agents/browser_use");
+        std::fs::create_dir_all(&agents).expect("mkdir");
+        std::fs::write(agents.join("__init__.py"), ECHO_BROWSER_USE).expect("write");
+        let (f, b) = fixture_browser(
+            vec![
+                turn(
+                    call(
+                        "t1",
+                        "browser__browser_task",
+                        r#"{"goal":"Find the hours","max_steps":4}"#,
+                    ),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("Found them.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            env,
+            vec![oxide_core::InstalledBrowser {
+                name: "Chrome".into(),
+                path: chrome,
+            }],
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.browser.enabled = true;
+        settings.browser.ask = false;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Starting Python and the browser takes longer than the usual wait.
+        for _ in 0..600 {
+            if f.sink
+                .events()
+                .iter()
+                .any(|e| matches!(e, StreamEvent::Done { .. } | StreamEvent::Failed { .. }))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let m = saved(&f);
+        let (r, bad) = result_of(&m, "t1");
+        assert!(!bad, "{r}");
+        assert!(
+            r.contains(
+                "model=fake-model base=http://127.0.0.1:1234/v1 key=not-needed vision=False steps=4"
+            ),
+            "{r}"
+        );
+        assert!(b.is_open(&f.chat.id));
+        // Deleting the chat closes its browser.
+        f.service.forget(&f.chat.id);
+        for _ in 0..50 {
+            if !b.is_open(&f.chat.id) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!b.is_open(&f.chat.id));
     }
 
     #[tokio::test]

@@ -3698,7 +3698,9 @@ dependencies = [
 name = "oxide-pyenv"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "oxide-core",
+ "oxide-mcp",
  "serde",
  "serde_json",
  "tempfile",

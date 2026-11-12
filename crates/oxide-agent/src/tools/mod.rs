@@ -5,6 +5,7 @@
 //! `^[a-zA-Z0-9_-]{1,64}$` for both Anthropic and OpenAI, so MCP tools become
 //! `server__tool` with other characters replaced.
 
+pub mod browser;
 pub mod files;
 pub mod html;
 pub mod python;
@@ -132,6 +133,11 @@ pub enum ToolKind {
     SandboxFile {
         tool: String,
     },
+    /// A tool of the chat's browser agent (run by the chat service, which starts the
+    /// chat's agent). Its own kind, like the sandbox's file tools.
+    Browser {
+        tool: String,
+    },
 }
 
 /// One tool as offered to the model.
@@ -154,6 +160,7 @@ impl ToolEntry {
             ToolKind::Builtin(_) => None,
             ToolKind::Mcp { server, .. } => Some(server),
             ToolKind::SandboxFile { .. } => Some(oxide_core::sandbox::SANDBOX_SERVER),
+            ToolKind::Browser { .. } => Some(oxide_core::browser::BROWSER_SERVER),
         }
     }
 
@@ -161,7 +168,9 @@ impl ToolEntry {
     pub fn tool(&self) -> &str {
         match &self.kind {
             ToolKind::Builtin(b) => b.name(),
-            ToolKind::Mcp { tool, .. } | ToolKind::SandboxFile { tool } => tool,
+            ToolKind::Mcp { tool, .. }
+            | ToolKind::SandboxFile { tool }
+            | ToolKind::Browser { tool } => tool,
         }
     }
 
@@ -169,6 +178,7 @@ impl ToolEntry {
     pub fn grant_key(&self) -> String {
         match &self.kind {
             ToolKind::SandboxFile { tool } => format!("builtin/sandbox__{tool}"),
+            ToolKind::Browser { tool } => format!("builtin/browser__{tool}"),
             _ => format!("{}/{}", self.server().unwrap_or("builtin"), self.tool()),
         }
     }
@@ -188,6 +198,7 @@ impl ToolEntry {
                 Builtin::SandboxExec | Builtin::SandboxCopyIn | Builtin::SandboxCopyOut,
             )
             | ToolKind::SandboxFile { .. } => ToolUsageKind::Sandbox,
+            ToolKind::Browser { .. } => ToolUsageKind::Browser,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -286,6 +297,7 @@ pub struct Tools {
     skills: Option<Skills>,
     python: Option<oxide_pyenv::PythonEnv>,
     sandboxes: Option<oxide_sandbox::Sandboxes>,
+    browser: Option<oxide_pyenv::BrowserAgents>,
 }
 
 impl Tools {
@@ -301,6 +313,7 @@ impl Tools {
             skills: None,
             python: None,
             sandboxes: None,
+            browser: None,
         }
     }
 
@@ -322,6 +335,16 @@ impl Tools {
 
     pub fn sandboxes(&self) -> Option<&oxide_sandbox::Sandboxes> {
         self.sandboxes.as_ref()
+    }
+
+    /// Gives models the browser agent's tools (when it is on in settings).
+    pub fn with_browser(mut self, browser: oxide_pyenv::BrowserAgents) -> Self {
+        self.browser = Some(browser);
+        self
+    }
+
+    pub fn browser(&self) -> Option<&oxide_pyenv::BrowserAgents> {
+        self.browser.as_ref()
     }
 
     /// Gives models the skills in this folder (`load_skill`).
@@ -450,7 +473,8 @@ impl Tools {
                 | Builtin::SandboxCopyIn
                 | Builtin::SandboxCopyOut,
             )
-            | ToolKind::SandboxFile { .. } => {
+            | ToolKind::SandboxFile { .. }
+            | ToolKind::Browser { .. } => {
                 ToolOutput::error("This tool runs in the chat, not here.")
             }
             ToolKind::Mcp { server, tool } => match &self.mcp {

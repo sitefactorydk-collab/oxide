@@ -32,7 +32,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Skills | Folders with a `SKILL.md` in `<app data>\skills`; names and descriptions go into the system prompt and the built-in `load_skill` tool returns the rest (Phase 10) |
 | Python | Oxide manages its own `uv` (a Tauri sidecar per target, pinned to one release in `scripts/uv-pins.json` and fetched by `npm run fetch-uv`). On first use it installs CPython 3.12 and a venv under `<app data>\python\` with the packages in the locked `python/uv.lock` (embedded in the app). `run_python` always asks for approval: the code is not sandboxed (Phase 12) |
 | Docker sandbox | Own crate `oxide-sandbox` driving the `docker` CLI (works with Docker Desktop's context). A container per chat (`oxide-sandbox-<chat id>`), workspace volume or folder at `/workspace`, no network by default; the reference filesystem MCP server runs per chat from its image and is **not** an MCP-manager entry (manager servers are shared by all chats). Default image `python:3.12-bookworm` (Phase 12b) |
-| Browser agent | Browser-Use wrapped as a local MCP server (`oxide-browser-agent`, Python, runs in the uv venv) |
+| Browser agent | Browser-Use (1.0) wrapped as a local MCP server (`python/oxide_browser_agent`, official `mcp` SDK 2.x, stdio), run **per chat** from the uv venv by `oxide-pyenv` (not an MCP-manager entry), with granular tools on Playwright sharing the browser over CDP. Its packages are the `browser` dependency group, installed on first use. It drives Chrome or Edge installed on the computer (own throwaway profile), else Playwright's Chromium, or the user's own Chrome over CDP (Phase 13) |
 | Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
 | Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring`. Project knowledge search uses SQLite FTS5 with BM25 ranking (Phase 7) |
 | OS dialogs and links | `tauri-plugin-dialog` (file picker, save dialog) and `tauri-plugin-opener` (links open in the system browser), called from Rust commands so the frontend still only uses `@/bindings` (Phase 4) |
@@ -345,6 +345,7 @@ Requested by the user after Phase 5: give Oxide's agent an isolated workspace li
 **Exit:** with Docker running on Windows, a chat can create a project in its sandbox, build and test it there (including a failing test the model then fixes), and copy the result to a granted folder; with Docker stopped, the user gets a clear message; host paths outside the workspace are unreachable (tested).
 
 ### Phase 13 — Browser agent (Browser-Use)
+(Built as one server per chat, preferring an installed Chrome or Edge; changed in Phase 13, see PROGRESS.md.)
 - `python/oxide_browser_agent`: an MCP server (official `mcp` Python SDK, stdio) wrapping Browser-Use.
   - Tools: `browser_task(goal)` for autonomous mode, plus granular `navigate`, `read_page`, `click`, `type`, `screenshot` and `close`.
   - Browser-Use's own LLM calls go back through **Oxide's selected provider** via env-provided endpoint and key, so it uses the same models.
