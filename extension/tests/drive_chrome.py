@@ -2,8 +2,8 @@
 
 Usage: drive_chrome.py <chrome> <extension dir> <port> <code> <origin to allow>
 
-Pairs through the extension's own popup (typing the code like a user), allows the test site,
-prints READY, then answers commands on stdin, one per line:
+Pairs through the extension's own popup (typing the code like a user), checks that asking
+per site is off, prints READY, then answers commands on stdin, one per line:
   state            the popup's link state (connected, offline, unpaired, …)
   banner           how many open pages show Oxide's banner
   stop             presses "Stop Oxide" in the popup
@@ -49,10 +49,10 @@ async def main() -> None:
         await popup.fill("#port", port)
         await popup.click("#pair-button")
         await popup.wait_for_selector('#state[data-state="connected"]', timeout=15_000)
-        await popup.fill("#site", allow)
-        await popup.select_option("#site-choice", "allow")
-        await popup.click("#site-form button")
-        await popup.wait_for_selector("#sites .tag.allow", timeout=5_000)
+        # Asking per site is off by default: the test site is used without allowing it first
+        # (a prompt would hang the first navigate). `allow` stays an argument for older callers.
+        assert not await popup.is_checked("#ask-sites"), "asking per site should be off"
+        del allow
         print("READY", ext_id, flush=True)
 
         loop = asyncio.get_running_loop()

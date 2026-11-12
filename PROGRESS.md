@@ -6,7 +6,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Last completed:** Phase 12b — Docker sandbox workspace (committed 2026-11-12 as `phase 12b: Docker sandbox workspace`; exit check passed on Windows on 2026-11-12)
 - **Phase 13** — Browser agent (Browser-Use): done (`1af53b2`, fix `86f147d`; all exit checks passed by hand on 2026-11-12). Follow-up (Google search instead of guessed addresses) committed as `09c1ca2` (2026-11-12 13:53, all checks and the real-browser test green; the hidden test browser's real Google search was refused with a robot check and reported plainly, as designed); then click fixes `23e3fd5` and Google's AI Overview + longer extension-folder retries `4412e21` (2026-11-12 15:16, all green)
 - **Phase 13b** — Context management & chat compaction: done (`d58672b`, fixes `fccd2c7`, `2c31e21`; exit checks passed by hand on 2026-11-12)
-- **Phase 14** — Chrome extension & WebSocket bridge: agent side done (real extension tested in a real Chrome in the cloud container); Windows run `scripts\win\phase14.cmd` and manual exit checks pending
+- **Phase 14** — Chrome extension & WebSocket bridge: committed `176a672` (2026-11-12 22:10, every check green); the real-extension test passed on Windows in Edge 157 (22:22); manual exit checks (pairing, using Chrome in a chat, Stop) pending
 - **Next phase:** Phase 14's Windows run and exit checks, then Phase 15 — Scheduled tasks
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -36,7 +36,9 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 14 — Chrome extension & WebSocket bridge — 2026-11-12
-Status: agent side done and verified on Linux, including the real extension in a real Chrome; **the Windows run (`scripts\win\phase14.cmd`) and the manual exit checks are next**. Message: `logs\commit-msg-phase14.txt`.
+Status: committed `176a672 phase 14: Chrome extension & WebSocket bridge` on the second run of `scripts\win\phase14.cmd` (2026-11-12 22:10: bindings, extension build, fmt, prettier, clippy, cargo test, typecheck, lint, Vitest, vite build all green). **The real-extension test passed on Windows** (`scripts\win\phase14-chrome.cmd`, 22:22): Microsoft Edge 157 loaded `extension\dist` from the command line, paired through the popup and ran every tool against the local test site. Manual exit checks in the app are next.
+
+Windows run 1 (22:02, not committed): clippy `too_many_arguments` on `AppState::open` (8 with the Chrome sink; allowed with a reason), and the Vitest pairing check read “Valid for 6 more minutes” — the countdown counted from when the page opened, not from the new code (fixed: it resets per code). The informational real-Chrome step picked a template `python.exe` from Python's `Lib\venv`; the scripts now take `Scripts\python.exe` next to the test environment's `pyvenv.cfg`. Its first real run (after the commit) paired with Edge and then failed only on the test's own assertion that the browser's name contains “Chrome” (fixed: any “… on …” name). `scripts\win\phase14-chrome.cmd` runs that test alone (commits nothing).
 
 What the phase script does (`scripts\win\phase14.ps1`): stops a running dev app; `npm run bindings`; `npm run extension` (builds `extension\dist`, the folder to load unpacked); `check.ps1`; `vite build`; commits with `logs\commit-msg-phase14.txt` only if all of that passed. Then, informational only (never blocks the commit): when Phase 13's test Python (`target\browser-test-python`, with Playwright) is there, the real-Chrome test with Playwright's Chromium, else Edge, else Chrome (`logs\phase14-chrome*.log`; branded Chrome/Edge may refuse `--load-extension`). Then starts the app.
 
@@ -47,7 +49,7 @@ Exit criteria (by hand, on Windows):
 - [x] **Unpaired or foreign-origin connections are rejected** (tested: `oxide-bridge` tests over real sockets — no/other origins, `moz-extension://`, upper-case ids, a non-local `Host` (DNS rebinding), plain HTTP, a made-up token, the right token from another extension id, a wrong token, tool calls or garbage before pairing, silence past 10 s, wrong codes (5 tries), expired, used and cancelled codes, an old protocol). By hand, optionally: **Forget** in Settings → Chrome → the popup says “Not paired”.
 
 Done:
-- **`oxide-core` (`chrome.rs`):** `CHROME_SERVER`/`CHROME_SWITCH` (`chrome`), the 14 tool names, `chrome_tool_reads_only` (tabs_list, tabs_select, read_page, find, scroll, screenshot, get_console never ask), `ChromeSettings { enabled (off), port 47820, ask (on) }` in `AppSettings.chrome`, `ChromeStatus`, `PairedBrowser`, `PairingCode`, `clean_pairing_code`. `ToolUsageKind::Chrome` (stored as `"chrome"`).
+- **`oxide-core` (`chrome.rs`):** `CHROME_SERVER`/`CHROME_SWITCH` (`chrome`), the 14 tool names, `chrome_tool_reads_only` (tabs_list, tabs_select, read_page, find, scroll, screenshot, get_console never ask), `ChromeSettings { enabled (off), port 47820, ask (off since the follow-up) }` in `AppSettings.chrome`, `ChromeStatus`, `PairedBrowser`, `PairingCode`, `clean_pairing_code`. `ToolUsageKind::Chrome` (stored as `"chrome"`).
 - **`oxide-bridge`:**
   - `ws.rs`: RFC 6455 by hand (server handshake with `sha1` + base64, frame codec: masking required from clients, fragments joined, control frames, 7/16/64-bit lengths, 32 MB limit, UTF-8 checked). Unit tests incl. the RFC's accept-key example.
   - `lib.rs` — `Bridge`: `configure` (listen on `127.0.0.1:<port>`, move, stop; a taken port is reported for users), upgrade only for `chrome-extension://<32 a–p>` origins with `Host` `127.0.0.1|localhost|[::1]:<port>`; first message within 10 s must be `pair {code}` or `hello {browserId, token}` (`protocol: 1`), else a JSON-RPC error and close `4001`/`1008`. Pairing: `start_pairing` (6 words from 256 → 48 bits, 5 minutes, 5 wrong tries, single use), token = 256 OS-random bits base64url, saved in the keychain as `chrome-token-<id>` and bound to the extension id; the paired list (no secrets) in `<data>\chrome.json`. Constant-time compares. A newer connection of the same browser replaces the old (`4002`); `forget` closes it (`4003`) and deletes the token. Heartbeat: Oxide pings every 20 s, drops a connection silent for 60 s; answers the extension's `ping`. `call(session, tool, args)` → `tools/call`, MCP-shaped result → `McpToolResult` (180 s limit); `release(session)` → `session/release`; `session/stopped` from the extension → `BridgeSink::stopped` (stopped chats are remembered so `release` reaches the extension). `testing` feature: a stand-in extension client (`TestClient`, `fake_extension`).
@@ -72,7 +74,7 @@ Deviations from PLAN.md (and why):
 - **`tabs_close` closes only tabs Oxide opened for the chat**; `tabs_select` lets the chat work in one of the user's tabs.
 
 Known issues / TODO carried forward:
-- Not yet run on Windows (bindings were edited by hand; `src-tauri` compiles only there). The real-Chrome test on Windows is informational: branded Chrome 137+ and Edge may ignore `--load-extension`.
+- The real-extension test uses Edge on Windows (Edge 157 accepts `--load-extension`); branded Chrome 137+ may ignore it, so Chrome itself is checked by hand.
 - Pairings are bound to the extension's id; an unpacked extension loaded from another folder gets another id and must pair again.
 - While a chat works on a site, DevTools shows `console-hook.js` as the source of that site's console lines (README says so).
 - Oxide's own Stop ends the reply; an action already running in Chrome finishes first, then the reply's end takes the banner down.
@@ -82,7 +84,7 @@ Notes for Phase 15:
 - Scheduled runs can use Chrome only while a paired Chrome is connected; a run with approvals set to “ask” pauses on Chrome's approval cards like any other tool.
 - In the cloud container: build with `node scripts/build-extension.mjs` (TypeScript from the device's `node_modules`, staged as `logs\p14-node-tools.tgz`), then `OXIDE_TEST_CHROME=/usr/bin/google-chrome cargo test -p oxide-bridge --test real_chrome -- --ignored` (Chrome for Testing loads unpacked extensions; Playwright 1.63 drives the popup).
 
-Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (core 75, store 49, llm 48, agent 143 + 2 ignored, bridge 17, mcp, pyenv, sandbox unchanged) real Chrome ✅ (cloud container) typecheck ✅ lint ✅ prettier ✅ (device VM, Windows `node_modules`). Vitest, `src-tauri`, bindings export and tauri dev: Windows run pending.
+Verified: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest) typecheck ✅ lint ✅ vite build ✅ (Windows, phase14.cmd) real extension ✅ (Chrome for Testing 153 in the cloud container; Edge 157 on Windows). tauri dev on Windows: manual exit checks pending.
 
 ## Phase 13b — Context management & chat compaction — 2026-11-12
 Status: done. Committed `d58672b`, then `fccd2c7` (repetition guard, gentler clearing shown in the transcript) and `2c31e21` (Working / Compacting indicators); every check green on Windows; all exit checks passed by hand on 2026-11-12 (see below). Follow-up the user wants to try later: send the current reply's thinking back to Strata (`reasoning_content`) so notes in thinking survive clearing.

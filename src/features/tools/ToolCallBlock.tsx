@@ -262,7 +262,7 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           {request.tool === "navigate" || request.tool === "tabs_create"
             ? "This opens the page in your own Chrome, with your sign-ins (or searches Google for these words)."
             : "This acts in your own Chrome, with your sign-ins, as you would."}{" "}
-          The extension asks once per site and shows Stop in the tab.
+          The extension shows Stop in the tab.
         </p>
       )}
       {request.server === null && request.tool.startsWith("sandbox_copy") && (

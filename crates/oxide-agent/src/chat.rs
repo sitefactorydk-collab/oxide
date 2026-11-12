@@ -4889,12 +4889,13 @@ pub(crate) mod tests {
         .await;
         let mut settings = f.store.app_settings().await.expect("settings");
         settings.chrome.enabled = true;
+        settings.chrome.ask = true;
         f.store.save_app_settings(settings).await.expect("saves");
         f.service
             .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
             .await
             .expect("starts");
-        // Opening a page asks; reading and screenshots don't.
+        // With asking on, opening a page asks; reading and screenshots don't.
         let req = wait_approval(&f, "c1").await;
         assert_eq!(req.tool, "navigate");
         assert_eq!(req.server.as_deref(), Some("chrome"));

@@ -614,13 +614,14 @@ async function allowSite(s: Session, tab: chrome.tabs.Tab, what: string) {
   if (!/^https?:/i.test(url)) return; // about:blank and the like: nothing to protect.
   const origin = new URL(url).origin;
   const host = new URL(url).host;
-  const sites = (await stored()).sites ?? {};
+  const { sites = {}, askSites = false } = await stored();
   if (sites[origin] === "block") {
     throw new ToolError(
       `The user blocked Oxide on ${host} (in the Oxide extension's popup). Don't use this site; tell the user if you need it.`,
     );
   }
-  if (sites[origin] === "allow" || s.allowed.includes(origin)) return;
+  // Asking is the user's choice (the popup); by default a paired Oxide may use any site.
+  if (!askSites || sites[origin] === "allow" || s.allowed.includes(origin)) return;
   if (tab.id === undefined) return;
   try {
     await chrome.tabs.update(tab.id, { active: true });
@@ -969,6 +970,7 @@ async function status(): Promise<PopupStatus> {
     error: lastError,
     oxideVersion,
     sites: s.sites ?? {},
+    askSites: s.askSites ?? false,
     working,
   };
 }
@@ -1008,6 +1010,9 @@ async function handle(req: Request, sender: chrome.runtime.MessageSender): Promi
       await chrome.storage.local.set({ sites });
       return status();
     }
+    case "setAskSites":
+      await chrome.storage.local.set({ askSites: req.on });
+      return status();
     case "stopAll":
       await stopSessions(Object.keys(sessions).filter((k) => sessions[k]?.active));
       return status();

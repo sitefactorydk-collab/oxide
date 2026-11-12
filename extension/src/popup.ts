@@ -49,6 +49,10 @@ function render(s: PopupStatus) {
     }),
   );
 
+  $<HTMLInputElement>("ask-sites").checked = s.askSites;
+  $("sites-hint").textContent = s.askSites
+    ? "Oxide asks in the tab before it uses a site not listed here. Your choices:"
+    : "Oxide may use any site without asking, except the ones you block here:";
   const sites = $("sites");
   const entries = Object.entries(s.sites).sort(([a], [b]) => a.localeCompare(b));
   if (entries.length === 0) {
@@ -116,6 +120,11 @@ $("unpair").addEventListener("click", async () => {
 $("reconnect").addEventListener("click", async () => {
   render(await ask<PopupStatus>({ type: "reconnect" }));
   setTimeout(refresh, 800);
+});
+
+$<HTMLInputElement>("ask-sites").addEventListener("change", async (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  render(await ask<PopupStatus>({ type: "setAskSites", on }));
 });
 
 $("stop-all").addEventListener("click", async () => {

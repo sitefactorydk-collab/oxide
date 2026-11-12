@@ -205,7 +205,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         agentModel: null,
         ...seed.settings?.browser,
       },
-      chrome: { enabled: false, port: 47820, ask: true, ...seed.settings?.chrome },
+      chrome: { enabled: false, port: 47820, ask: false, ...seed.settings?.chrome },
       context: {
         compaction: true,
         threshold: 75,

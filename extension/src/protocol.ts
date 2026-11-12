@@ -13,6 +13,8 @@ export interface Stored {
   token?: string;
   /** Per-site choices: origin → "allow" | "block". */
   sites?: Record<string, SiteChoice>;
+  /** Ask in the tab before Oxide uses a site not chosen yet (off: every site but blocked ones). */
+  askSites?: boolean;
 }
 
 export type SiteChoice = "allow" | "block";
@@ -32,6 +34,7 @@ export interface PopupStatus {
   error: string | null;
   oxideVersion: string | null;
   sites: Record<string, SiteChoice>;
+  askSites: boolean;
   /** Tabs Oxide is working in now. */
   working: { session: string; tabId: number | null; title: string }[];
 }
@@ -44,6 +47,7 @@ export type Request =
   | { type: "setPort"; port: number }
   | { type: "reconnect" }
   | { type: "setSite"; origin: string; choice: SiteChoice | null }
+  | { type: "setAskSites"; on: boolean }
   | { type: "stopAll" }
   /** From a tab's banner. */
   | { type: "stop" };

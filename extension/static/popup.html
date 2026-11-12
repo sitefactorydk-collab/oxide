@@ -48,7 +48,10 @@
 
     <section>
       <h2>Sites</h2>
-      <p class="hint">Oxide asks before it uses a site. Your choices:</p>
+      <label class="check"
+        ><input type="checkbox" id="ask-sites" /> Ask before Oxide uses a new site</label
+      >
+      <p class="hint" id="sites-hint">Sites you block here are never used:</p>
       <ul id="sites"></ul>
       <form id="site-form" class="row">
         <input id="site" placeholder="example.com" autocomplete="off" spellcheck="false" />

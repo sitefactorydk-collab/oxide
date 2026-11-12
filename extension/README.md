@@ -49,9 +49,10 @@ Tabs Oxide opens go into an orange **Oxide** tab group.
 
 ## Safety
 
-- **Per-site permission.** The first time a chat uses a site, the tab shows a prompt: *Don't
-  allow*, *Allow for this chat* or *Always allow*. The popup lists your choices; you can remove
-  them, or allow or block a site in advance.
+- **Pairing is the permission.** Once paired, Oxide may use any site without asking, except
+  sites you block in the popup. Switch on **Ask before Oxide uses a new site** in the popup to get
+  a prompt in the tab the first time a chat uses a site (*Don't allow*, *Allow for this chat* or
+  *Always allow*); the popup lists your choices and lets you remove them.
 - **A banner and Stop.** While Oxide works in a tab, the tab has an orange frame and an "Oxide is
   controlling this tab" pill with **Stop**. Stop ends Oxide's control and stops the reply in
   Oxide. The popup's **Stop Oxide** does the same for every tab.
@@ -59,8 +60,8 @@ Tabs Oxide opens go into an orange **Oxide** tab group.
   card fields; the model is told to ask you.
 - **Browser pages are off limits.** `chrome://` pages and the Chrome Web Store can't be read or
   scripted by any extension.
-- Oxide itself asks before acting (opening, clicking, typing) unless you switch that off in
-  Settings → Chrome.
+- Oxide can also ask before each action (opening, clicking, typing): Settings → Chrome →
+  approvals (off by default).
 - The prompt and the banner live in closed shadow roots and only react to real clicks, so a page
   can't press them for you.
 
@@ -111,7 +112,7 @@ Not published yet. Notes for when it is:
 
 - `npm run extension`, then zip the **contents** of `extension/dist` (manifest at the zip's root).
 - Store review will ask why it needs `<all_urls>`, `scripting`, `tabs` and `tabGroups`: Oxide
-  reads and acts on whatever site the user asks for, per site after the user allows it.
+  reads and acts on whatever site the user asks for, on sites the user hasn't blocked.
 - The store gives the extension a fixed id. Pairings are bound to the id, so users of an unpacked
   build pair again after switching.
 - Privacy: nothing leaves the computer except to Oxide on `127.0.0.1`; what Oxide sends to its

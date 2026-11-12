@@ -205,9 +205,7 @@ async fn the_extension_pairs_reads_clicks_types_and_screenshots() {
     assert!(bridge.wait_connected(Duration::from_secs(5)).await);
     let st = bridge.status();
     assert!(
-        st.connected
-            .as_deref()
-            .is_some_and(|n| n.contains("Chrome")),
+        st.connected.as_deref().is_some_and(|n| n.contains(" on ")), // "Chrome 153 on Linux", "Microsoft Edge 157 on Windows"
         "{st:?}"
     );
     assert_eq!(st.paired.len(), 1);

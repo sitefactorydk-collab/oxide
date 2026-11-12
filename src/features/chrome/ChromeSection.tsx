@@ -26,9 +26,10 @@ export function ChromeSection() {
     <div className="flex max-w-2xl flex-col gap-6">
       <p className="text-base text-fg-muted">
         With Oxide&apos;s Chrome extension, models can work in tabs of your everyday Chrome: open
-        pages, read them, click, type and take screenshots, with your sign-ins. The extension asks
-        before Oxide uses a site, shows a banner with Stop in every tab Oxide works in, and never
-        types into password or payment fields.
+        pages, read them, click, type and take screenshots, with your sign-ins. Once your Chrome is
+        paired, nothing asks unless you want it to; the extension shows a banner with Stop in every
+        tab Oxide works in, skips sites you block in its popup, and never types into password or
+        payment fields.
       </p>
       <ConnectionCard status={status} settings={chrome} />
       <Toggle
@@ -54,7 +55,7 @@ export function ChromeSection() {
         <h3 className="text-md font-semibold text-fg">Approvals</h3>
         <Toggle
           label="Ask before opening pages, clicking and typing in Chrome"
-          hint="Each one asks, with Allow always for this chat. Reading, finding, scrolling and screenshots never ask here. The extension also asks once per site."
+          hint="Off: a paired Chrome is all the permission Oxide needs. On: each action asks, with Allow always for this chat (reading, finding, scrolling and screenshots never ask). The extension's popup has its own switch to ask once per site, and a list of sites never to use."
           checked={chrome.ask}
           onChange={(ask) => set({ ask })}
         />

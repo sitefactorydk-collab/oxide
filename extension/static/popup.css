@@ -109,6 +109,14 @@ label {
 label.port input {
   width: 90px;
 }
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
 input,
 select {
   font: inherit;

@@ -57,7 +57,7 @@ describe("Settings → Chrome", () => {
         name: "Ask before opening pages, clicking and typing in Chrome",
       }),
     );
-    await waitFor(() => expect(fakeState().settings.chrome.ask).toBe(false));
+    await waitFor(() => expect(fakeState().settings.chrome.ask).toBe(true));
   });
 
   it("is a built-in connector with its own switch", async () => {
@@ -71,7 +71,7 @@ describe("Settings → Chrome", () => {
 });
 
 describe("Chrome calls in a reply", () => {
-  it("asks before opening a page in the user's Chrome", async () => {
+  it("asks before opening a page in the user's Chrome when asking is on", async () => {
     renderApp("/chat/c2", { backend: { replies: "hold", ...ON } });
     await screen.findByText(/warm neutral palette/);
     const box = screen.getByRole("textbox", { name: "Message" });

@@ -66,7 +66,8 @@ pub fn chrome_tool_reads_only(tool: &str) -> bool {
     )
 }
 
-/// Settings → Chrome. Off by default: while on, Oxide listens for its extension.
+/// Settings → Chrome. Off by default: while on, Oxide listens for its extension. Once a
+/// Chrome is paired, nothing asks unless the user switches asking on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChromeSettings {
@@ -74,8 +75,8 @@ pub struct ChromeSettings {
     pub enabled: bool,
     /// Port on 127.0.0.1.
     pub port: u16,
-    /// Acting in Chrome (opening, clicking, typing, closing tabs) asks first. The extension
-    /// asks per site as well.
+    /// Acting in Chrome (opening, clicking, typing, closing tabs) asks first. Off by default:
+    /// pairing is the permission (the extension can still ask per site, from its popup).
     pub ask: bool,
 }
 
@@ -84,7 +85,7 @@ impl Default for ChromeSettings {
         Self {
             enabled: false,
             port: DEFAULT_CHROME_PORT,
-            ask: true,
+            ask: false,
         }
     }
 }
@@ -164,7 +165,7 @@ mod tests {
     #[test]
     fn settings_default_off_and_are_normalized() {
         let s = ChromeSettings::default();
-        assert!(!s.enabled && s.ask);
+        assert!(!s.enabled && !s.ask);
         assert_eq!(s.port, DEFAULT_CHROME_PORT);
         let s = ChromeSettings {
             port: 80,
@@ -173,7 +174,7 @@ mod tests {
         .normalized();
         assert_eq!(s.port, DEFAULT_CHROME_PORT);
         let back: ChromeSettings = serde_json::from_value(json!({"enabled": true})).expect("json");
-        assert!(back.enabled && back.ask && back.port == DEFAULT_CHROME_PORT);
+        assert!(back.enabled && !back.ask && back.port == DEFAULT_CHROME_PORT);
     }
 
     #[test]

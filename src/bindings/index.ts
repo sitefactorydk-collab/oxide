@@ -1810,7 +1810,8 @@ allowDelete: boolean }
  */
 export type ChromeChanged = ChromeStatus
 /**
- * Settings → Chrome. Off by default: while on, Oxide listens for its extension.
+ * Settings → Chrome. Off by default: while on, Oxide listens for its extension. Once a
+ * Chrome is paired, nothing asks unless the user switches asking on.
  */
 export type ChromeSettings = { 
 /**
@@ -1822,8 +1823,8 @@ enabled: boolean;
  */
 port: number; 
 /**
- * Acting in Chrome (opening, clicking, typing, closing tabs) asks first. The extension
- * asks per site as well.
+ * Acting in Chrome (opening, clicking, typing, closing tabs) asks first. Off by default:
+ * pairing is the permission (the extension can still ask per site, from its popup).
  */
 ask: boolean }
 /**

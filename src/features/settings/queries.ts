@@ -67,7 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     idleMinutes: 15,
     agentModel: null,
   },
-  chrome: { enabled: false, port: 47820, ask: true },
+  chrome: { enabled: false, port: 47820, ask: false },
   context: {
     compaction: true,
     threshold: 75,
