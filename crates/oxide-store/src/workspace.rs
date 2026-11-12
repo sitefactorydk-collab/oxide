@@ -187,6 +187,7 @@ mod tests {
                 project_id: None,
                 attachments: vec![],
                 folders,
+                tools: None,
             })
             .await
             .expect("chat")

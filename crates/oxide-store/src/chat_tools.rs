@@ -49,6 +49,7 @@ mod tests {
                 project_id: None,
                 attachments: vec![],
                 folders: vec![],
+                tools: None,
             })
             .await
             .expect("chat");
@@ -73,5 +74,26 @@ mod tests {
             store.chat_tools(&chat.id).await.expect("tools"),
             ChatTools::default()
         );
+    }
+
+    #[tokio::test]
+    async fn switches_chosen_before_the_chat_existed_are_saved_with_it() {
+        let store = Store::open_in_memory().await.expect("store");
+        let t = ChatTools {
+            disabled_builtins: vec!["browser".into()],
+            ..ChatTools::default()
+        };
+        let (chat, _) = store
+            .start_conversation(StartConversation {
+                text: "hi".into(),
+                model: "p/m".into(),
+                project_id: None,
+                attachments: vec![],
+                folders: vec![],
+                tools: Some(t.clone()),
+            })
+            .await
+            .expect("chat");
+        assert_eq!(store.chat_tools(&chat.id).await.expect("tools"), t);
     }
 }

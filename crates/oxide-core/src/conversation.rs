@@ -38,6 +38,10 @@ pub struct StartConversation {
     /// [`crate::ChatFolder`]).
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Tool switches chosen before the chat existed (the "+" menu of a new chat), saved with
+    /// it so the first reply already follows them.
+    #[serde(default)]
+    pub tools: Option<crate::ChatTools>,
 }
 
 /// A chat matching a search, with the best matching message excerpt if the hit was in the text.

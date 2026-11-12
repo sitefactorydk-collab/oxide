@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import type { ContentBlock } from "@/bindings";
+import { describe, expect, it, vi } from "vitest";
+import { commands, type ContentBlock } from "@/bindings";
 import type { ToolCallView } from "@/features/chat/streams";
 import { callHeadline, toolKind, usageRows } from "@/features/tools/toolView";
 import { grantLabel } from "@/features/workspace/grants";
@@ -235,5 +235,28 @@ describe("the chat's browser", () => {
     await waitFor(() =>
       expect(fakeMcpState().chatTools.get("c2")?.disabledBuiltins).toContain("browser"),
     );
+  });
+});
+
+describe("a new chat", () => {
+  it("starts with the Browser switch the + menu had, so the first reply follows it", async () => {
+    const start = vi.spyOn(commands, "startConversation");
+    const { location } = renderApp("/new", { backend: ON });
+    await screen.findByRole("button", { name: /Model:/ });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add files, context and tools" }), {
+      key: "Enter",
+    });
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Browser" }));
+    fireEvent.keyDown(await screen.findByRole("menu"), { key: "Escape" });
+    const box = screen.getByRole("textbox", { name: "Message" });
+    await act(async () => {
+      fireEvent.change(box, { target: { value: "Find the opening hours" } });
+      fireEvent.keyDown(box, { key: "Enter" });
+    });
+    await waitFor(() => expect(location.pathname).toMatch(/^\/chat\//));
+    expect(start.mock.calls[0]?.[0].tools?.disabledBuiltins).toEqual(["browser"]);
+    const id = location.pathname.split("/")[2] ?? "";
+    expect(fakeMcpState().chatTools.get(id)?.disabledBuiltins).toEqual(["browser"]);
+    start.mockRestore();
   });
 });

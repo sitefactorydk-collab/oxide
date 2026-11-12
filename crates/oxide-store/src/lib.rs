@@ -153,6 +153,7 @@ mod tests {
                     project_id: None,
                     attachments: Vec::new(),
                     folders: vec![],
+                    tools: None,
                 })
                 .await
                 .expect("creates");

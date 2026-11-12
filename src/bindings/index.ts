@@ -2908,7 +2908,12 @@ attachments: Attachment[];
  * Folders to grant the chat before its first reply (full paths; see
  * [`crate::ChatFolder`]).
  */
-folders?: string[] }
+folders?: string[]; 
+/**
+ * Tool switches chosen before the chat existed (the "+" menu of a new chat), saved with
+ * it so the first reply already follows them.
+ */
+tools?: ChatTools | null }
 /**
  * Why a reply ended.
  */

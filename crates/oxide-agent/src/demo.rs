@@ -172,6 +172,7 @@ pub async fn create_demo_conversation(
                         project_id: None,
                         attachments: Vec::new(),
                         folders: vec![],
+                        tools: None,
                     })
                     .await?;
                 let c = store

@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { commands, type ChatTools } from "@/bindings";
+import type { ChatTools } from "@/bindings";
 import { mcpKeys, useChatTools, useSetChatTools } from "./queries";
 import { EMPTY_TOOLS, useMcpUi } from "./store";
 
@@ -94,16 +94,23 @@ export function useToolSwitches(conversationId: string | undefined) {
   };
 }
 
-/** Saves the draft switches to a chat that was just created, then clears the draft. */
-export function applyDraftChatTools(qc: QueryClient, conversationId: string): void {
+/** The draft switches of a chat not created yet, or `null` when everything is on. */
+export function draftChatTools(): Required<ChatTools> | null {
   const draft = useMcpUi.getState().draftTools;
-  if (
+  const empty =
     draft.disabledServers.length === 0 &&
     draft.disabledTools.length === 0 &&
-    draft.disabledBuiltins.length === 0
-  )
-    return;
+    draft.disabledBuiltins.length === 0;
+  return empty ? null : draft;
+}
+
+/**
+ * A chat was just created with the draft switches (`startConversation` saved them before its
+ * first reply): shows them as the chat's own and clears the draft.
+ */
+export function applyDraftChatTools(qc: QueryClient, conversationId: string): void {
+  const draft = draftChatTools();
+  if (draft === null) return;
   qc.setQueryData(mcpKeys.chatTools(conversationId), draft);
   useMcpUi.getState().setDraftTools(EMPTY_TOOLS);
-  void commands.setChatTools(conversationId, draft).catch(() => {});
 }

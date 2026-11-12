@@ -16,7 +16,7 @@ import {
   type StartConversation,
 } from "@/bindings";
 import { unwrap } from "@/lib/api";
-import { applyDraftChatTools } from "@/features/mcp/chatTools";
+import { applyDraftChatTools, draftChatTools } from "@/features/mcp/chatTools";
 import { useDraftFolders } from "@/features/workspace/store";
 
 /** Query keys for chat data. */
@@ -162,8 +162,13 @@ export function useStartConversation() {
     mutationFn: (v: { input: StartConversation; options: GenerateOptions }) =>
       unwrap(
         commands.startConversation(
-          // Folders picked before the chat existed are granted with it.
-          { ...v.input, folders: v.input.folders ?? useDraftFolders.getState().folders },
+          // Folders and tool switches picked before the chat existed are saved with it, so
+          // the first reply already follows them.
+          {
+            ...v.input,
+            folders: v.input.folders ?? useDraftFolders.getState().folders,
+            tools: v.input.tools ?? draftChatTools(),
+          },
           v.options,
         ),
       ),

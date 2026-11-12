@@ -40,7 +40,7 @@ import type {
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
 import { fakeBrowserCommands, resetFakeBrowser, setBrowserEmitters } from "./fakeBrowser";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
-import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
+import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
 import { fakeSandboxCommands, resetFakeSandbox, setSandboxEmitter } from "./fakeSandbox";
 import {
@@ -700,6 +700,7 @@ export const fakeCommands: typeof RealCommands = {
       updatedAt: now,
     };
     state.conversations.push(c);
+    if (input.tools) fakeMcpState().chatTools.set(c.id, input.tools);
     for (const f of input.folders ?? []) {
       const r = resolvePath(f);
       if (r.status === "ok") grantFolder(c.id, r.data);

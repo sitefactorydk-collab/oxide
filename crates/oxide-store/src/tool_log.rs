@@ -212,6 +212,7 @@ mod tests {
                 project_id: None,
                 attachments: vec![],
                 folders: vec![],
+                tools: None,
             })
             .await
             .expect("chat");

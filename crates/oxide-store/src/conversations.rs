@@ -124,6 +124,15 @@ impl Store {
         for folder in &input.folders {
             crate::workspace::insert_folder(&mut tx, &convo.id, folder).await?;
         }
+        if let Some(tools) = &input.tools {
+            let json =
+                serde_json::to_string(tools).map_err(|e| StoreError::Corrupt(e.to_string()))?;
+            sqlx::query("INSERT INTO chat_tools (conversation_id, settings) VALUES (?, ?)")
+                .bind(&convo.id)
+                .bind(json)
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         Ok((convo, message))
     }
@@ -229,6 +238,7 @@ mod tests {
             project_id: None,
             attachments: Vec::new(),
             folders: vec![],
+            tools: None,
         }
     }
 
