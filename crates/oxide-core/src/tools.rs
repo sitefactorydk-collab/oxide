@@ -71,6 +71,9 @@ pub enum ToolUsageKind {
     Tasks,
     /// Python code ran (the label is the script's first line).
     Python,
+    /// The Docker sandbox: a command, its file tools or a copy in or out (the label is the
+    /// command or the path).
+    Sandbox,
 }
 
 /// One tool call, logged per chat.

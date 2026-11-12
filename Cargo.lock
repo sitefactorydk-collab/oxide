@@ -3588,6 +3588,7 @@ dependencies = [
  "oxide-llm",
  "oxide-mcp",
  "oxide-pyenv",
+ "oxide-sandbox",
  "oxide-store",
  "reqwest",
  "serde",
@@ -3621,6 +3622,7 @@ dependencies = [
  "oxide-llm",
  "oxide-mcp",
  "oxide-pyenv",
+ "oxide-sandbox",
  "oxide-store",
  "reqwest",
  "serde",
@@ -3698,6 +3700,20 @@ version = "0.1.0"
 dependencies = [
  "oxide-core",
  "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "oxide-sandbox"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "oxide-core",
+ "oxide-mcp",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

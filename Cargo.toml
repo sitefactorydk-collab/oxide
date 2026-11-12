@@ -18,6 +18,7 @@ oxide-mcp = { path = "crates/oxide-mcp" }
 oxide-agent = { path = "crates/oxide-agent" }
 oxide-bridge = { path = "crates/oxide-bridge" }
 oxide-pyenv = { path = "crates/oxide-pyenv" }
+oxide-sandbox = { path = "crates/oxide-sandbox" }
 oxide-computer = { path = "crates/oxide-computer" }
 
 # Shared external crates

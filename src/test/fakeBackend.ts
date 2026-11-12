@@ -23,6 +23,7 @@ import type {
   Project,
   ProviderConfig,
   PythonChanged,
+  SandboxChange,
   ProviderModels,
   Result,
   SearchHit,
@@ -38,6 +39,7 @@ import type { commands as RealCommands, events as RealEvents } from "@/bindings"
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
+import { fakeSandboxCommands, resetFakeSandbox, setSandboxEmitter } from "./fakeSandbox";
 import {
   seedConversations,
   seedMessages,
@@ -117,7 +119,12 @@ interface FakeState {
 }
 
 export interface FakeSeed {
-  settings?: Partial<{ name: string; theme: AppSettings["appearance"]["theme"] }>;
+  settings?: Partial<{
+    name: string;
+    theme: AppSettings["appearance"]["theme"];
+    /** Changes to the sandbox settings (off by default). */
+    sandbox: Partial<AppSettings["sandbox"]>;
+  }>;
   empty?: boolean;
   replies?: ReplyMode;
   /** Desktop actions that arrived before the window was listening (e.g. a start-up link). */
@@ -153,6 +160,20 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
       },
       shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
       python: { enabled: true, timeoutSecs: 120 },
+      sandbox: {
+        enabled: false,
+        image: "python:3.12-bookworm",
+        filesImage: "mcp/filesystem",
+        cpus: 2,
+        memoryMb: 2048,
+        network: false,
+        storage: "volume",
+        folder: "",
+        idleMinutes: 15,
+        timeoutSecs: 600,
+        ask: true,
+        ...seed.settings?.sandbox,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -186,6 +207,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeMcp();
   resetFakeExtensions();
   resetFakePython();
+  resetFakeSandbox();
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -273,6 +295,8 @@ const taskListChanged = fakeEvent<TaskList>("task-list-changed");
 const pythonChanged = fakeEvent<PythonChanged>("python-changed");
 setMcpEmitter((e) => void mcpChanged.emit(e));
 setPythonEmitter((s) => void pythonChanged.emit(s));
+const sandboxChanged = fakeEvent<SandboxChange>("sandbox-changed");
+setSandboxEmitter((c) => void sandboxChanged.emit(c));
 
 export const fakeEvents = {
   chatStream,
@@ -282,6 +306,7 @@ export const fakeEvents = {
   desktopRequest,
   taskListChanged,
   pythonChanged,
+  sandboxChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -624,6 +649,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeMcpCommands,
   ...fakeExtensionCommands,
   ...fakePythonCommands,
+  ...fakeSandboxCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

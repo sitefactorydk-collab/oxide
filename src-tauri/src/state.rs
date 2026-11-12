@@ -8,6 +8,7 @@ use oxide_agent::{
 };
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
 use oxide_pyenv::{PythonConfig, PythonEnv, PythonSink};
+use oxide_sandbox::{SandboxSink, Sandboxes};
 use oxide_store::{KeyringSecrets, SecretStore, Store};
 
 pub struct AppState {
@@ -27,6 +28,8 @@ pub struct AppState {
     pub skills: Skills,
     /// The managed Python environment under `<data dir>/python`.
     pub python: PythonEnv,
+    /// The Docker sandbox: a workspace container per chat.
+    pub sandboxes: Sandboxes,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -67,6 +70,7 @@ impl AppState {
         service: &str,
         sink: Arc<dyn EventSink>,
         python_sink: Arc<dyn PythonSink>,
+        sandbox_sink: Arc<dyn SandboxSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -93,6 +97,15 @@ impl AppState {
         let python = PythonEnv::new(python_config, python_sink);
         // Python extensions run through the same uv.
         extensions.set_uv(python.find_uv());
+        let sandboxes = Sandboxes::new(
+            data_dir.join("sandboxes"),
+            Some(dirs.logs.clone()),
+            sandbox_sink,
+        );
+        match store.app_settings().await {
+            Ok(s) => sandboxes.configure(&s.sandbox),
+            Err(e) => tracing::warn!("settings: {e}"),
+        }
         // Models get the running MCP servers' tools plus Oxide's web tools.
         let tools = Tools::new(
             Some(Arc::new(mcp.clone()) as Arc<dyn McpTools>),
@@ -100,7 +113,8 @@ impl AppState {
             Some(attachments.clone()),
         )
         .with_skills(skills.clone())
-        .with_python(python.clone());
+        .with_python(python.clone())
+        .with_sandboxes(sandboxes.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
@@ -112,6 +126,7 @@ impl AppState {
             extensions,
             skills,
             python,
+            sandboxes,
         })
     }
 }

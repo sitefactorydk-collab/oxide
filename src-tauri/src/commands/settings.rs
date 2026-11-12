@@ -13,7 +13,7 @@ pub async fn get_settings(state: State<'_, AppState>) -> CmdResult<AppSettings> 
 }
 
 /// Replaces the settings; returns them as stored (trimmed). Desktop settings (shortcut,
-/// start at login) take effect at once.
+/// start at login) and the sandbox's take effect at once.
 #[tauri::command]
 #[specta::specta]
 pub async fn save_settings(
@@ -23,5 +23,6 @@ pub async fn save_settings(
 ) -> CmdResult<AppSettings> {
     let saved = state.store.save_app_settings(settings).await?;
     crate::desktop::apply_settings(&app, &saved.desktop);
+    state.sandboxes.configure(&saved.sandbox);
     Ok(saved)
 }

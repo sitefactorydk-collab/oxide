@@ -903,6 +903,100 @@ async openPythonFolder() : Promise<Result<null, CommandError>> {
 }
 },
 /**
+ * Whether Docker runs and the images are downloaded. `refresh` checks again now.
+ */
+async sandboxDockerStatus(refresh: boolean) : Promise<Result<DockerStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_docker_status", { refresh }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Downloads the sandbox's images when missing. Returns when done (or failed); the status
+ * shows the download meanwhile (`sandboxChanged`).
+ */
+async sandboxPrepare() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_prepare") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A chat's sandbox: whether it exists and runs, its workspace, running commands.
+ */
+async chatSandbox(conversationId: string) : Promise<Result<ChatSandbox, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_sandbox", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * One folder of a chat's workspace. `None` when the sandbox isn't running and `start` is
+ * false.
+ */
+async sandboxFiles(conversationId: string, path: string, start: boolean) : Promise<Result<SandboxListing | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_files", { conversationId, path, start }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stops a chat's sandbox now (its files stay).
+ */
+async sandboxStop(conversationId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_stop", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a chat's sandbox and every file in it.
+ */
+async sandboxReset(conversationId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_reset", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Asks for a file (or a folder) on this computer and copies it into the chat's sandbox at
+ * `dest`. The user picking it is the approval. Returns its path in the sandbox, or `None`
+ * when cancelled.
+ */
+async sandboxCopyIn(conversationId: string, dest: string, folder: boolean) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_copy_in", { conversationId, dest, folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Asks for a folder on this computer and copies `path` from the chat's sandbox into it
+ * (keeping its name; nothing is overwritten). Returns where it went, or `None` when
+ * cancelled.
+ */
+async sandboxSave(conversationId: string, path: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sandbox_save", { conversationId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1126,7 +1220,7 @@ async getSettings() : Promise<Result<AppSettings, CommandError>> {
 },
 /**
  * Replaces the settings; returns them as stored (trimmed). Desktop settings (shortcut,
- * start at login) take effect at once.
+ * start at login) and the sandbox's take effect at once.
  */
 async saveSettings(settings: AppSettings) : Promise<Result<AppSettings, CommandError>> {
     try {
@@ -1209,6 +1303,7 @@ desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
 memoryChanged: MemoryChanged,
 pythonChanged: PythonChanged,
+sandboxChanged: SandboxChanged,
 taskListChanged: TaskListChanged
 }>({
 chatStream: "chat-stream",
@@ -1217,6 +1312,7 @@ desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
 memoryChanged: "memory-changed",
 pythonChanged: "python-changed",
+sandboxChanged: "sandbox-changed",
 taskListChanged: "task-list-changed"
 })
 
@@ -1226,7 +1322,7 @@ taskListChanged: "task-list-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -1369,6 +1465,30 @@ path: string;
  */
 name: string; addedAt: number }
 export type ChatFont = "serif" | "sans" | "system"
+/**
+ * One chat's sandbox (the session panel's Sandbox tab).
+ */
+export type ChatSandbox = { conversationId: string; state: SandboxState; 
+/**
+ * The container's name.
+ */
+container: string; 
+/**
+ * The image it was made from.
+ */
+image: string | null; 
+/**
+ * Where its files live: a Docker volume's name or a folder on this computer.
+ */
+workspace: string | null; storage: SandboxStorage; network: boolean; 
+/**
+ * Commands running now.
+ */
+commands: SandboxCommand[]; 
+/**
+ * Why it couldn't start, written for users.
+ */
+error: string | null }
 /**
  * A step of a reply being written (`events.chatStream` in TypeScript).
  */
@@ -1522,6 +1642,46 @@ deepLinkScheme: string;
  * A development build: start at login and deep links point at the dev binary.
  */
 devBuild: boolean }
+/**
+ * Whether Docker can be used.
+ */
+export type DockerState = 
+/**
+ * Not checked yet.
+ */
+"unknown" | 
+/**
+ * The `docker` program isn't installed (or not where Oxide looks).
+ */
+"missing" | 
+/**
+ * Installed, but its engine doesn't answer (Docker Desktop isn't running).
+ */
+"stopped" | "ready"
+/**
+ * Docker and the sandbox's images (Settings → Sandbox).
+ */
+export type DockerStatus = { state: DockerState; 
+/**
+ * The engine's version (when it runs).
+ */
+version: string | null; 
+/**
+ * Why it can't be used, written for users.
+ */
+message: string | null; 
+/**
+ * The `docker` program Oxide found.
+ */
+program: string | null; 
+/**
+ * CPUs and memory the engine has (a sandbox's limits are capped to them).
+ */
+cpus: number | null; memoryBytes: number | null; images: SandboxImage[]; 
+/**
+ * An image is being downloaded (its name).
+ */
+pulling: string | null; installUrl: string; checkedAt: number }
 /**
  * How much effort a model puts into an answer (thinking, length, tool use). The names match
  * Anthropic's `output_config.effort`; OpenAI-compatible servers get the nearest
@@ -2362,6 +2522,107 @@ export type Rating = "good" | "bad"
  */
 export type Role = "user" | "assistant"
 /**
+ * Something about the sandbox changed (sent as `events.sandboxChanged`): Docker or the images
+ * (`conversation_id` is `None`), or one chat's sandbox.
+ */
+export type SandboxChange = { conversationId: string | null }
+/**
+ * Docker's status or a chat's sandbox changed (`events.sandboxChanged`): the frontend reads
+ * it again.
+ */
+export type SandboxChanged = SandboxChange
+/**
+ * A command running in a sandbox.
+ */
+export type SandboxCommand = { id: string; command: string; startedAt: number }
+/**
+ * A file or folder in a sandbox's workspace.
+ */
+export type SandboxFile = { name: string; 
+/**
+ * The full path inside the sandbox (`/workspace/...`).
+ */
+path: string; dir: boolean; link: boolean; size: number | null }
+/**
+ * An image the sandbox uses, and whether it is downloaded.
+ */
+export type SandboxImage = { name: string; 
+/**
+ * What it is for ("Commands", "Files").
+ */
+role: string; present: boolean; sizeBytes: number | null }
+/**
+ * The contents of one folder in a sandbox.
+ */
+export type SandboxListing = { path: string; entries: SandboxFile[]; truncated: boolean }
+/**
+ * Settings → Sandbox. Off by default: it needs Docker.
+ */
+export type SandboxSettings = { 
+/**
+ * Models get the sandbox's tools (when Docker runs).
+ */
+enabled: boolean; 
+/**
+ * The image commands run in.
+ */
+image: string; 
+/**
+ * The filesystem MCP server's image.
+ */
+filesImage: string; cpus: number; memoryMb: number; 
+/**
+ * The sandbox can reach the internet (to install packages). Off: no network at all.
+ */
+network: boolean; storage: SandboxStorage; 
+/**
+ * With `Folder` storage: the folder that holds one folder per chat. Empty: Oxide's data
+ * folder.
+ */
+folder: string; 
+/**
+ * Minutes without use before a sandbox is stopped.
+ */
+idleMinutes: number; 
+/**
+ * Time limit of one command, in seconds.
+ */
+timeoutSecs: number; 
+/**
+ * Commands and file changes inside the sandbox ask first (like connector tools).
+ * Copies in and out of the sandbox always ask.
+ */
+ask: boolean }
+/**
+ * Whether a chat's sandbox exists and runs.
+ */
+export type SandboxState = 
+/**
+ * Never used (or reset): nothing exists yet.
+ */
+"none" | 
+/**
+ * Being created (the image may be downloading).
+ */
+"starting" | 
+/**
+ * Stopped (idle); its files are kept and it starts again when used.
+ */
+"stopped" | "running"
+/**
+ * Where workspaces live.
+ */
+export type SandboxStorage = 
+/**
+ * A Docker volume per chat (inside Docker's own disk).
+ */
+"volume" | 
+/**
+ * A folder per chat on this computer (`SandboxSettings::folder`, or Oxide's data
+ * folder), mounted into the container. Only that folder is mounted.
+ */
+"folder"
+/**
  * A chat matching a search, with the best matching message excerpt if the hit was in the text.
  * 
  * `snippet` marks matched terms with U+0002 (start) and U+0003 (end).
@@ -2672,7 +2933,12 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
 /**
  * Python code ran (the label is the script's first line).
  */
-"python"
+"python" | 
+/**
+ * The Docker sandbox: a command, its file tools or a copy in or out (the label is the
+ * command or the path).
+ */
+"sandbox"
 /**
  * Token counts for one reply.
  */

@@ -1,5 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import {
+  Box,
   FileText,
   FolderPlus,
   Globe,
@@ -39,6 +40,7 @@ import { useToolSwitches } from "@/features/mcp/chatTools";
 import { PromptArgsDialog } from "@/features/mcp/PromptArgsDialog";
 import { mcpKeys, useMcpServers } from "@/features/mcp/queries";
 import { StatusDot } from "@/features/mcp/ui";
+import { DEFAULT_SETTINGS, useSettings } from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { unwrap } from "@/lib/api";
 
@@ -66,6 +68,7 @@ export function PlusMenu({
   const [promptToFill, setPromptToFill] = useState<McpPrompt | null>(null);
   const { data: servers } = useMcpServers();
   const switches = useToolSwitches(conversationId);
+  const sandboxEnabled = (useSettings().data ?? DEFAULT_SETTINGS).sandbox.enabled;
   const running = servers.filter((s) => s.status === "running");
   const lists = useQueries({
     queries: running.map((s) => ({
@@ -179,6 +182,16 @@ export function PlusMenu({
             <Shapes />
             Artifacts
           </MenuCheckboxItem>
+          {sandboxEnabled && (
+            <MenuCheckboxItem
+              checked={switches.sandboxOn}
+              onCheckedChange={(v) => switches.toggleSandbox(v === true)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <Box />
+              Sandbox
+            </MenuCheckboxItem>
+          )}
           <MenuSub>
             <MenuSubTrigger>
               <Plug />

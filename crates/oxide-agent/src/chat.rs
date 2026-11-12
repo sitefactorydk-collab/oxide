@@ -16,6 +16,7 @@ use oxide_core::RUN_PYTHON;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
+use oxide_core::sandbox::SANDBOX_SWITCH;
 use oxide_core::tools::PROVIDER_SERVER;
 use oxide_core::workspace::{FILES_SWITCH, RUN_COMMAND, TASK_LIST, command_allowed};
 use oxide_core::{
@@ -32,7 +33,7 @@ use tokio::sync::{oneshot, watch};
 use crate::AgentError;
 use crate::artifacts::run_artifact;
 use crate::context::{
-    PromptContext, build_messages, plan_request, request_messages, system_prompt,
+    PromptContext, SandboxPrompt, build_messages, plan_request, request_messages, system_prompt,
 };
 use crate::knowledge::{
     KnowledgePlan, chat_budget, plan_knowledge, project_search_entry, run_project_search,
@@ -42,6 +43,7 @@ use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
 use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
 use crate::tools::python::{python_entry, run_python};
+use crate::tools::sandbox as sandbox_tools;
 use crate::tools::shell::{Shell, command_of, run_command, shell_entry};
 use crate::tools::{
     Builtin, ToolEntry, ToolKind, ToolOutput, ToolSet, Tools, provider_result_summary, usage_label,
@@ -203,6 +205,13 @@ impl ChatService {
         {
             let id = conversation_id.to_owned();
             rt.spawn(async move { python.forget_chat(&id).await });
+        }
+        // And its sandbox, with the files in it.
+        if let Some(sb) = self.tools.sandboxes().cloned()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            let id = conversation_id.to_owned();
+            rt.spawn(async move { sb.forget(&id).await });
         }
     }
 
@@ -551,6 +560,7 @@ impl ChatService {
             .await
             .unwrap_or_default();
         let mut shell = None;
+        let mut sandbox_prompt = None;
         if caps.tools {
             let at = tool_set
                 .entries
@@ -583,6 +593,36 @@ impl ChatService {
                 && chat_tools.allows_builtin(RUN_PYTHON)
             {
                 own.push(python_entry());
+            }
+            // The Docker sandbox. `sandbox_exec` is offered even while Docker is down, so a
+            // request to use it ends in Docker's own message instead of a missing tool.
+            if settings.sandbox.enabled
+                && chat_tools.allows_builtin(SANDBOX_SWITCH)
+                && let Some(sb) = self.tools.sandboxes()
+            {
+                sb.configure(&settings.sandbox);
+                own.push(sandbox_tools::exec_entry());
+                let copies = !sandbox.is_empty();
+                if copies {
+                    own.push(sandbox_tools::copy_in_entry());
+                    own.push(sandbox_tools::copy_out_entry());
+                }
+                let files = match sb.file_tools() {
+                    Some(t) => Some(t),
+                    None => tokio::time::timeout(Duration::from_secs(20), sb.discover_file_tools())
+                        .await
+                        .ok()
+                        .and_then(Result::ok),
+                };
+                if let Some(t) = &files {
+                    own.extend(sandbox_tools::file_entries(t));
+                }
+                sandbox_prompt = Some(SandboxPrompt {
+                    image: settings.sandbox.image.clone(),
+                    network: settings.sandbox.network,
+                    files: files.is_some_and(|t| !t.is_empty()),
+                    copies,
+                });
             }
             tool_set.entries.splice(at..at, own);
         }
@@ -655,6 +695,7 @@ impl ChatService {
                 .entries
                 .iter()
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::TaskList)),
+            sandbox: sandbox_prompt,
         });
         Ok(Setup {
             provider,
@@ -905,6 +946,11 @@ impl ChatService {
                 // Runs (and fails with a message) without bothering the user.
                 Err(_) => false,
             },
+            // Inside the sandbox nothing reaches this computer: commands and file changes ask
+            // only when Settings → Sandbox says so. Copies cross into it, so they always ask.
+            ToolKind::Builtin(Builtin::SandboxExec) => setup.settings.sandbox.ask,
+            ToolKind::Builtin(Builtin::SandboxCopyIn | Builtin::SandboxCopyOut) => true,
+            ToolKind::SandboxFile { .. } => !entry.read_only && setup.settings.sandbox.ask,
             ToolKind::Builtin(_) => setup.settings.tools.ask_before_web,
             ToolKind::Mcp { .. } => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -1085,6 +1131,23 @@ impl ChatService {
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
+                } else if let ToolKind::Builtin(
+                    b @ (Builtin::SandboxExec | Builtin::SandboxCopyIn | Builtin::SandboxCopyOut),
+                ) = r.entry.kind
+                {
+                    let started = Instant::now();
+                    let mut out = self
+                        .run_sandbox_tool(cid, b, &r.input, sandbox, settings)
+                        .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let ToolKind::SandboxFile { tool } = &r.entry.kind {
+                    let started = Instant::now();
+                    let mut out = self.run_sandbox_file(cid, tool, &r.input).await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
                 } else if r.entry.kind == ToolKind::Builtin(Builtin::Artifact) {
                     let started = Instant::now();
                     let mut out = run_artifact(&self.store, cid, reply_id, &r.input).await;
@@ -1191,6 +1254,53 @@ impl ChatService {
         }
     }
 
+    /// Runs a command or a copy in the chat's Docker sandbox.
+    async fn run_sandbox_tool(
+        &self,
+        cid: &str,
+        tool: Builtin,
+        input: &Value,
+        shared: &Sandbox,
+        settings: &AppSettings,
+    ) -> ToolOutput {
+        let Some(sb) = self.tools.sandboxes() else {
+            return ToolOutput::error("The sandbox isn't available in this build.");
+        };
+        let text = |t: String, is_error: bool| ToolOutput {
+            content: vec![ContentBlock::text(t)],
+            is_error,
+            duration_ms: 0,
+        };
+        let r = match tool {
+            Builtin::SandboxExec => {
+                let limit = Duration::from_secs(u64::from(settings.sandbox.timeout_secs.max(1)));
+                sandbox_tools::exec(sb, cid, input, limit).await
+            }
+            Builtin::SandboxCopyIn => sandbox_tools::copy_in(sb, shared, cid, input)
+                .await
+                .map(|t| (t, false)),
+            Builtin::SandboxCopyOut => sandbox_tools::copy_out(sb, shared, cid, input)
+                .await
+                .map(|t| (t, false)),
+            _ => Err("This isn't a sandbox tool.".into()),
+        };
+        match r {
+            Ok((t, failed)) => text(t, failed),
+            Err(e) => ToolOutput::error(e),
+        }
+    }
+
+    /// Calls one of the sandbox file server's tools for the chat.
+    async fn run_sandbox_file(&self, cid: &str, tool: &str, input: &Value) -> ToolOutput {
+        let Some(sb) = self.tools.sandboxes() else {
+            return ToolOutput::error("The sandbox isn't available in this build.");
+        };
+        match sb.call_file_tool(cid, tool, input.clone()).await {
+            Ok(r) => self.tools.mcp_output(r).await,
+            Err(e) => ToolOutput::error(e.to_string()),
+        }
+    }
+
     fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
         self.emit(
             cid,
@@ -1242,6 +1352,11 @@ impl ChatService {
                     ToolKind::Builtin(Builtin::TaskList) => crate::tasks::parse_tasks(input)
                         .ok()
                         .and_then(|t| crate::tasks::label(&t)),
+                    ToolKind::Builtin(
+                        ref b @ (Builtin::SandboxExec
+                        | Builtin::SandboxCopyIn
+                        | Builtin::SandboxCopyOut),
+                    ) => sandbox_tools::label(b, input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,
@@ -3226,6 +3341,221 @@ pub(crate) mod tests {
         );
         let system = f.fake.requests()[0].system.clone().unwrap_or_default();
         assert!(system.contains("run_command (sh"), "{system}");
+    }
+
+    // ---- Docker sandbox ---------------------------------------------------------------------
+
+    /// Like `fixture`, with the sandbox's tools (Docker as `docker`; `None` searches PATH).
+    async fn fixture_sandbox(
+        scripts: Vec<Vec<Step>>,
+        root: &std::path::Path,
+        docker: Option<std::path::PathBuf>,
+    ) -> (Fixture, oxide_sandbox::Sandboxes) {
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let fake = FakeProvider::new(scripts);
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let sandboxes = oxide_sandbox::Sandboxes::with_docker(
+            root.join("sandboxes"),
+            None,
+            Arc::new(oxide_sandbox::NoSink),
+            docker,
+        );
+        let tools = Tools::new(None, secrets, None).with_sandboxes(sandboxes.clone());
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Build it".into(),
+                model: "lmstudio/fake-model".into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+            })
+            .await
+            .expect("chat");
+        let f = Fixture {
+            store,
+            service,
+            fake,
+            sink,
+            chat,
+            first,
+        };
+        (f, sandboxes)
+    }
+
+    #[tokio::test]
+    async fn sandbox_tools_follow_the_setting_and_explain_a_missing_docker() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (f, _sb) = fixture_sandbox(
+            vec![
+                turn(
+                    call("x1", "sandbox_exec", r#"{"command":"make test"}"#),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("Docker is needed.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            tmp.path(),
+            Some(tmp.path().join("no-docker")),
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.sandbox.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Commands ask by default (Settings → Sandbox).
+        let req = wait_approval(&f, "x1").await;
+        assert_eq!(req.tool, "sandbox_exec");
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "x1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let (r, bad) = result_of(&m, "x1");
+        assert!(bad);
+        assert!(
+            r.contains("Docker isn't installed") && r.contains("tell the user"),
+            "{r}"
+        );
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"sandbox_exec"), "{names:?}");
+        // Copies need a shared folder; file tools need Docker.
+        assert!(
+            !names.iter().any(|n| n.starts_with("sandbox_copy")),
+            "{names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("sandbox__")),
+            "{names:?}"
+        );
+        let system = reqs[0].system.clone().unwrap_or_default();
+        assert!(system.contains("This chat has a sandbox"), "{system}");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(|u| u.kind == ToolUsageKind::Sandbox
+            && u.label.as_deref() == Some("make test")
+            && u.is_error));
+    }
+
+    #[tokio::test]
+    async fn sandbox_tools_are_off_by_default() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (f, _sb) = fixture_sandbox(
+            vec![turn(vec![text("ok")], StopReason::EndTurn), title_step()],
+            tmp.path(),
+            Some(tmp.path().join("no-docker")),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert!(reqs[0].tools.iter().all(|t| !t.name.starts_with("sandbox")));
+        let system = reqs[0].system.clone().unwrap_or_default();
+        assert!(!system.contains("sandbox"), "{system}");
+    }
+
+    /// The exit check through the chat service: a project in the sandbox, its test failing,
+    /// fixed through the file server, passing, and copied out to the shared folder with
+    /// approvals. Needs Docker and `OXIDE_SANDBOX_IMAGE` / `OXIDE_SANDBOX_FILES_IMAGE`
+    /// (downloaded already).
+    #[tokio::test]
+    #[ignore = "needs Docker and the sandbox images"]
+    async fn sandbox_build_fix_and_copy_out_through_a_chat() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let shared = tmp.path().join("shared");
+        std::fs::create_dir(&shared).expect("mkdir");
+        let make = r#"{"command":"mkdir -p app && printf 'def double(x):\\n    return x + 2\\n' > app/m.py && printf 'import unittest\\nfrom m import double\\nclass T(unittest.TestCase):\\n    def test(self):\\n        self.assertEqual(double(5), 10)\\nunittest.main()\\n' > app/test_m.py && cd app && python3 test_m.py"}"#;
+        let fix = r#"{"path":"/workspace/app/m.py","content":"def double(x):\n    return x * 2  # fixed\n"}"#;
+        let (f, sb) = fixture_sandbox(
+            vec![
+                turn(call("b1", "sandbox_exec", make), StopReason::ToolUse),
+                turn(call("b2", "sandbox__write_file", fix), StopReason::ToolUse),
+                turn(
+                    call(
+                        "b3",
+                        "sandbox_exec",
+                        r#"{"command":"python3 test_m.py","cwd":"app"}"#,
+                    ),
+                    StopReason::ToolUse,
+                ),
+                turn(
+                    call("b4", "sandbox_copy_out", r#"{"from":"app"}"#),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("Done.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            tmp.path(),
+            None,
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.sandbox.enabled = true;
+        if let Ok(i) = std::env::var("OXIDE_SANDBOX_IMAGE") {
+            settings.sandbox.image = i;
+        }
+        if let Ok(i) = std::env::var("OXIDE_SANDBOX_FILES_IMAGE") {
+            settings.sandbox.files_image = i;
+        }
+        f.store
+            .save_app_settings(settings.clone())
+            .await
+            .expect("saves");
+        sb.configure(&settings.sandbox);
+        sb.prepare().await.expect("images");
+        let root = crate::tools::files::resolve_grant(&shared.to_string_lossy()).expect("grant");
+        f.store
+            .add_chat_folder(&f.chat.id, &root)
+            .await
+            .expect("adds");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        for id in ["b1", "b2", "b3", "b4"] {
+            wait_approval(&f, id).await;
+            assert!(
+                f.service
+                    .answer_approval(&f.chat.id, id, ApprovalDecision::AllowOnce)
+            );
+        }
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let (r1, bad1) = result_of(&m, "b1");
+        assert!(bad1 && r1.contains("FAILED"), "{r1}");
+        let (r2, bad2) = result_of(&m, "b2");
+        assert!(!bad2, "{r2}");
+        let (r3, bad3) = result_of(&m, "b3");
+        assert!(!bad3 && r3.contains("Exit code 0"), "{r3}");
+        let (r4, bad4) = result_of(&m, "b4");
+        assert!(!bad4, "{r4}");
+        let code = std::fs::read_to_string(shared.join("app").join("m.py")).expect("copied out");
+        assert!(code.contains("x * 2"), "{code}");
+        // The file server's tools were offered from the start (learned before the reply).
+        let names: Vec<String> = f.fake.requests()[0]
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "sandbox__write_file"),
+            "{names:?}"
+        );
+        assert!(names.iter().any(|n| n == "sandbox_copy_out"), "{names:?}");
+        sb.reset(&f.chat.id).await.expect("resets");
     }
 
     // ---- Python ---------------------------------------------------------------------------

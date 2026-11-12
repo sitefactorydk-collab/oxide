@@ -9,6 +9,7 @@ import {
   type ModelSettings,
   type ProjectSettings,
   type PythonSettings,
+  type SandboxSettings,
   type ShellSettings,
   type ThemePref,
   type ToolSettings,
@@ -38,6 +39,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   shell: { enabled: false, allowlist: [], timeoutSecs: 120 },
   python: { enabled: true, timeoutSecs: 120 },
+  sandbox: {
+    enabled: false,
+    image: "python:3.12-bookworm",
+    filesImage: "mcp/filesystem",
+    cpus: 2,
+    memoryMb: 2048,
+    network: false,
+    storage: "volume",
+    folder: "",
+    idleMinutes: 15,
+    timeoutSecs: 600,
+    ask: true,
+  },
 };
 
 export function useSettings() {
@@ -148,6 +162,12 @@ export function useSetPythonSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<PythonSettings>) =>
     update((s) => ({ ...s, python: { ...s.python, ...patch } }));
+}
+
+export function useSetSandboxSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<SandboxSettings>) =>
+    update((s) => ({ ...s, sandbox: { ...s.sandbox, ...patch } }));
 }
 
 export function useSetToolSettings() {

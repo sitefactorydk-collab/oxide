@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::python::PythonSettings;
+use crate::sandbox::SandboxSettings;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -238,6 +239,7 @@ pub struct AppSettings {
     pub desktop: DesktopSettings,
     pub shell: ShellSettings,
     pub python: PythonSettings,
+    pub sandbox: SandboxSettings,
 }
 
 impl AppSettings {
@@ -285,6 +287,7 @@ impl AppSettings {
             .python
             .timeout_secs
             .clamp(1, crate::python::MAX_PYTHON_TIMEOUT_SECS);
+        self.sandbox = self.sandbox.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());
@@ -312,6 +315,15 @@ mod tests {
         assert_eq!(s.clone().normalized().python.timeout_secs, 1);
         s.python.timeout_secs = 999_999;
         assert_eq!(s.normalized().python.timeout_secs, 3_600);
+    }
+
+    #[test]
+    fn sandbox_settings_default_off_and_are_normalized() {
+        let s: AppSettings = serde_json::from_str("{}").expect("parses");
+        assert!(!s.sandbox.enabled);
+        let mut s = AppSettings::default();
+        s.sandbox.cpus = 0;
+        assert_eq!(s.normalized().sandbox.cpus, 1);
     }
 
     #[test]

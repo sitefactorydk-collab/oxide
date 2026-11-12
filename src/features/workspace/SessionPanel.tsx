@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Box,
   Braces,
   CheckCircle2,
   Circle,
@@ -29,6 +30,8 @@ import { useMcpServers } from "@/features/mcp/queries";
 import { EFFORT_LABELS, effectiveEffort, findModel } from "@/features/models/models";
 import { useModelLabel, useModels } from "@/features/models/queries";
 import { useChatGrants, useRevokeGrant, useToolUsage } from "@/features/tools/queries";
+import { SandboxSection } from "@/features/sandbox/SandboxPanel";
+import { useShowSandbox } from "@/features/sandbox/queries";
 import { usageRows, type UsageRow } from "@/features/tools/toolView";
 import { errorMessage, unwrap } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -54,6 +57,7 @@ export function SessionPanel({
   thread: Message[];
 }) {
   const panel = useSessionPanel(id);
+  const showSandbox = useShowSandbox(id);
   return (
     <aside aria-label="Chat details" className="flex w-80 shrink-0 flex-col p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl border border-line bg-raised p-4 shadow-sm">
@@ -65,6 +69,16 @@ export function SessionPanel({
         </div>
         <Progress id={id} />
         <Folders id={id} />
+        {showSandbox && (
+          <SandboxSection
+            id={id}
+            wrap={(title, aside, body) => (
+              <Section title={title} aside={aside}>
+                {body}
+              </Section>
+            )}
+          />
+        )}
         <Section title="Used in this session">
           <UsedInSession id={id} />
         </Section>
@@ -243,6 +257,7 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
     file: FolderOpen,
     shell: SquareTerminal,
     python: Braces,
+    sandbox: Box,
   };
   const Icon = icons[kind] ?? Plug;
   return <Icon aria-hidden className="size-4" />;

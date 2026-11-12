@@ -17,6 +17,7 @@ pub mod model;
 pub mod project;
 pub mod provider;
 pub mod python;
+pub mod sandbox;
 pub mod settings;
 pub mod tools;
 pub mod workspace;
@@ -55,6 +56,10 @@ pub use provider::{ProviderConfig, ProviderInput, ProviderKind, ProviderTestResu
 pub use python::{
     PYTHON_PACKAGES, PYTHON_VERSION, PythonPackage, PythonSettings, PythonState, PythonStatus,
     PythonStep, RUN_PYTHON,
+};
+pub use sandbox::{
+    ChatSandbox, DockerState, DockerStatus, SandboxChange, SandboxCommand, SandboxFile,
+    SandboxImage, SandboxListing, SandboxSettings, SandboxState, SandboxStorage,
 };
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,

@@ -165,6 +165,44 @@ export function pythonCode(inputJson: string): string {
   return typeof code === "string" ? code : "";
 }
 
+/** Oxide's Docker sandbox tools (Phase 12b): verbs while running and after. */
+export const SANDBOX_TOOL_VERBS: Record<string, [string, string]> = {
+  sandbox_exec: ["Running in the sandbox", "Ran in the sandbox"],
+  sandbox_copy_in: ["Copying into the sandbox", "Copied into the sandbox"],
+  sandbox_copy_out: ["Copying out of the sandbox", "Copied out of the sandbox"],
+};
+
+/** The sandbox file server's tools that have their own verbs. */
+const SANDBOX_FILE_VERBS: Record<string, [string, string]> = {
+  read_text_file: ["Reading", "Read"],
+  read_media_file: ["Reading", "Read"],
+  read_multiple_files: ["Reading", "Read"],
+  write_file: ["Writing", "Wrote"],
+  edit_file: ["Editing", "Edited"],
+  create_directory: ["Creating folder", "Created folder"],
+  list_directory: ["Listing", "Listed"],
+  list_directory_with_sizes: ["Listing", "Listed"],
+  directory_tree: ["Listing", "Listed"],
+  move_file: ["Moving", "Moved"],
+  copy_file: ["Copying", "Copied"],
+  search_files: ["Searching", "Searched"],
+  get_file_info: ["Checking", "Checked"],
+};
+
+/** Whether a call is one of the sandbox's: its own tools, or its file server's. */
+export function isSandboxCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
+  return (
+    (call.server === null && call.tool in SANDBOX_TOOL_VERBS) ||
+    (call.server === "sandbox" && call.tool in SANDBOX_FILE_VERBS)
+  );
+}
+
+/** The command of a `sandbox_exec` call (empty until the arguments are complete JSON). */
+export function sandboxCommand(inputJson: string): string {
+  const c = parse(inputJson).command;
+  return typeof c === "string" ? c : "";
+}
+
 /** What a tool call was about: the query, URL or path. */
 export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJson">): string {
   const input = parse(call.inputJson);
@@ -185,6 +223,12 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   }
   if (call.server === null && call.tool === "task_list") return taskDetail(input);
   if (call.server === null && call.tool === "run_python") return codeLabel(str("code") ?? "");
+  if (call.server === null && call.tool === "sandbox_exec") return codeLabel(str("command") ?? "");
+  if (call.server === null && call.tool.startsWith("sandbox_copy")) {
+    const from = str("from") ?? "";
+    const to = str("to");
+    return to ? `${from} → ${to}` : from;
+  }
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -235,6 +279,7 @@ export type ToolKind =
   | "tasks"
   | "shell"
   | "python"
+  | "sandbox"
   | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
@@ -249,6 +294,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.server === null && call.tool === "task_list") return "tasks";
   if (call.server === null && call.tool === "run_command") return "shell";
   if (call.server === null && call.tool === "run_python") return "python";
+  if (isSandboxCall(call)) return "sandbox";
   return "connector";
 }
 
@@ -285,6 +331,15 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       return { action: busy ? "Running" : "Ran", detail };
     case "python":
       return { action: busy ? "Running Python" : "Ran Python", detail };
+    case "sandbox": {
+      const own = SANDBOX_TOOL_VERBS[call.tool];
+      if (own) return { action: busy ? own[0] : own[1], detail };
+      const [doing, did] = SANDBOX_FILE_VERBS[call.tool] ?? ["Using", "Used"];
+      return {
+        action: `${busy ? doing : did} in the sandbox`,
+        detail: detail.replace(/^\/workspace\/?/, "") || "/workspace",
+      };
+    }
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -335,7 +390,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                       ? "Commands"
                       : u.kind === "python"
                         ? "Python"
-                        : (u.server ?? "Connector");
+                        : u.kind === "sandbox"
+                          ? "Sandbox"
+                          : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

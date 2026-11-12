@@ -5,6 +5,7 @@ import { DesktopSection } from "@/features/desktop/DesktopSection";
 import { ExtensionsSection } from "@/features/extensions/ExtensionsSection";
 import { SkillsSection } from "@/features/extensions/SkillsSection";
 import { PythonSection } from "@/features/python/PythonSection";
+import { SandboxSection } from "@/features/sandbox/SandboxSection";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
@@ -120,6 +121,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <SkillsSection />;
     case "advanced":
       return <PythonSection />;
+    case "sandbox":
+      return <SandboxSection />;
     case "about":
       return <AboutSection />;
     default:

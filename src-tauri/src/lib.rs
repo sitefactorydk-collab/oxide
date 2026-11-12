@@ -30,7 +30,7 @@ const BINDINGS_HEADER: &str =
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         artifacts, attachments, chats, desktop, extensions, mcp, memory, models, projects,
-        providers, python, settings, system, tools, workspace,
+        providers, python, sandbox, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -40,6 +40,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::MemoryChanged,
             events::TaskListChanged,
             events::PythonChanged,
+            events::SandboxChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -140,6 +141,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             python::python_repair,
             python::python_reset,
             python::open_python_folder,
+            // Docker sandbox
+            sandbox::sandbox_docker_status,
+            sandbox::sandbox_prepare,
+            sandbox::chat_sandbox,
+            sandbox::sandbox_files,
+            sandbox::sandbox_stop,
+            sandbox::sandbox_reset,
+            sandbox::sandbox_copy_in,
+            sandbox::sandbox_save,
             // System
             system::open_external,
             // Desktop integration
@@ -309,6 +319,7 @@ pub fn run() -> anyhow::Result<()> {
                 &service,
                 sink,
                 Arc::new(events::TauriPythonSink::new(app.handle().clone())),
+                Arc::new(events::TauriSandboxSink::new(app.handle().clone())),
                 move |models, secrets| state::McpParts {
                     sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
                     agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),
@@ -317,6 +328,7 @@ pub fn run() -> anyhow::Result<()> {
             ))?;
             let mcp = state.mcp.clone();
             let extensions = state.extensions.clone();
+            let sandboxes = state.sandboxes.clone();
             let settings = tauri::async_runtime::block_on(state.store.app_settings())
                 .unwrap_or_else(|e| {
                     tracing::warn!("settings: {e}");
@@ -331,6 +343,8 @@ pub fn run() -> anyhow::Result<()> {
                 // Then the installed extensions' servers.
                 extensions.refresh().await;
             });
+            // Idle sandboxes stop after a while (and ones an earlier run left running).
+            tauri::async_runtime::spawn(async move { sandboxes.start_reaper() });
 
             let handle = app.handle().clone();
             desktop::apply_settings(&handle, &settings.desktop);
@@ -352,6 +366,15 @@ pub fn run() -> anyhow::Result<()> {
             if let Some(state) = handle.try_state::<state::AppState>() {
                 let mcp = state.mcp.clone();
                 tauri::async_runtime::block_on(mcp.shutdown());
+                // Sandboxes stop too; their files stay.
+                let sandboxes = state.sandboxes.clone();
+                tauri::async_runtime::block_on(async move {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        sandboxes.shutdown(),
+                    )
+                    .await;
+                });
             }
         }
         // Clicking the Dock icon brings the hidden window back.

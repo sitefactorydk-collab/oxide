@@ -5,6 +5,7 @@ import { useDesktopActions } from "@/features/desktop/useDesktopActions";
 import { McpAskDialog } from "@/features/mcp/McpAskDialog";
 import { useMcpEvents } from "@/features/mcp/useMcpEvents";
 import { usePythonEvents } from "@/features/python/queries";
+import { useSandboxEvents } from "@/features/sandbox/queries";
 import { SearchDialog } from "@/features/search/SearchDialog";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import {
@@ -33,6 +34,7 @@ export function AppLayout() {
   useChatEvents();
   useMcpEvents();
   usePythonEvents();
+  useSandboxEvents();
   useDesktopActions();
 
   const settingsOpen = isSettingsPath(location.pathname);

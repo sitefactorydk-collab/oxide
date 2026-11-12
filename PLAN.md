@@ -31,6 +31,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Desktop extensions | `.mcpb` bundles unpack into `<app data>\extensions\<name>` with Oxide's own zip reader (`oxide-mcp/src/archive.rs`). Each has a managed entry under `oxide.extensions.<name>` in `oxide_config.json` (enabled, version, non-sensitive settings); sensitive settings live in the OS keychain. The command line is built from the manifest at start-up and run by the MCP manager like any server (Phase 10) |
 | Skills | Folders with a `SKILL.md` in `<app data>\skills`; names and descriptions go into the system prompt and the built-in `load_skill` tool returns the rest (Phase 10) |
 | Python | Oxide manages its own `uv` (a Tauri sidecar per target, pinned to one release in `scripts/uv-pins.json` and fetched by `npm run fetch-uv`). On first use it installs CPython 3.12 and a venv under `<app data>\python\` with the packages in the locked `python/uv.lock` (embedded in the app). `run_python` always asks for approval: the code is not sandboxed (Phase 12) |
+| Docker sandbox | Own crate `oxide-sandbox` driving the `docker` CLI (works with Docker Desktop's context). A container per chat (`oxide-sandbox-<chat id>`), workspace volume or folder at `/workspace`, no network by default; the reference filesystem MCP server runs per chat from its image and is **not** an MCP-manager entry (manager servers are shared by all chats). Default image `python:3.12-bookworm` (Phase 12b) |
 | Browser agent | Browser-Use wrapped as a local MCP server (`oxide-browser-agent`, Python, runs in the uv venv) |
 | Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
 | Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring`. Project knowledge search uses SQLite FTS5 with BM25 ranking (Phase 7) |
@@ -69,6 +70,7 @@ Oxide/
 │  ├─ oxide-agent/          reply generation, agent loop, tool registry, approvals, built-in tools
 │  ├─ oxide-bridge/         Chrome WebSocket bridge server
 │  ├─ oxide-pyenv/          uv bootstrap, venv management, python sidecar processes
+│  ├─ oxide-sandbox/        Docker sandbox: workspace container per chat, exec, copies, file server
 │  └─ oxide-computer/       screenshots + input (xcap, enigo) for computer use
 ├─ python/
 │  └─ oxide_browser_agent/  Browser-Use MCP server (pyproject.toml, uv.lock)
@@ -335,7 +337,7 @@ Each phase lists **Goal → Tasks → Exit criteria**. Phases are ordered so the
 Requested by the user after Phase 5: give Oxide's agent an isolated workspace like the cloud workspace the build agent used, inside a Docker container on the user's machine.
 - **Detection and setup:** check that Docker (Docker Desktop on Windows/macOS, Docker Engine on Linux) is installed and running, with a readable message and an install link if not. Settings → Sandbox: on/off, image, CPU/memory limits, network on/off (off by default), and where workspaces live.
 - **Workspace container per chat or task:** a named volume (or a folder under app data) mounted at `/workspace`, created on first use, kept until the chat is deleted or the user clears it. Containers run without privileges, with resource limits, no host mounts beyond the workspace, and stop when idle.
-- **Files:** the official reference filesystem MCP server, run from its Docker image (`mcp/filesystem` at the time of writing; check the modelcontextprotocol/servers README), launched by Oxide's MCP manager as a stdio server (`docker run -i --rm --mount type=volume,src=<workspace>,dst=/workspace mcp/filesystem /workspace`). It shows in Connectors as a built-in server and its tools go through the normal approvals.
+- **Files:** the official reference filesystem MCP server, run from its Docker image (`mcp/filesystem` at the time of writing; check the modelcontextprotocol/servers README), launched as a stdio server per chat (`docker run -i --rm --mount type=volume,src=<workspace>,dst=/workspace mcp/filesystem /workspace`) through `oxide-mcp`'s client, not as an MCP-manager entry (manager servers are shared by all chats; changed in Phase 12b, see PROGRESS.md). It shows in Connectors as a built-in server and its tools go through the sandbox's approvals.
 - **Running code:** a built-in `sandbox_exec` tool runs commands inside the workspace container (`docker exec`), with a timeout, output capture and a size cap, so the model can install packages, build and run tests there. Default image: a small Linux image with common toolchains (configurable).
 - **Moving files in and out:** "Copy into sandbox" from a granted folder (Phase 11), and "Save to folder" / download for results, both with approval. Nothing in the sandbox can reach the host otherwise.
 - **UI:** the session side panel's "Used in this session" lists the sandbox, and a Sandbox tab shows its files, running commands and a Reset button.

@@ -3,7 +3,7 @@
 use oxide_agent::EventSink;
 use oxide_core::{
     ChatStreamEvent, Conversation, ConversationChanged, DesktopAction, McpEvent, PythonStatus,
-    TaskList,
+    SandboxChange, TaskList,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -40,6 +40,11 @@ pub struct TaskListChanged(pub TaskList);
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct PythonChanged(pub PythonStatus);
 
+/// Docker's status or a chat's sandbox changed (`events.sandboxChanged`): the frontend reads
+/// it again.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct SandboxChanged(pub SandboxChange);
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
@@ -60,6 +65,28 @@ impl oxide_pyenv::PythonSink for TauriPythonSink {
     fn changed(&self, status: &PythonStatus) {
         if let Err(e) = PythonChanged(status.clone()).emit(&self.app) {
             tracing::warn!("couldn't send a Python update: {e}");
+        }
+    }
+}
+
+/// Forwards the sandbox's changes to every window.
+pub struct TauriSandboxSink {
+    app: AppHandle,
+}
+
+impl TauriSandboxSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_sandbox::SandboxSink for TauriSandboxSink {
+    fn changed(&self, conversation_id: Option<&str>) {
+        let change = SandboxChange {
+            conversation_id: conversation_id.map(str::to_owned),
+        };
+        if let Err(e) = SandboxChanged(change).emit(&self.app) {
+            tracing::warn!("couldn't send a sandbox update: {e}");
         }
     }
 }

@@ -22,6 +22,7 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase6.cmd` | Phase 6: checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
 | `phase10.cmd` | Phase 10: checks, vite build, commit when green, then starts the app | `check*`, `phase10-build*`, `commit*`, `dev.log` |
 | `phase12.cmd` | Phase 12: fetches the pinned uv, writes `python\uv.lock`, regenerates the bindings, checks, vite build, the real-uv exit check (downloads Python and the packages), commit when green, then starts the app | `phase12*`, `check*`, `commit*`, `dev.log` |
+| `phase12b.cmd` | Phase 12b: regenerates the bindings, checks, vite build, the real-Docker exit check (needs Docker Desktop running; downloads `python:3.12-bookworm` and `mcp/filesystem` the first time), commit when green, then starts the app | `phase12b*`, `check*`, `commit*`, `dev.log` |
 | `phase12-fix.cmd` | Phase 12 fix (Python status after setup): checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 

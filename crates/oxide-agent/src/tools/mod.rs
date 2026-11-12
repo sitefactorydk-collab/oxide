@@ -8,6 +8,7 @@
 pub mod files;
 pub mod html;
 pub mod python;
+pub mod sandbox;
 pub mod shell;
 pub mod web;
 
@@ -92,6 +93,12 @@ pub enum Builtin {
     RunCommand,
     /// Python code in the managed environment (run by the chat service).
     RunPython,
+    /// A command in the chat's Docker sandbox (run by the chat service).
+    SandboxExec,
+    /// A copy from a shared folder into the sandbox (run by the chat service).
+    SandboxCopyIn,
+    /// A copy from the sandbox into a shared folder (run by the chat service).
+    SandboxCopyOut,
 }
 
 impl Builtin {
@@ -106,6 +113,9 @@ impl Builtin {
             Builtin::TaskList => oxide_core::workspace::TASK_LIST,
             Builtin::RunCommand => oxide_core::workspace::RUN_COMMAND,
             Builtin::RunPython => oxide_core::RUN_PYTHON,
+            Builtin::SandboxExec => oxide_core::sandbox::SANDBOX_EXEC,
+            Builtin::SandboxCopyIn => oxide_core::sandbox::SANDBOX_COPY_IN,
+            Builtin::SandboxCopyOut => oxide_core::sandbox::SANDBOX_COPY_OUT,
         }
     }
 }
@@ -113,7 +123,15 @@ impl Builtin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolKind {
     Builtin(Builtin),
-    Mcp { server: String, tool: String },
+    Mcp {
+        server: String,
+        tool: String,
+    },
+    /// A tool of the chat's sandbox file server (run by the chat service). Its own kind, so a
+    /// connector that happens to be called "sandbox" is never mistaken for it.
+    SandboxFile {
+        tool: String,
+    },
 }
 
 /// One tool as offered to the model.
@@ -135,6 +153,7 @@ impl ToolEntry {
         match &self.kind {
             ToolKind::Builtin(_) => None,
             ToolKind::Mcp { server, .. } => Some(server),
+            ToolKind::SandboxFile { .. } => Some(oxide_core::sandbox::SANDBOX_SERVER),
         }
     }
 
@@ -142,13 +161,16 @@ impl ToolEntry {
     pub fn tool(&self) -> &str {
         match &self.kind {
             ToolKind::Builtin(b) => b.name(),
-            ToolKind::Mcp { tool, .. } => tool,
+            ToolKind::Mcp { tool, .. } | ToolKind::SandboxFile { tool } => tool,
         }
     }
 
     /// Key of "Allow always for this chat": `server/tool` or `builtin/<name>`.
     pub fn grant_key(&self) -> String {
-        format!("{}/{}", self.server().unwrap_or("builtin"), self.tool())
+        match &self.kind {
+            ToolKind::SandboxFile { tool } => format!("builtin/sandbox__{tool}"),
+            _ => format!("{}/{}", self.server().unwrap_or("builtin"), self.tool()),
+        }
     }
 
     pub fn usage_kind(&self) -> ToolUsageKind {
@@ -162,6 +184,10 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
             ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
             ToolKind::Builtin(Builtin::RunPython) => ToolUsageKind::Python,
+            ToolKind::Builtin(
+                Builtin::SandboxExec | Builtin::SandboxCopyIn | Builtin::SandboxCopyOut,
+            )
+            | ToolKind::SandboxFile { .. } => ToolUsageKind::Sandbox,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -223,7 +249,7 @@ impl ToolSet {
     pub fn servers(&self) -> Vec<String> {
         let mut seen = Vec::new();
         for e in &self.entries {
-            if let Some(s) = e.server()
+            if let ToolKind::Mcp { server: s, .. } = &e.kind
                 && !seen.iter().any(|x: &String| x == s)
             {
                 seen.push(s.to_owned());
@@ -259,6 +285,7 @@ pub struct Tools {
     attachments: Option<AttachmentStore>,
     skills: Option<Skills>,
     python: Option<oxide_pyenv::PythonEnv>,
+    sandboxes: Option<oxide_sandbox::Sandboxes>,
 }
 
 impl Tools {
@@ -273,6 +300,7 @@ impl Tools {
             attachments,
             skills: None,
             python: None,
+            sandboxes: None,
         }
     }
 
@@ -284,6 +312,16 @@ impl Tools {
 
     pub fn python(&self) -> Option<&oxide_pyenv::PythonEnv> {
         self.python.as_ref()
+    }
+
+    /// Gives models the Docker sandbox's tools (when it is on in settings).
+    pub fn with_sandboxes(mut self, sandboxes: oxide_sandbox::Sandboxes) -> Self {
+        self.sandboxes = Some(sandboxes);
+        self
+    }
+
+    pub fn sandboxes(&self) -> Option<&oxide_sandbox::Sandboxes> {
+        self.sandboxes.as_ref()
     }
 
     /// Gives models the skills in this folder (`load_skill`).
@@ -404,8 +442,17 @@ impl Tools {
             }
             ToolKind::Builtin(Builtin::LoadSkill) => self.load_skill(input).await,
             ToolKind::Builtin(
-                Builtin::File(_) | Builtin::TaskList | Builtin::RunCommand | Builtin::RunPython,
-            ) => ToolOutput::error("This tool runs in the chat, not here."),
+                Builtin::File(_)
+                | Builtin::TaskList
+                | Builtin::RunCommand
+                | Builtin::RunPython
+                | Builtin::SandboxExec
+                | Builtin::SandboxCopyIn
+                | Builtin::SandboxCopyOut,
+            )
+            | ToolKind::SandboxFile { .. } => {
+                ToolOutput::error("This tool runs in the chat, not here.")
+            }
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp
@@ -425,6 +472,16 @@ impl Tools {
         out.duration_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         cap_text(&mut out.content);
         out
+    }
+
+    /// An MCP tool result as a tool output (images stored, errors flagged).
+    pub async fn mcp_output(&self, r: McpToolResult) -> ToolOutput {
+        ToolOutput {
+            content: self.mcp_blocks(r).await,
+            is_error: false,
+            duration_ms: 0,
+        }
+        .with_error_flag()
     }
 
     async fn load_skill(&self, input: &Value) -> ToolOutput {
@@ -642,6 +699,9 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::TaskList => return crate::tasks::task_list_entry(),
         Builtin::RunCommand => return shell::shell_entry(&shell::Shell::detect()),
         Builtin::RunPython => return python::python_entry(),
+        Builtin::SandboxExec => return sandbox::exec_entry(),
+        Builtin::SandboxCopyIn => return sandbox::copy_in_entry(),
+        Builtin::SandboxCopyOut => return sandbox::copy_out_entry(),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \

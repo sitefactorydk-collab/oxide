@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import type { McpServerConfig, McpServerState, McpTransport } from "@/bindings";
+import { useDockerStatus } from "@/features/sandbox/queries";
+import { DEFAULT_SETTINGS, useSettings } from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -81,6 +83,8 @@ export function ConnectorsSection() {
       ) : (
         servers.map((s) => <ServerCard key={s.name} server={s} />)
       )}
+
+      <BuiltInSandboxServer />
 
       <p className="mt-2 text-sm text-fg-subtle">
         Servers are stored in <span className="font-mono">oxide_config.json</span>, which uses the
@@ -466,5 +470,45 @@ function ServerFormFields({
           ))}
       </div>
     </form>
+  );
+}
+
+/**
+ * The sandbox's file server (Phase 12b): Oxide's own, run per chat from its Docker image, so
+ * it isn't an entry of the config file. Shown here so people can see where those tools come
+ * from.
+ */
+function BuiltInSandboxServer() {
+  const { data } = useSettings();
+  const sandbox = (data ?? DEFAULT_SETTINGS).sandbox;
+  const { data: docker } = useDockerStatus(sandbox.enabled);
+  const openSettings = useOpenSettings();
+  if (!sandbox.enabled) return null;
+  const image = docker?.images.find((i) => i.role === "Files");
+  const status =
+    docker?.state !== "ready"
+      ? "Docker isn't running"
+      : image && !image.present
+        ? "Image not downloaded yet"
+        : "Starts with each chat's sandbox";
+  return (
+    <section
+      aria-label="sandbox (built in)"
+      className="flex items-start gap-3 rounded-xl border border-line bg-raised p-4"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-md font-medium text-fg">sandbox</span>
+          <span className="rounded bg-sunken px-1.5 text-xs text-fg-subtle">Built in</span>
+        </div>
+        <p className="mt-1 text-sm text-fg-subtle">
+          The reference filesystem server (<span className="font-mono">{sandbox.filesImage}</span>
+          ), run in Docker for each chat with only that chat&apos;s sandbox workspace. Its tools
+          reach models as <span className="font-mono">sandbox__…</span> and go through the
+          sandbox&apos;s approvals. {status}.
+        </p>
+      </div>
+      <Button onClick={() => openSettings("sandbox")}>Sandbox settings</Button>
+    </section>
   );
 }

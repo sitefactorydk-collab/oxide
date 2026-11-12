@@ -57,8 +57,20 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "artifact"])],
     });
 
+  /** The Docker sandbox ("Sandbox" in the "+" menu, when it's on in Settings). */
+  const sandboxOn = !tools.disabledBuiltins.includes("sandbox");
+  const toggleSandbox = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "sandbox")
+        : [...new Set([...tools.disabledBuiltins, "sandbox"])],
+    });
+
   return {
     tools,
+    sandboxOn,
+    toggleSandbox,
     webOn,
     toggleWeb,
     artifactsOn,

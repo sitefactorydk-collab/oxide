@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Box,
   Braces,
   ChevronRight,
   FileText,
@@ -27,7 +28,7 @@ import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAnswerApproval } from "./queries";
-import { callHeadline, prettyJson, pythonCode, toolKind } from "./toolView";
+import { callHeadline, prettyJson, pythonCode, sandboxCommand, toolKind } from "./toolView";
 
 function KindIcon({ call }: { call: ToolCallView }) {
   const kind = toolKind(call);
@@ -50,7 +51,9 @@ function KindIcon({ call }: { call: ToolCallView }) {
                     ? SquareTerminal
                     : kind === "python"
                       ? Braces
-                      : Plug;
+                      : kind === "sandbox"
+                        ? Box
+                        : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -222,7 +225,21 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           )}
         </div>
       </div>
-      {request.server === null && request.tool === "run_python" ? (
+      {request.server === null && request.tool.startsWith("sandbox_copy") && (
+        <p className="text-sm text-fg-muted">
+          {request.tool === "sandbox_copy_in"
+            ? "This copies from a folder you shared into the chat's sandbox."
+            : "This copies from the chat's sandbox into a folder you shared. Nothing there is overwritten."}
+        </p>
+      )}
+      {request.server === null && request.tool === "sandbox_exec" ? (
+        <pre
+          aria-label="Command"
+          className="max-h-72 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg"
+        >
+          {sandboxCommand(request.inputJson) || prettyJson(request.inputJson)}
+        </pre>
+      ) : request.server === null && request.tool === "run_python" ? (
         <pre
           aria-label="Code"
           className="max-h-72 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg"

@@ -215,6 +215,21 @@ pub struct PromptContext<'a> {
     pub task_list: bool,
     /// The `run_python` tool is on.
     pub python: bool,
+    /// The Docker sandbox's tools are on.
+    pub sandbox: Option<SandboxPrompt>,
+}
+
+/// What models are told about the chat's Docker sandbox.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SandboxPrompt {
+    /// The image commands run in.
+    pub image: String,
+    /// The sandbox can reach the internet.
+    pub network: bool,
+    /// The file server's tools (`sandbox__…`) are offered.
+    pub files: bool,
+    /// `sandbox_copy_in` / `sandbox_copy_out` are offered (the chat has shared folders).
+    pub copies: bool,
 }
 
 fn os_name(os: &str) -> &str {
@@ -341,6 +356,40 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              and sees your code, so keep scripts short and readable, and don't touch files you \
              weren't asked to.",
         );
+    }
+    if let Some(sb) = &ctx.sandbox {
+        s.push_str(&format!(
+            "\n\nThis chat has a sandbox: an isolated Linux container ({image}) with a workspace \
+             at /workspace that keeps its files for the whole chat. Use it whenever you write \
+             code that should be built, run or tested: create the files there{files}, run \
+             commands with sandbox_exec, read the output, fix what fails and run again until it \
+             works. {network} The sandbox can't see the user's computer.",
+            image = sb.image,
+            files = if sb.files {
+                " (with the sandbox__ file tools, e.g. sandbox__write_file and sandbox__edit_file)"
+            } else {
+                " (with sandbox_exec, e.g. cat > file <<'EOF')"
+            },
+            network = if sb.network {
+                "It has internet access, so you can install packages (pip, apt-get, npm)."
+            } else {
+                "It has no network: use what the image has (no pip or apt-get downloads), and \
+                 don't try to reach the internet from it."
+            },
+        ));
+        if sb.copies {
+            s.push_str(
+                " To give the user a result, copy it into one of their shared folders with \
+                 sandbox_copy_out; bring their files in with sandbox_copy_in. Each copy asks \
+                 the user first.",
+            );
+        } else {
+            s.push_str(
+                " No folder is shared with this chat, so results stay in the sandbox; the user \
+                 can save them from the chat's Sandbox panel, or share a folder for \
+                 sandbox_copy_out.",
+            );
+        }
     }
     if ctx.task_list {
         s.push_str(
@@ -530,6 +579,35 @@ mod tests {
             usage: None,
             feedback: None,
         }
+    }
+
+    #[test]
+    fn sandbox_paragraph_follows_what_is_on() {
+        let base = PromptContext {
+            sandbox: Some(SandboxPrompt {
+                image: "python:3.12-bookworm".into(),
+                network: false,
+                files: true,
+                copies: true,
+            }),
+            ..Default::default()
+        };
+        let p = system_prompt(&base);
+        assert!(p.contains("python:3.12-bookworm"), "{p}");
+        assert!(p.contains("no network"), "{p}");
+        assert!(p.contains("sandbox__write_file"), "{p}");
+        assert!(p.contains("sandbox_copy_out"), "{p}");
+        let p = system_prompt(&PromptContext {
+            sandbox: Some(SandboxPrompt {
+                network: true,
+                copies: false,
+                ..SandboxPrompt::default()
+            }),
+            ..Default::default()
+        });
+        assert!(p.contains("install packages"), "{p}");
+        assert!(p.contains("No folder is shared"), "{p}");
+        assert!(!system_prompt(&PromptContext::default()).contains("sandbox"));
     }
 
     #[test]

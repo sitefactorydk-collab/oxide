@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Box,
   Brain,
   Database,
   Globe,
@@ -87,6 +88,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     label: "Permissions",
     icon: ShieldCheck,
     blurb: "When Oxide asks before a tool runs, and how many tool steps a reply may take.",
+  },
+  {
+    id: "sandbox",
+    label: "Sandbox",
+    icon: Box,
+    blurb:
+      "An isolated Docker container per chat, where models can build, run and test code without touching your computer.",
   },
   {
     id: "memory",
