@@ -176,6 +176,7 @@ export const SANDBOX_TOOL_VERBS: Record<string, [string, string]> = {
 export const BROWSER_TOOL_VERBS: Record<string, [string, string]> = {
   browser_task: ["Browsing", "Browsed"],
   navigate: ["Opening", "Opened"],
+  search: ["Searching Google for", "Searched Google for"],
   read_page: ["Reading the page", "Read the page"],
   click: ["Clicking", "Clicked"],
   type: ["Typing", "Typed"],
@@ -254,6 +255,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   if (isBrowserCall(call)) {
     if (call.tool === "browser_task") return str("goal") ?? "";
     if (call.tool === "navigate") return str("url") ?? "";
+    if (call.tool === "search") return str("query") ?? "";
     if (call.tool === "click") {
       const ref = input.ref;
       return typeof ref === "number" ? `[${ref}]` : (str("text") ?? "");

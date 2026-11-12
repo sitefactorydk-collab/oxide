@@ -243,7 +243,7 @@ function Source({
           checked={settings.source === "cdp"}
           onSelect={() => onChange({ source: "cdp" })}
           label="My own Chrome (connect over remote debugging)"
-          hint="Uses a Chrome you started with remote debugging, with its sign-ins. Oxide works in a tab of its own and never closes yours."
+          hint="Recommended for searching: search engines often answer a hidden browser with checks for robots, and Oxide never tries to get around them. In your own visible Chrome you can complete a check yourself. Oxide works in a tab of its own (searches use a tab you keep on Google, if there is one) and never closes your tabs."
         />
       </div>
       {settings.source === "cdp" && (
@@ -256,7 +256,8 @@ function Source({
           />
           <p className="text-sm text-fg-subtle">
             Start Chrome like this (Chrome needs a profile folder other than your default one for
-            remote debugging):
+            remote debugging). The first time, search something on Google yourself in that Chrome
+            and answer its cookie page:
           </p>
           <pre className="overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs text-fg">
             chrome.exe --remote-debugging-port=9222 --user-data-dir=%LOCALAPPDATA%\OxideChrome

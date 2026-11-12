@@ -15,15 +15,18 @@ pub const BROWSER_SWITCH: &str = "browser";
 /// Hands a whole goal to Browser-Use.
 pub const BROWSER_TASK: &str = "browser_task";
 pub const BROWSER_NAVIGATE: &str = "navigate";
+/// Searches Google in the browser (so models find real addresses instead of guessing).
+pub const BROWSER_SEARCH: &str = "search";
 pub const BROWSER_READ_PAGE: &str = "read_page";
 pub const BROWSER_CLICK: &str = "click";
 pub const BROWSER_TYPE: &str = "type";
 pub const BROWSER_SCREENSHOT: &str = "screenshot";
 pub const BROWSER_CLOSE: &str = "close";
 /// The server's tools, in the order models get them.
-pub const BROWSER_TOOLS: [&str; 7] = [
+pub const BROWSER_TOOLS: [&str; 8] = [
     BROWSER_TASK,
     BROWSER_NAVIGATE,
+    BROWSER_SEARCH,
     BROWSER_READ_PAGE,
     BROWSER_CLICK,
     BROWSER_TYPE,
@@ -31,9 +34,13 @@ pub const BROWSER_TOOLS: [&str; 7] = [
     BROWSER_CLOSE,
 ];
 
-/// Whether a browser tool only looks (reads the page, takes a screenshot).
+/// Whether a browser tool only looks (reads the page, takes a screenshot, searches Google):
+/// it doesn't act on websites, so it never asks.
 pub fn browser_tool_reads_only(tool: &str) -> bool {
-    matches!(tool, BROWSER_READ_PAGE | BROWSER_SCREENSHOT)
+    matches!(
+        tool,
+        BROWSER_READ_PAGE | BROWSER_SCREENSHOT | BROWSER_SEARCH
+    )
 }
 
 /// Where Chrome listens when the user starts it with `--remote-debugging-port=9222`.
@@ -246,5 +253,6 @@ mod tests {
     #[test]
     fn read_only_tools() {
         assert!(browser_tool_reads_only("read_page") && !browser_tool_reads_only("click"));
+        assert!(browser_tool_reads_only("search") && !browser_tool_reads_only("navigate"));
     }
 }

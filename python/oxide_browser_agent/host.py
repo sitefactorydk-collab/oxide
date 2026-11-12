@@ -9,11 +9,13 @@ never closes the user's tabs or the browser.
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import socket
 import sys
 import tempfile
 from typing import Any
+from urllib.parse import quote_plus, unquote, urlsplit
 
 from .config import Config
 from .pagetext import PAGE_TEXT_JS, REF_ATTR
@@ -38,6 +40,89 @@ def free_port() -> int:
         return int(s.getsockname()[1])
     finally:
         s.close()
+
+
+# Searches go to Google (or the engine in OXIDE_BROWSER_SEARCH_URL). When it answers with a
+# check for robots, the search is reported as refused: Oxide never tries to get around such a
+# check, and the user can complete it in a visible browser.
+GOOGLE_SEARCH = "https://www.google.com/search?hl=en&q={q}"
+# Signs of a check for robots instead of results.
+BLOCKED_MARKERS = (
+    "unusual traffic",
+    "not a robot",
+    "are you a robot",
+    "verify you are human",
+    "confirm you're not a robot",
+    "captcha",
+)
+# Answers that mean the page isn't there: the browser searches instead.
+GONE_STATUSES = (404, 410)
+# Navigation errors that mean the address doesn't exist.
+UNKNOWN_HOST = (
+    "ERR_NAME_NOT_RESOLVED",
+    "ERR_NAME_RESOLUTION_FAILED",
+    "ERR_ADDRESS_INVALID",
+    "NS_ERROR_UNKNOWN_HOST",
+)
+# Google's cookie page in the EU: its "Reject all" button (in a few languages), else accept.
+CONSENT_REJECT = re.compile(
+    r"reject all|afvis alle|alle ablehnen|tout refuser|rechazar todo|rifiuta tutto|"
+    r"alles afwijzen|avvisa alla|avvis alle",
+    re.I,
+)
+CONSENT_ACCEPT = re.compile(r"accept all|acceptér alle|accepter alle|alle akzeptieren", re.I)
+
+
+def is_search_words(text: str) -> bool:
+    """Whether what the model passed as a URL is really search words ("opening hours
+    natmus")."""
+    t = (text or "").strip()
+    if not t or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", t):
+        return False
+    if re.search(r"\s", t):
+        return True
+    host = t.split("/")[0]
+    return "." not in host and not host.lower().startswith(("localhost", "[::1]"))
+
+
+def search_url(words: str, template: str = "") -> str:
+    return (template or GOOGLE_SEARCH).replace("{q}", quote_plus(words.strip()))
+
+
+def query_from_url(url: str) -> str:
+    """Search words for an address that didn't work: its site and the words in its path."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    words = [host] if host else []
+    for seg in unquote(parts.path).split("/"):
+        seg = re.sub(r"\.(html?|php|aspx?|jsp)$", "", seg, flags=re.I)
+        for w in re.split(r"[-_.+\s]+", seg):
+            if w and not w.isdigit() and len(w) < 40:
+                words.append(w)
+    return " ".join(words[:12]) or url
+
+
+def is_blocked(url: str, text: str) -> bool:
+    """Whether a search engine showed a check for robots (or its cookie page) instead of
+    results."""
+    low = text.lower()
+    return "/sorry/" in url or "consent.google." in url or any(m in low for m in BLOCKED_MARKERS)
+
+
+def host_of(url: str) -> str:
+    try:
+        return (urlsplit(url).netloc or "").lower()
+    except ValueError:
+        return ""
+
+
+def is_unknown_host(message: str) -> bool:
+    return any(k in message for k in UNKNOWN_HOST)
 
 
 def normalize_url(url: str) -> str:
@@ -241,19 +326,135 @@ class BrowserHost:
             except Exception:  # noqa: BLE001
                 raise BrowserFailure(f"The page couldn't be read: {first_line(e)}") from e
 
+    async def _goto(self, page: Any, target: str) -> int | None:
+        for attempt in range(3):
+            try:
+                resp = await page.goto(
+                    target, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+                )
+                break
+            except Exception as e:  # noqa: BLE001
+                # Right after a failed load Chrome is still showing its error page.
+                if "interrupted by another navigation" not in str(e) or attempt == 2:
+                    raise
+                await asyncio.sleep(0.5)
+        await self._settle(page)
+        return resp.status if resp is not None else None
+
     async def navigate(self, url: str) -> dict[str, Any]:
+        """Opens an address. Search words are searched; an address that doesn't exist (unknown
+        site, 404 or 410) is searched for instead, so the model gets real links rather than
+        guessing another address. Other errors (403, 500, …) come with a note."""
+        if is_search_words(url):
+            info = await self.search(url.strip())
+            info["note"] = f'Searched for "{url.strip()}". Open a result by its number with click.'
+            return info
         target = normalize_url(url)
         page = await self.page()
-        status = None
         try:
-            resp = await page.goto(target, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-            status = resp.status if resp is not None else None
+            status = await self._goto(page, target)
         except Exception as e:  # noqa: BLE001
-            raise BrowserFailure(f"Couldn't open {target}: {first_line(e)}") from e
-        await self._settle(page)
+            msg = first_line(e)
+            # An error answer without a page (Chrome shows nothing): searched for, like a 404.
+            failed = "ERR_HTTP_RESPONSE_CODE_FAILURE" in msg
+            if not is_unknown_host(msg) and not failed:
+                raise BrowserFailure(f"Couldn't open {target}: {msg}") from e
+            words = query_from_url(target)
+            info = await self._search_instead(target, words)
+            why = "answered with an error" if failed else "doesn't exist (the site's name isn't known)"
+            info["note"] = (
+                f"{target} {why}. Searched for "
+                f'"{words}" instead: open a real result below by its number with click, rather '
+                "than guessing another address."
+            )
+            return info
+        if status in GONE_STATUSES:
+            words = query_from_url(target)
+            info = await self._search_instead(target, words)
+            info["note"] = (
+                f"{target} answered {status} (not found). Searched for \"{words}\" instead: open "
+                "a real result below by its number with click, rather than guessing another "
+                "address."
+            )
+            return info
         info = await self.page_text()
         info["status"] = status
+        if status is not None and status >= 400:
+            why = " (access denied)" if status in (401, 403) else ""
+            info["note"] = (
+                f"{target} answered {status}{why}. If this isn't the page you need, search for "
+                f"the right one: call navigate with search words as the url (they are "
+                f"searched on Google, e.g. {search_url(query_from_url(target), self.cfg.search_url)}) "
+                "and open a real result, rather than guessing another address."
+            )
         return info
+
+    async def _search_instead(self, target: str, words: str) -> dict[str, Any]:
+        try:
+            return await self.search(words)
+        except BrowserFailure as e:
+            raise BrowserFailure(f"{target} doesn't work, and searching for it failed: {e}") from e
+
+    def _engine(self) -> str:
+        return self.cfg.search_url or GOOGLE_SEARCH
+
+    async def _search_page(self) -> Any:
+        """The tab searches run in. With the user's Chrome, a tab they keep on the search
+        engine (e.g. google.com) is used when there is one; otherwise the current page."""
+        page = await self.page()
+        if self.cfg.mode != "cdp":
+            return page
+        engine = host_of(search_url("x", self._engine()))
+        for p in self._context.pages:
+            if p.is_closed() or p in self._own_pages:
+                continue
+            if host_of(p.url) == engine:
+                self._page = p
+                return p
+        return page
+
+    def _blocked_message(self) -> str:
+        if self.cfg.mode == "cdp" or not self.cfg.headless:
+            return (
+                "The search was refused: the search engine is showing a check for robots in "
+                "the browser window. Don't try to solve or get around it. Ask the user to "
+                "complete it in their browser window, then search again."
+            )
+        return (
+            "The search was refused: the search engine showed Oxide's hidden browser a check "
+            "for robots. Don't try to get around it. Use web_search if you have it; otherwise "
+            "tell the user, who can switch Settings → Browser to “My own Chrome” (their own, "
+            "visible Chrome) for searching."
+        )
+
+    async def search(self, words: str) -> dict[str, Any]:
+        """Searches the web in the browser (Google, its cookie page answered) and returns the
+        results page. A check for robots is reported as a refused search."""
+        page = await self._search_page()
+        try:
+            await self._goto(page, search_url(words, self._engine()))
+        except Exception as e:  # noqa: BLE001
+            raise BrowserFailure(f"The search didn't work: {first_line(e)}") from e
+        if "consent.google." in page.url:
+            await self._answer_consent(page)
+        info = await self.page_text()
+        if is_blocked(page.url, info.get("text") or ""):
+            _log(f"the search engine showed a check for robots ({host_of(page.url)})")
+            raise BrowserFailure(self._blocked_message())
+        info["status"] = None
+        return info
+
+    async def _answer_consent(self, page: Any) -> None:
+        for pattern in (CONSENT_REJECT, CONSENT_ACCEPT):
+            try:
+                button = page.get_by_role("button", name=pattern)
+                if await button.count() > 0:
+                    await button.first.click(timeout=ACTION_TIMEOUT_MS)
+                    await asyncio.sleep(0.5)
+                    await self._settle(page)
+                    return
+            except Exception:  # noqa: BLE001 - the fallback search follows
+                pass
 
     def _locator(self, page: Any, ref: int | None, text: str | None) -> Any:
         if ref is not None:

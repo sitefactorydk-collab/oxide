@@ -246,7 +246,7 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           {request.tool === "browser_task"
             ? "An autonomous agent browses on its own until the goal is done, opening pages, clicking and typing as you would."
             : request.tool === "navigate"
-              ? "The chat's browser opens this page."
+              ? "The chat's browser opens this page (or searches Google for these words)."
               : request.tool === "close"
                 ? "The chat's browser closes."
                 : "The chat's browser acts on the website as you would."}

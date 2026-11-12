@@ -25,7 +25,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from oxide_browser_agent import agent as agent_mod  # noqa: E402
 from oxide_browser_agent.config import Config  # noqa: E402
-from oxide_browser_agent.host import BrowserFailure, BrowserHost, normalize_url  # noqa: E402
+from oxide_browser_agent.host import (  # noqa: E402
+    BrowserFailure,
+    BrowserHost,
+    free_port,
+    is_blocked,
+    is_search_words,
+    is_unknown_host,
+    normalize_url,
+    query_from_url,
+    search_url,
+)
 from oxide_browser_agent.pagetext import slice_text  # noqa: E402
 
 PAGES = {
@@ -47,12 +57,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/search":
             q = parse_qs(u.query).get("q", [""])[0]
-            body = f"<!doctype html><title>Results</title><p>You searched for {q}</p>"
+            if q == "robot":
+                body = "<title>Sorry</title><p>Our systems have detected unusual traffic.</p>"
+            else:
+                body = f"<!doctype html><title>Results</title><p>You searched for {q}</p>"
         elif u.path in PAGES:
             body = PAGES[u.path]
-        else:
+        elif u.path == "/empty-404":
             self.send_response(404)
             self.end_headers()
+            return
+        else:
+            data = b"<!doctype html><title>Not found</title><h1>Page not found</h1>"
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
         data = body.encode()
         self.send_response(200)
@@ -105,6 +126,26 @@ class PureTests(unittest.TestCase):
             normalize_url("javascript:alert(1)")
         with self.assertRaises(BrowserFailure):
             normalize_url("  ")
+
+    def test_search_words_and_queries_for_dead_addresses(self):
+        self.assertTrue(is_search_words("opening hours national museum"))
+        self.assertTrue(is_search_words("weather"))
+        self.assertFalse(is_search_words("natmus.dk/opening-hours"))
+        self.assertFalse(is_search_words("localhost:3000"))
+        self.assertFalse(is_search_words("https://example.com/a b"))
+        self.assertEqual(
+            query_from_url("https://www.natmus.dk/museer/nationalmuseet/aabningstider.html?x=1"),
+            "natmus.dk museer nationalmuseet aabningstider",
+        )
+        self.assertEqual(
+            search_url("hours & prices"), "https://www.google.com/search?hl=en&q=hours+%26+prices"
+        )
+        self.assertEqual(search_url("a b", "http://s/?q={q}"), "http://s/?q=a+b")
+        self.assertTrue(is_unknown_host("net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/"))
+        self.assertTrue(is_blocked("https://www.google.com/sorry/index?x", ""))
+        self.assertTrue(is_blocked("https://x", "Our systems have detected unusual traffic"))
+        self.assertFalse(is_blocked("https://www.google.com/search?q=a", "Results for a"))
+        self.assertFalse(is_unknown_host("net::ERR_CONNECTION_REFUSED"))
 
     def test_slices_say_where_they_are(self):
         self.assertEqual(slice_text("abc", 0, 10), "abc")
@@ -257,6 +298,67 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 if host.started:
                     await host.close()
+
+    async def test_search_and_dead_addresses_lead_to_real_results(self):
+        with Web() as web:
+            host = BrowserHost(cfg(search_url=web.url + "/search?q={q}"))
+            try:
+                info = await host.search("opening hours bakery")
+                self.assertIn("You searched for opening hours bakery", info["text"])
+                # Search words given to navigate are searched.
+                info = await host.navigate("bakery opening hours")
+                self.assertIn("You searched for bakery opening hours", info["text"])
+                self.assertIn("Searched for", info["note"])
+                # A page that isn't there: searched for instead, with a note.
+                info = await host.navigate(web.url + "/opening-hours.html")
+                self.assertIn("answered 404", info["note"])
+                self.assertIn("You searched for 127.0.0.1 opening hours", info["text"])
+                # An error answer without a page, too.
+                info = await host.navigate(web.url + "/empty-404")
+                self.assertIn("answered with an error", info["note"])
+                self.assertIn("You searched for 127.0.0.1 empty", info["text"])
+                # A check for robots is a refused search, never something to get around.
+                with self.assertRaises(BrowserFailure) as e:
+                    await host.search("robot")
+                self.assertIn("refused", str(e.exception))
+                self.assertIn("Don't try to get around it", str(e.exception))
+                # A real page has no note.
+                info = await host.navigate(web.url + "/hours")
+                self.assertNotIn("note", info)
+            finally:
+                await host.close()
+
+    async def test_with_the_users_chrome_a_tab_on_the_search_engine_is_used_and_kept(self):
+        from playwright.async_api import async_playwright
+
+        with Web() as web:
+            port = free_port()
+            async with async_playwright() as p:
+                kw = {"headless": True, "args": [f"--remote-debugging-port={port}"]}
+                if chrome():
+                    kw["executable_path"] = chrome()
+                users = await p.chromium.launch(**kw)
+                try:
+                    tab = await (await users.new_context()).new_page()
+                    await tab.goto(web.url + "/")
+                    host = BrowserHost(
+                        cfg(
+                            mode="cdp",
+                            cdp_url=f"http://127.0.0.1:{port}",
+                            search_url=web.url + "/search?q={q}",
+                        )
+                    )
+                    info = await host.search("opening hours")
+                    self.assertIn("You searched for opening hours", info["text"])
+                    # The search ran in the user's tab on the search engine's site.
+                    self.assertIn("/search?q=opening", tab.url)
+                    with self.assertRaises(BrowserFailure) as e:
+                        await host.search("robot")
+                    self.assertIn("Ask the user to complete it", str(e.exception))
+                    await host.close()
+                    self.assertFalse(tab.is_closed())
+                finally:
+                    await users.close()
 
     async def test_a_missing_browser_says_how_to_get_one(self):
         host = BrowserHost(cfg(executable="/nope/chrome"))

@@ -24,7 +24,8 @@ from .host import BrowserFailure, BrowserHost, first_line
 from .pagetext import slice_text
 
 INSTRUCTIONS = (
-    "A web browser on the user's computer. Use navigate to open a page, read_page to read it "
+    "A web browser on the user's computer. Use search to find pages on Google (don't guess "
+    "addresses), navigate to open a page, read_page to read it "
     "(links, buttons and fields come numbered, like [3] button \"Search\"), click and type "
     "with those numbers, and screenshot to see it. browser_task hands a whole goal to an "
     "autonomous browsing agent."
@@ -63,7 +64,8 @@ def text_result(text: str, is_error: bool = False) -> CallToolResult:
 
 
 def page_summary(info: dict[str, Any], chars: int, start: int = 0) -> str:
-    head = [f"Title: {info.get('title') or '(none)'}", f"URL: {info.get('url') or ''}"]
+    head = [f"Note: {info['note']}", ""] if info.get("note") else []
+    head += [f"Title: {info.get('title') or '(none)'}", f"URL: {info.get('url') or ''}"]
     if info.get("status") and int(info["status"]) >= 400:
         head.append(f"HTTP status: {info['status']}")
     body = info.get("text") or "(The page has no visible text.)"
@@ -132,17 +134,48 @@ async def browser_task(
     title="Open a web page",
     description=(
         "Open a URL in the browser and return the page's title, address and the start of its "
-        "text, with links, buttons and fields numbered for click and type."
+        "text, with links, buttons and fields numbered for click and type. Search words "
+        "instead of a URL are searched on Google. An address that doesn't exist (unknown site "
+        "or 404) is searched for automatically, so open a real result rather than guessing "
+        "another address."
     ),
     annotations=ToolAnnotations(read_only_hint=False, open_world_hint=True),
 )
 async def navigate(
-    url: Annotated[str, Field(description="The address, e.g. https://example.com")],
+    url: Annotated[
+        str,
+        Field(description="The address, e.g. https://example.com, or search words."),
+    ],
     ctx: Context,
 ) -> CallToolResult:
     async def work() -> CallToolResult:
         info = await HOST.navigate(url)
         await send_frame(ctx, f"Opened {info.get('title') or info.get('url')}")
+        return text_result(page_summary(info, ACTION_TEXT_CHARS))
+
+    return await guarded(work)
+
+
+@mcp.tool(
+    title="Search Google",
+    description=(
+        "Search the web on Google in the browser and return the results page, with each "
+        "result's link numbered for click. Use it to find the right page whenever you don't "
+        "know its exact address, instead of guessing URLs."
+    ),
+    annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+)
+async def search(
+    query: Annotated[str, Field(description="What to search for, in plain words.")],
+    ctx: Context,
+) -> CallToolResult:
+    async def work() -> CallToolResult:
+        words = (query or "").strip()
+        if not words:
+            return text_result("search needs a query.", is_error=True)
+        info = await HOST.search(words)
+        info["note"] = f'Results for "{words}". Open one by its number with click.'
+        await send_frame(ctx, f"Searched for {words}")
         return text_result(page_summary(info, ACTION_TEXT_CHARS))
 
     return await guarded(work)

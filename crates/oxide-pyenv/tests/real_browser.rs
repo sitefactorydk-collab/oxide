@@ -275,6 +275,52 @@ async fn the_browser_agent_opens_reads_clicks_and_screenshots() {
         assert!(frames.iter().any(|f| f.tool_use_id == "call-2"));
     }
 
+    // A real Google search (Windows run): the results lead to the museum's own site.
+    if std::env::var("OXIDE_TEST_REAL_SEARCH").is_ok_and(|v| v == "1") {
+        let r = agents
+            .call(
+                "chat-1",
+                "search",
+                json!({"query": "National Museum of Denmark opening hours"}),
+                "call-s",
+                None,
+            )
+            .await
+            .expect("search runs");
+        let t = text(&r);
+        println!("search:\n{}\n", t.chars().take(3000).collect::<String>());
+        // Either real results, or a plainly refused search (a hidden browser may be shown a
+        // check for robots, which Oxide never tries to get around).
+        if r.is_error {
+            assert!(t.contains("The search was refused"), "{t}");
+        } else {
+            assert!(
+                t.to_lowercase().contains("natmus"),
+                "no natmus.dk link in the results: {t}"
+            );
+        }
+        // A made-up address on that site is searched for instead (when it answers 404).
+        let r = agents
+            .call(
+                "chat-1",
+                "navigate",
+                json!({"url": "https://natmus.dk/this-page-does-not-exist-oxide-test"}),
+                "call-d",
+                None,
+            )
+            .await
+            .expect("navigate runs");
+        let t = text(&r);
+        println!(
+            "dead address:\n{}\n",
+            t.chars().take(1500).collect::<String>()
+        );
+        // Sites differ (some answer a missing page with 200): only reported.
+        println!(
+            "dead address searched for instead: {}",
+            t.contains("Searched for")
+        );
+    }
     if std::env::var("OXIDE_TEST_FAKE_BROWSER_USE").is_ok_and(|v| v == "1") {
         let dir = root.join("python").join("agents").join("browser_use");
         std::fs::create_dir_all(&dir).expect("mkdir");

@@ -8,7 +8,8 @@
 
 use oxide_core::browser::{
     BROWSER_CLICK, BROWSER_CLOSE, BROWSER_NAVIGATE, BROWSER_READ_PAGE, BROWSER_SCREENSHOT,
-    BROWSER_SERVER, BROWSER_TASK, BROWSER_TOOLS, BROWSER_TYPE, browser_tool_reads_only,
+    BROWSER_SEARCH, BROWSER_SERVER, BROWSER_TASK, BROWSER_TOOLS, BROWSER_TYPE,
+    browser_tool_reads_only,
 };
 use serde_json::{Value, json};
 
@@ -37,13 +38,28 @@ fn describe(tool: &str) -> (&'static str, &'static str, Value) {
             "Open a web page",
             "Open a URL in the browser and return the page's title, address and the start of \
              its text, with links, buttons and fields numbered for browser__click and \
-             browser__type.",
+             browser__type. Search words instead of a URL are searched on Google. An address \
+             that doesn't exist (unknown site or 404) is searched for automatically, so open a \
+             real result rather than guessing another address.",
             json!({
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string", "description": "The address, e.g. https://example.com" }
+                    "url": { "type": "string", "description": "The address, e.g. https://example.com, or search words." }
                 },
                 "required": ["url"]
+            }),
+        ),
+        BROWSER_SEARCH => (
+            "Search Google",
+            "Search the web on Google in the browser and return the results page, with each \
+             result's link numbered for browser__click. Use it to find the right page whenever \
+             you don't know its exact address, instead of guessing URLs.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "What to search for, in plain words." }
+                },
+                "required": ["query"]
             }),
         ),
         BROWSER_READ_PAGE => (
@@ -141,6 +157,7 @@ pub fn browser_label(tool: &str, input: &Value) -> Option<String> {
     match tool {
         BROWSER_TASK => s("goal"),
         BROWSER_NAVIGATE => s("url"),
+        BROWSER_SEARCH => s("query"),
         BROWSER_CLICK => input
             .get("ref")
             .and_then(Value::as_u64)
@@ -165,6 +182,7 @@ mod tests {
             vec![
                 "browser__browser_task",
                 "browser__navigate",
+                "browser__search",
                 "browser__read_page",
                 "browser__click",
                 "browser__type",
@@ -173,7 +191,7 @@ mod tests {
             ]
         );
         let ro: Vec<&str> = e.iter().filter(|x| x.read_only).map(|x| x.tool()).collect();
-        assert_eq!(ro, vec!["read_page", "screenshot"]);
+        assert_eq!(ro, vec!["search", "read_page", "screenshot"]);
         let nav = &e[1];
         assert_eq!(nav.server(), Some("browser"));
         assert_eq!(nav.grant_key(), "builtin/browser__navigate");
@@ -202,6 +220,10 @@ mod tests {
         assert_eq!(
             browser_label(BROWSER_TYPE, &json!({"text": "rye"})).as_deref(),
             Some("“rye”")
+        );
+        assert_eq!(
+            browser_label(BROWSER_SEARCH, &json!({"query": "museum hours"})).as_deref(),
+            Some("museum hours")
         );
         assert_eq!(browser_label(BROWSER_CLOSE, &json!({})), None);
     }

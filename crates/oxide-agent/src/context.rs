@@ -395,13 +395,19 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
     }
     if ctx.browser {
         s.push_str(
-            "\n\nYou can use a web browser through the browser__ tools: browser__navigate opens \
-             a page and returns its text with links, buttons and fields numbered (like [3] \
-             button \"Search\"), browser__read_page reads the current page, browser__click and \
-             browser__type act on those numbers, browser__screenshot shows the page, and \
-             browser__browser_task hands a whole multi-step goal to an autonomous browsing \
-             agent. Use the browser for pages that need JavaScript, clicking or forms; plain \
-             public pages are quicker with web_fetch when you have it. Never type passwords, \
+            "\n\nYou can use a web browser through the browser__ tools: browser__search \
+             searches Google, browser__navigate opens a page and returns its text with links, \
+             buttons and fields numbered (like [3] button \"Search\"), browser__read_page reads \
+             the current page, browser__click and browser__type act on those numbers, \
+             browser__screenshot shows the page, and browser__browser_task hands a whole \
+             multi-step goal to an autonomous browsing agent. Whenever you don't know the exact \
+             address of the page you need, find it with browser__search first and open a real \
+             result; never guess URLs. When a page fails (not found, access denied, unknown \
+             site), search for the right one instead of trying made-up addresses. If a search is \
+             refused with a check for robots, never try to solve or get around it: ask the user \
+             to complete it, or use another way to find the page. Use the \
+             browser for pages that need JavaScript, clicking or forms; a public page whose \
+             address you know is quicker with web_fetch when you have it. Never type passwords, \
              payment details or other sensitive data, and don't buy, post, send or sign up for \
              anything unless the user asked for exactly that. Close the browser with \
              browser__close when you're done.",
@@ -637,6 +643,8 @@ mod tests {
             "{p}"
         );
         assert!(p.contains("Never type passwords"), "{p}");
+        assert!(p.contains("find it with browser__search first"), "{p}");
+        assert!(p.contains("never try to solve or get around it"), "{p}");
         assert!(!system_prompt(&PromptContext::default()).contains("browser__"));
     }
 

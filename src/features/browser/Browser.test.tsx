@@ -168,6 +168,9 @@ describe("browser calls in a reply", () => {
     const nav = view("navigate", "browser", JSON.stringify({ url: "https://bakery.example" }));
     expect(toolKind(nav)).toBe("browser");
     expect(callHeadline(nav)).toEqual({ action: "Opened", detail: "https://bakery.example" });
+    expect(
+      callHeadline(view("search", "browser", JSON.stringify({ query: "museum hours" }))),
+    ).toEqual({ action: "Searched Google for", detail: "museum hours" });
     expect(callHeadline(view("click", "browser", JSON.stringify({ ref: 3 })))).toEqual({
       action: "Clicked",
       detail: "[3]",

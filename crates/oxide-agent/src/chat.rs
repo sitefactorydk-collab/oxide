@@ -1133,6 +1133,14 @@ impl ChatService {
         let sandbox = &setup.sandbox;
         let shell = setup.shell.as_ref();
         let browser_llm = setup.browser_llm.as_ref();
+        let fetch_hint = fetch_failure_hint(
+            setup
+                .tool_set
+                .entries
+                .iter()
+                .any(|e| matches!(e.kind, ToolKind::Browser { .. })),
+            setup.tool_set.can_search(),
+        );
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
@@ -1224,9 +1232,18 @@ impl ChatService {
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
                 } else {
-                    self.tools
+                    let mut out = self
+                        .tools
                         .run(&r.entry, &r.input, &r.call.id, settings)
-                        .await
+                        .await;
+                    // A page that couldn't be fetched: point to a search instead of guesses.
+                    if out.is_error
+                        && r.entry.kind == ToolKind::Builtin(Builtin::WebFetch)
+                        && let Some(hint) = fetch_hint
+                    {
+                        out.content.push(ContentBlock::text(hint));
+                    }
+                    out
                 };
                 self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
                     .await;
@@ -1684,6 +1701,21 @@ impl ChatService {
 }
 
 /// The text blocks of a message (no tool results or files), joined by blank lines.
+/// What a failed `web_fetch` adds, so the model searches for the right page instead of
+/// guessing other addresses.
+fn fetch_failure_hint(browser: bool, search: bool) -> Option<&'static str> {
+    if browser {
+        Some(
+            "Don't guess another address: find the right page with browser__search (Google) \
+             and open a real result.",
+        )
+    } else if search {
+        Some("Don't guess another address: find the right page with web_search first.")
+    } else {
+        None
+    }
+}
+
 fn text_blocks(content: &[ContentBlock]) -> String {
     content
         .iter()
@@ -3612,6 +3644,11 @@ pub(crate) mod tests {
             r#"{"url":"https://example.com"}"#,
         );
         both.extend(call("b2", "browser__read_page", "{}"));
+        both.extend(call(
+            "b3",
+            "web_fetch",
+            r#"{"url":"http://127.0.0.1:1/opening-hours"}"#,
+        ));
         let (f, _b) = fixture_browser(
             vec![
                 turn(both, StopReason::ToolUse),
@@ -3651,11 +3688,18 @@ pub(crate) mod tests {
                 "{r}"
             );
         }
+        // A page that couldn't be fetched points to a search, not to guessing.
+        let (r, bad) = result_of(&m, "b3");
+        assert!(
+            bad && r.contains("find the right page with browser__search"),
+            "{r}"
+        );
         let reqs = f.fake.requests();
         let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
         for want in [
             "browser__browser_task",
             "browser__navigate",
+            "browser__search",
             "browser__read_page",
             "browser__click",
             "browser__type",
@@ -3671,6 +3715,13 @@ pub(crate) mod tests {
             && u.label.as_deref() == Some("https://example.com")
             && u.server.as_deref() == Some("browser")
             && u.is_error));
+    }
+
+    #[test]
+    fn failed_fetches_point_to_the_search_the_chat_has() {
+        assert!(fetch_failure_hint(true, true).is_some_and(|h| h.contains("browser__search")));
+        assert!(fetch_failure_hint(false, true).is_some_and(|h| h.contains("web_search")));
+        assert_eq!(fetch_failure_hint(false, false), None);
     }
 
     #[cfg(unix)]

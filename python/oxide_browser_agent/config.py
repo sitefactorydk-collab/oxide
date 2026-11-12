@@ -38,6 +38,9 @@ class Config:
     llm_vision: bool = False
     max_steps: int = 25
     task_timeout: int = 600
+    # Where searches go: a URL with {q} for the words. Empty: Google, then DuckDuckGo when
+    # Google refuses an automated browser.
+    search_url: str = ""
 
     @staticmethod
     def from_env() -> "Config":
@@ -54,6 +57,7 @@ class Config:
             llm_vision=_flag("OXIDE_LLM_VISION", False),
             max_steps=_int("OXIDE_BROWSER_MAX_STEPS", 25, 1, 200),
             task_timeout=_int("OXIDE_BROWSER_TASK_TIMEOUT", 600, 10, 3600),
+            search_url=(e("OXIDE_BROWSER_SEARCH_URL") or "").strip(),
         )
 
     def describe_llm(self) -> str:
