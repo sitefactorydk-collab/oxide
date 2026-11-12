@@ -28,6 +28,7 @@ from oxide_browser_agent.config import Config  # noqa: E402
 from oxide_browser_agent.host import (  # noqa: E402
     BrowserFailure,
     BrowserHost,
+    click_problem,
     free_port,
     is_blocked,
     is_search_words,
@@ -47,6 +48,13 @@ PAGES = {
 <button type="submit">Go</button></form>
 <input type="checkbox" id="c" checked aria-label="Newsletter">
 <script>document.write('')</script>""",
+    "/tricky": """<!doctype html><title>Tricky</title>
+<style>@keyframes wiggle { from { transform: translateX(0) } to { transform: translateX(40px) } }
+.wiggle { display: inline-block; animation: wiggle 0.2s infinite alternate; }
+#cover { position: fixed; inset: 0; background: rgba(0,0,0,.3); }</style>
+<a class="wiggle" href="/hours">Moving link</a>
+<button id="b" onclick="document.title='clicked'">Covered button</button>
+<div id="cover"></div>""",
     "/hours": """<!doctype html><title>Hours</title><h2>Opening hours</h2>
 <ul><li>Mon–Fri: 7–18</li><li>Sat: 8–14</li><li>Sun: closed</li></ul>""",
 }
@@ -143,6 +151,8 @@ class PureTests(unittest.TestCase):
         self.assertEqual(search_url("a b", "http://s/?q={q}"), "http://s/?q=a+b")
         self.assertTrue(is_unknown_host("net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/"))
         self.assertTrue(is_blocked("https://www.google.com/sorry/index?x", ""))
+        self.assertIn("covers it", click_problem("<div id=x> intercepts pointer events") or "")
+        self.assertIsNone(click_problem("waiting for element to be visible, enabled and stable"))
         self.assertTrue(is_blocked("https://x", "Our systems have detected unusual traffic"))
         self.assertFalse(is_blocked("https://www.google.com/search?q=a", "Results for a"))
         self.assertFalse(is_unknown_host("net::ERR_CONNECTION_REFUSED"))
@@ -359,6 +369,33 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(tab.is_closed())
                 finally:
                     await users.close()
+
+    async def test_moving_elements_are_clicked_and_covered_ones_explained(self):
+        from oxide_browser_agent import host as host_mod
+
+        saved = host_mod.ACTION_TIMEOUT_MS
+        host_mod.ACTION_TIMEOUT_MS = 1500
+        with Web() as web:
+            host = BrowserHost(cfg())
+            try:
+                info = await host.navigate(web.url + "/tricky")
+                # The covering layer is above everything: the button can't be clicked.
+                import re
+
+                ref = int(re.search(r'\[(\d+)\] button "Covered button"', info["text"]).group(1))
+                with self.assertRaises(BrowserFailure) as e:
+                    await host.click(ref, None)
+                self.assertIn("covers it", str(e.exception))
+                # A link that never holds still is clicked directly after the wait.
+                await host.navigate(web.url + "/tricky")
+                await host.page()
+                page = await host.page()
+                await page.evaluate("document.getElementById('cover').remove()")
+                info = await host.click(None, "Moving link")
+                self.assertTrue(info["url"].endswith("/hours"), info["url"])
+            finally:
+                host_mod.ACTION_TIMEOUT_MS = saved
+                await host.close()
 
     async def test_a_missing_browser_says_how_to_get_one(self):
         host = BrowserHost(cfg(executable="/nope/chrome"))

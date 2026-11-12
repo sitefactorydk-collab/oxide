@@ -121,6 +121,24 @@ def host_of(url: str) -> str:
         return ""
 
 
+def click_problem(error: str) -> str | None:
+    """Why Playwright couldn't click, in words for the model, when the reason is one a direct
+    click wouldn't fix (something covers the element, it is hidden or disabled). `None`: it
+    only timed out waiting for the element to hold still."""
+    if "intercepts pointer events" in error:
+        return (
+            "something else on the page covers it (often a cookie banner or a pop-up). Close "
+            "or answer that first (read_page shows its buttons), then click again."
+        )
+    if "element is not visible" in error:
+        return "it isn't visible (maybe in a closed menu). Read the page again."
+    if "element is not enabled" in error or "element is disabled" in error:
+        return "it is disabled."
+    if "not attached to the DOM" in error:
+        return "the page changed under it. Read the page again and use the new number."
+    return None
+
+
 def is_unknown_host(message: str) -> bool:
     return any(k in message for k in UNKNOWN_HOST)
 
@@ -460,7 +478,8 @@ class BrowserHost:
         if ref is not None:
             return page.locator(f'[{REF_ATTR}="{int(ref)}"]').first
         if text:
-            return page.get_by_text(text, exact=False).first
+            # Visible matches only: hidden copies of the text (menus, templates) can't be clicked.
+            return page.get_by_text(text, exact=False).filter(visible=True).first
         raise BrowserFailure("Say which element: give `ref` (a number from read_page) or `text`.")
 
     async def _check_exists(self, loc: Any, ref: int | None, text: str | None) -> None:
@@ -476,14 +495,32 @@ class BrowserHost:
                 )
             raise BrowserFailure(f'No element with the text "{text}" is on the page.')
 
+    async def _front(self, page: Any) -> None:
+        """Brings the page's tab to the front in a visible browser. Chrome hardly renders a
+        tab in the background, and clicks there wait for it until they time out."""
+        if self.cfg.mode == "cdp" or not self.cfg.headless:
+            try:
+                await page.bring_to_front()
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+
     async def click(self, ref: int | None, text: str | None) -> dict[str, Any]:
         page = await self.page()
+        await self._front(page)
         loc = self._locator(page, ref, text)
         await self._check_exists(loc, ref, text)
         try:
             await loc.click(timeout=ACTION_TIMEOUT_MS)
         except Exception as e:  # noqa: BLE001
-            raise BrowserFailure(f"The click didn't work: {first_line(e)}") from e
+            problem = click_problem(str(e))
+            if problem is not None:
+                raise BrowserFailure(f"The click didn't work: {problem}") from e
+            # It timed out waiting for the element to hold still (an animation, or a page
+            # Chrome isn't rendering): click it directly instead.
+            try:
+                await loc.evaluate("el => el.click()", timeout=5_000)
+            except Exception as e2:  # noqa: BLE001
+                raise BrowserFailure(f"The click didn't work: {first_line(e2)}") from e2
         await asyncio.sleep(0.3)
         page = await self.page()
         await self._settle(page)
@@ -493,6 +530,7 @@ class BrowserHost:
         self, ref: int | None, text: str, submit: bool, clear: bool, field_text: str | None
     ) -> dict[str, Any]:
         page = await self.page()
+        await self._front(page)
         loc = self._locator(page, ref, field_text)
         await self._check_exists(loc, ref, field_text)
         try:
