@@ -124,7 +124,7 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 - Local MCP servers and remote (HTTP) MCP servers [P5].
 - Tool approval prompts ("Allow once" / "Allow always" / "Deny") [P6].
 - Desktop extensions (`.mcpb`) install and settings UI [P10].
-- Skills (folders with `SKILL.md`) [P10].
+- Skills (folders with `SKILL.md`) [P10]; models create and edit skills, with approval [P14c].
 - Web search and web fetch tools [P6].
 
 **Agentic work ("Cowork-style" tasks):**
@@ -387,6 +387,17 @@ Requested by the user after Phase 13: a long agentic reply on Strata `swift-iq2_
 - Load-unpacked instructions now; Chrome Web Store packaging notes go in `extension/README.md`.
 
 **Exit:** pairing works, and the model can open a tab, read it, click, type and screenshot. Unpaired or foreign-origin connections are rejected (tested).
+
+### Phase 14c — Models create and edit skills
+Requested by the user after Phase 14: today models can only read skills (`load_skill`); creating, editing, switching off and removing them is done by hand in Settings → Skills (Phase 10). The skill store (`oxide-agent/src/skills.rs`: `Skills::create`, `update`, `detail`, `skill_md`) already does the work.
+- **A built-in `save_skill` tool:** create a new skill or change an existing one (by name or folder) with `name`, `description` and the instructions (the body of `SKILL.md`), plus optional extra text files inside the skill's folder (e.g. `reference.md`, `scripts/x.py`), confined to that folder (no `..`, no absolute paths, size caps).
+- **Always asks:** a skill shapes later chats, so every save shows an approval card with the whole `SKILL.md` (and, for an edit, what changes: a diff against the current version) and "Allow once" / "Deny" — no "Allow always". A skill installed from a folder or zip can only be changed after the card says so plainly.
+- **Discovery:** `load_skill`'s listing (or a small `list_skills` tool) gives models the existing skills' names, descriptions and folders, so they edit instead of duplicating; names stay unique (`skill_slug`).
+- **System prompt:** when the tool is offered, models may propose turning a repeated workflow into a skill ("turn what we just did into a skill") but save only when the user asks or agrees.
+- **UI:** the saved skill appears in Settings → Skills like any other (edit, switch off, delete there); the tool line reads "Created skill …" / "Updated skill …" with a link to it; the chat's "+" menu can switch the tool off per chat; "Used in this session" lists it.
+- **Tests:** create, edit, unique names, files confined to the skill's folder, the approval card's content and diff, a denied save writes nothing, the new skill is offered to the next reply.
+
+**Exit:** in a chat, "turn what we just did into a skill" shows the skill in an approval card, saves it on Allow, and a new chat uses it; asking to change it later edits the same skill (diff shown) instead of making a second one.
 
 ### Phase 15 — Scheduled tasks
 - Scheduler in Rust (cron expressions plus one-shot jobs) persisted in SQLite. Each run starts a fresh conversation with the saved prompt, model, tools and folder grants.
