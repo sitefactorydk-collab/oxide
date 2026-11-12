@@ -1,7 +1,15 @@
 import { AlertCircle, ArrowDown, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useParams } from "react-router";
-import type { Attachment, Feedback, Message } from "@/bindings";
+import type { Attachment, Compaction, Feedback, Message } from "@/bindings";
 import { ArtifactPanel } from "@/features/artifacts/ArtifactPanel";
 import {
   useConversation,
@@ -14,6 +22,8 @@ import {
   useStopGeneration,
 } from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
+import { CompactionDivider } from "@/features/context/CompactionDivider";
+import { useCompactions } from "@/features/context/queries";
 import { useGenerateOptions } from "@/features/composer/options";
 import { usePendingApprovals } from "@/features/tools/queries";
 import { ApprovalCard } from "@/features/tools/ToolCallBlock";
@@ -24,6 +34,8 @@ import { useBranches } from "./branches";
 import { AssistantMessage, LiveReplyView, UserMessage, type Versions } from "./Messages";
 import { useStreams } from "./streams";
 import { activeThread, newestLeafUnder, siblingsOf } from "./thread";
+
+const NO_COMPACTIONS: Compaction[] = [];
 
 /** Distance from the bottom (px) within which the view follows a streaming reply. */
 const STICK_DISTANCE = 120;
@@ -106,6 +118,7 @@ function ChatView({ id }: { id: string }) {
   const rate = useSetFeedback();
   const options = useGenerateOptions();
   const panel = useSessionPanel(id);
+  const compactions = useCompactions(convo ? id : "");
   const [draft, setDraft] = useState("");
   const scroll = useStickToBottom();
 
@@ -115,6 +128,17 @@ function ChatView({ id }: { id: string }) {
     [messages, liveParent, pickedLeaf],
   );
   const leaf = thread[thread.length - 1];
+
+  // Where the transcript shows "Conversation compacted": after a message, or inside a reply.
+  const dividers = useMemo(() => {
+    const after = new Map<string, Compaction[]>();
+    const inside = new Map<string, Compaction[]>();
+    for (const c of compactions) {
+      const map = c.afterToolUseId ? inside : after;
+      map.set(c.messageId, [...(map.get(c.messageId) ?? []), c]);
+    }
+    return { after, inside };
+  }, [compactions]);
 
   const versions = useMemo(() => {
     const out = new Map<string, Versions>();
@@ -212,28 +236,32 @@ function ChatView({ id }: { id: string }) {
                 Couldn’t load messages: {errorMessage(messagesQuery.error)}
               </p>
             )}
-            {thread.map((m, i) =>
-              m.role === "user" ? (
-                <UserMessage
-                  key={m.id}
-                  message={m}
-                  versions={versions.get(m.id) ?? null}
-                  onSelectVersion={handlers.selectVersion}
-                  onEdit={handlers.edit}
-                />
-              ) : (
-                <AssistantMessage
-                  key={m.id}
-                  message={m}
-                  isLast={!isLive && i === lastAssistantIdx}
-                  canRetry={!isLive}
-                  versions={versions.get(m.id) ?? null}
-                  onSelectVersion={handlers.selectVersion}
-                  onRetry={handlers.retry}
-                  onRate={handlers.rate}
-                />
-              ),
-            )}
+            {thread.map((m, i) => (
+              <Fragment key={m.id}>
+                {m.role === "user" ? (
+                  <UserMessage
+                    message={m}
+                    versions={versions.get(m.id) ?? null}
+                    onSelectVersion={handlers.selectVersion}
+                    onEdit={handlers.edit}
+                  />
+                ) : (
+                  <AssistantMessage
+                    message={m}
+                    isLast={!isLive && i === lastAssistantIdx}
+                    canRetry={!isLive}
+                    versions={versions.get(m.id) ?? null}
+                    onSelectVersion={handlers.selectVersion}
+                    onRetry={handlers.retry}
+                    onRate={handlers.rate}
+                    compactions={dividers.inside.get(m.id) ?? NO_COMPACTIONS}
+                  />
+                )}
+                {dividers.after.get(m.id)?.map((c) => (
+                  <CompactionDivider key={c.id} compaction={c} />
+                ))}
+              </Fragment>
+            ))}
             <LiveReplyView conversationId={id} />
             {!isLive && <OrphanApprovals conversationId={id} />}
             {!isLive && failure && leaf && (
@@ -266,6 +294,7 @@ function ChatView({ id }: { id: string }) {
           <Composer
             variant="reply"
             conversationId={id}
+            leafId={leaf?.id ?? null}
             value={draft}
             onChange={setDraft}
             autoFocus

@@ -219,6 +219,8 @@ pub struct PromptContext<'a> {
     pub sandbox: Option<SandboxPrompt>,
     /// The browser agent's tools are on.
     pub browser: bool,
+    /// Old tool results may be cleared and long chats summarized (Settings → Models).
+    pub context_notes: bool,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -456,6 +458,15 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
             }
         ));
     }
+    if ctx.context_notes {
+        s.push_str(
+            "\n\nLong tasks: once a conversation grows, old tool results are replaced by short \
+             notes to save room (your calls stay), and the start of a long chat may be replaced by \
+             a summary. So while you work, write down briefly in your reply the facts you will \
+             need from long results (with their sources) before moving on, rather than reading \
+             the same pages again later.",
+        );
+    }
     if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
         s.push_str(&format!(
             "\n\n<memory>\n{mem}\n</memory>\nThis is what Oxide remembers about the user from \
@@ -603,6 +614,20 @@ mod tests {
             usage: None,
             feedback: None,
         }
+    }
+
+    #[test]
+    fn long_task_notes_follow_compaction() {
+        let off = system_prompt(&PromptContext::default());
+        assert!(!off.contains("Long tasks"));
+        let on = system_prompt(&PromptContext {
+            context_notes: true,
+            ..Default::default()
+        });
+        assert!(
+            on.contains("old tool results are replaced by short notes"),
+            "{on}"
+        );
     }
 
     #[test]

@@ -16,6 +16,39 @@ const started = ev({
 });
 
 describe("reduceStream", () => {
+  it("tracks the context, compacting and compactions of a live reply", () => {
+    let s = reduceStream(empty, started, 1);
+    expect(s.live["c1"]?.context).toBeNull();
+    s = reduceStream(s, ev({ type: "compacting" }), 2);
+    expect(s.live["c1"]?.compacting).toBe(true);
+    const compaction = {
+      id: "k1",
+      conversationId: "c1",
+      messageId: "r1",
+      afterToolUseId: "t1",
+      summary: "S",
+      trigger: "auto" as const,
+      tokensBefore: 100,
+      tokensAfter: 10,
+      model: null,
+      createdAt: 3,
+    };
+    s = reduceStream(s, ev({ type: "compacted", compaction }), 3);
+    expect(s.live["c1"]?.compacting).toBe(false);
+    expect(s.live["c1"]?.blocks.at(-1)).toEqual({ kind: "compaction", compaction });
+    const usage = {
+      conversationId: "c1",
+      tokens: 500,
+      window: 1000,
+      windowSource: "provider" as const,
+      threshold: 750,
+      compacted: true,
+      clearedResults: 2,
+    };
+    s = reduceStream(s, ev({ type: "context", usage }), 4);
+    expect(s.live["c1"]?.context).toEqual(usage);
+  });
+
   it("builds a live reply from deltas and times the thinking", () => {
     let s = reduceStream(empty, started, 100);
     s = reduceStream(s, ev({ type: "thinkingDelta", text: "Let me " }), 200);

@@ -3,8 +3,8 @@
 use oxide_agent::export::{export_file_name, export_json, export_markdown};
 use oxide_agent::path_to;
 use oxide_core::{
-    Attachment, ContentBlock, Conversation, Feedback, GenerateOptions, Message, SearchHit,
-    StartConversation,
+    Attachment, Compaction, ContentBlock, ContextUsage, Conversation, Feedback, GenerateOptions,
+    Message, SearchHit, StartConversation,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -173,6 +173,42 @@ pub async fn regenerate(
     options: GenerateOptions,
 ) -> CmdResult<String> {
     Ok(state.chat.regenerate(&message_id, options).await?)
+}
+
+/// How full a chat's context is for the thread ending at `leaf_id` (the composer's meter).
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_context(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    leaf_id: Option<String>,
+) -> CmdResult<ContextUsage> {
+    Ok(state
+        .chat
+        .context_usage(&conversation_id, leaf_id.as_deref())
+        .await?)
+}
+
+/// The summaries that stand in for the start of a chat (the transcript's dividers).
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_compactions(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CmdResult<Vec<Compaction>> {
+    Ok(state.chat.compactions(&conversation_id).await?)
+}
+
+/// **Compact now**: summarizes the thread ending at `leaf_id`; the next reply starts from the
+/// summary.
+#[tauri::command]
+#[specta::specta]
+pub async fn compact_chat(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    leaf_id: String,
+) -> CmdResult<Compaction> {
+    Ok(state.chat.compact_now(&conversation_id, &leaf_id).await?)
 }
 
 /// Stops the reply being written in a chat, keeping what was written. Returns whether a reply

@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 
 use super::{ToolEntry, ToolKind, api_name};
 
+/// `read_page`'s own default length (`READ_DEFAULT_CHARS` in the Python server).
+pub const READ_DEFAULT_CHARS: usize = 20_000;
+
 fn describe(tool: &str) -> (&'static str, &'static str, Value) {
     match tool {
         BROWSER_TASK => (

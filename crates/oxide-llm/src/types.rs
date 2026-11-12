@@ -77,6 +77,18 @@ pub struct ChatRequest {
     pub images: bool,
     /// The model reads PDFs natively (Anthropic). Otherwise their extracted text is sent.
     pub native_pdfs: bool,
+    /// Let the provider clear old tool results itself (Anthropic context editing). Ignored
+    /// by OpenAI-compatible servers.
+    pub clear_tool_results: Option<ToolResultClearing>,
+}
+
+/// Server-side clearing of old tool results (Anthropic `clear_tool_uses_20250919`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolResultClearing {
+    /// Clear once the prompt is above this many input tokens.
+    pub trigger_tokens: u32,
+    /// Most recent tool uses kept.
+    pub keep: u32,
 }
 
 impl ChatRequest {
@@ -94,6 +106,7 @@ impl ChatRequest {
             effort: None,
             images: true,
             native_pdfs: true,
+            clear_tool_results: None,
         }
     }
 }

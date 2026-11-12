@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::browser::BrowserSettings;
+use crate::context::ContextSettings;
 use crate::python::PythonSettings;
 use crate::sandbox::SandboxSettings;
 
@@ -242,6 +243,8 @@ pub struct AppSettings {
     pub python: PythonSettings,
     pub sandbox: SandboxSettings,
     pub browser: BrowserSettings,
+    /// Context management (shown in Settings → Models).
+    pub context: ContextSettings,
 }
 
 impl AppSettings {
@@ -291,6 +294,7 @@ impl AppSettings {
             .clamp(1, crate::python::MAX_PYTHON_TIMEOUT_SECS);
         self.sandbox = self.sandbox.normalized();
         self.browser = self.browser.normalized();
+        self.context = self.context.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());

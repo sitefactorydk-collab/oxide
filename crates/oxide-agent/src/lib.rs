@@ -20,6 +20,7 @@
 pub mod artifacts;
 pub mod attachments;
 mod chat;
+pub mod compaction;
 mod context;
 pub mod demo;
 mod error;

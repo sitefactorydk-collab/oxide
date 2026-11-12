@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::{ContentBlock, Conversation, Effort, Message, Timestamp, ToolApprovalRequest};
+use crate::{
+    Compaction, ContentBlock, ContextUsage, Conversation, Effort, Message, Timestamp,
+    ToolApprovalRequest,
+};
 
 /// Per-request options chosen in the composer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -166,6 +169,16 @@ pub enum StreamEvent {
     },
     Usage {
         usage: Usage,
+    },
+    /// How full the context is, just before a request goes to the model.
+    Context {
+        usage: ContextUsage,
+    },
+    /// Oxide is summarizing the start of the conversation to make room.
+    Compacting,
+    /// A summary now stands in for the start of the conversation (also saved with the chat).
+    Compacted {
+        compaction: Compaction,
     },
     /// The reply is saved. `message` is `None` when it was stopped before any output.
     Done {

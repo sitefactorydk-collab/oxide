@@ -14,6 +14,7 @@ use futures_util::StreamExt;
 use futures_util::future::join_all;
 use oxide_core::RUN_PYTHON;
 use oxide_core::browser::{BROWSER_SWITCH, browser_tool_reads_only};
+use oxide_core::context::WindowSource;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
 use oxide_core::model::split_model_id;
@@ -21,21 +22,28 @@ use oxide_core::sandbox::SANDBOX_SWITCH;
 use oxide_core::tools::PROVIDER_SERVER;
 use oxide_core::workspace::{FILES_SWITCH, RUN_COMMAND, TASK_LIST, command_allowed};
 use oxide_core::{
-    AppSettings, ApprovalDecision, ChatStreamEvent, ContentBlock, Conversation, GenerateOptions,
-    Message, ModelCapabilities, ProviderKind, Role, StopReason, StreamEvent, TaskList,
-    ThinkingStyle, ToolApprovalRequest, ToolUsageKind, Usage,
+    AppSettings, ApprovalDecision, ChatStreamEvent, Compaction, CompactionTrigger, ContentBlock,
+    ContextSettings, ContextUsage, Conversation, GenerateOptions, Message, ModelCapabilities,
+    ModelInfo, ProviderKind, Role, StopReason, StreamEvent, TaskList, ThinkingStyle,
+    ToolApprovalRequest, ToolUsageKind, Usage,
 };
 use oxide_llm::capabilities::anthropic_curated;
-use oxide_llm::{ChatEvent, ChatMessage, ChatRequest, Provider, Thinking, complete_text};
+use oxide_llm::{
+    ChatEvent, ChatMessage, ChatRequest, ContextNumbers, Provider, Thinking, ToolResultClearing,
+    complete_text,
+};
 use oxide_store::{NewReply, NewToolUsage, Store, new_id, now_ms};
 use serde_json::Value;
 use tokio::sync::{oneshot, watch};
 
 use crate::AgentError;
 use crate::artifacts::run_artifact;
-use crate::context::{
-    PromptContext, SandboxPrompt, build_messages, plan_request, request_messages, system_prompt,
+use crate::compaction::{
+    Budget, KEEP_RESULT_TURNS, KEEP_STEPS, SUMMARY_SYSTEM, anchor_before, chunks, clear_results,
+    cleared_count, default_window, fit_output, history_for, messages_tokens, overhead_tokens,
+    result_turns, summary_prompt, summary_text, text_tokens, transcript, with_latest_request,
 };
+use crate::context::{PromptContext, SandboxPrompt, plan_request, request_messages, system_prompt};
 use crate::knowledge::{
     KnowledgePlan, chat_budget, plan_knowledge, project_search_entry, run_project_search,
 };
@@ -57,6 +65,10 @@ const FLUSH_EVERY: Duration = Duration::from_millis(40);
 const TITLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest wait for memory items after a reply.
 const MEMORY_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest wait for one summarizing request.
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(300);
+/// Prompt overhead (system prompt, tools) assumed for a chat before its first request.
+const DEFAULT_OVERHEAD: u32 = 2_500;
 
 const STOPPED_NOTE: &str = "The user stopped the reply before this tool ran.";
 const FAILED_NOTE: &str = "The reply ended before this tool ran.";
@@ -103,6 +115,29 @@ pub struct ChatService {
     /// Tool calls waiting for the user, by tool call id.
     approvals: Mutex<HashMap<String, PendingApproval>>,
     clock: Mutex<ClientClock>,
+    /// What the last request of each chat looked like, for the context meter.
+    context_memo: Mutex<HashMap<String, ContextMemo>>,
+    /// Context windows named by "context full" answers, by model id.
+    learned_windows: Mutex<HashMap<String, u32>>,
+}
+
+/// A chat's last request: its prompt overhead (system prompt, tools), how the provider's own
+/// count compared with Oxide's estimate, and its output limit.
+#[derive(Debug, Clone, Copy)]
+struct ContextMemo {
+    overhead: u32,
+    factor: f64,
+    max_output: Option<u32>,
+}
+
+impl Default for ContextMemo {
+    fn default() -> Self {
+        Self {
+            overhead: DEFAULT_OVERHEAD,
+            factor: 1.0,
+            max_output: None,
+        }
+    }
 }
 
 /// How a generation ended.
@@ -110,6 +145,55 @@ enum Outcome {
     Finished(StopReason),
     Stopped,
     Failed(String),
+    /// The provider said the prompt doesn't fit, before any of the step's output.
+    ContextFull {
+        error: String,
+        numbers: ContextNumbers,
+    },
+}
+
+/// The tool loop's context management state for one reply.
+struct ContextState {
+    budget: Budget,
+    /// The thread before the reply, as sent (a summary turn first when compacted).
+    history: Vec<ChatMessage>,
+    /// A summary stands in for the start of the history.
+    compacted: bool,
+    /// Blocks of the reply before this index are covered by a summary made during it.
+    reply_from: usize,
+    /// Result turns whose results are cleared in requests (from the start).
+    clear_turns: usize,
+    /// Provider's prompt count / Oxide's estimate, from the previous request.
+    factor: f64,
+    /// Prompt overhead of the requests (system prompt, tools).
+    overhead: u32,
+    /// The unscaled estimate of the last request sent.
+    last_raw: u32,
+    /// A "context full" answer was already retried in this step.
+    overflow_retried: bool,
+}
+
+impl ContextState {
+    fn estimate(&self, messages: &[ChatMessage]) -> u32 {
+        scale(
+            self.overhead.saturating_add(messages_tokens(messages)),
+            self.factor,
+        )
+    }
+}
+
+fn scale(tokens: u32, factor: f64) -> u32 {
+    let v = (f64::from(tokens) * factor).round();
+    if v >= f64::from(u32::MAX) {
+        u32::MAX
+    } else if v <= 0.0 {
+        0
+    } else {
+        // In range: checked above.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let n = v as u32;
+        n
+    }
 }
 
 /// Everything one reply's requests share.
@@ -134,6 +218,14 @@ struct Setup {
     shell: Option<Shell>,
     /// The model `browser_task` runs with (the browser is on).
     browser_llm: Option<oxide_pyenv::BrowserLlm>,
+    /// `<providerId>/<model>`.
+    model_id: String,
+    /// The model's listing, when its endpoint lists it.
+    info: Option<ModelInfo>,
+    /// Let the provider clear old tool results itself (Anthropic).
+    server_clearing: bool,
+    /// Characters one tool result may have (scaled to the context window).
+    result_cap: usize,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -155,6 +247,8 @@ impl ChatService {
             running: Mutex::new(HashMap::new()),
             approvals: Mutex::new(HashMap::new()),
             clock: Mutex::new(ClientClock::default()),
+            context_memo: Mutex::new(HashMap::new()),
+            learned_windows: Mutex::new(HashMap::new()),
         })
     }
 
@@ -419,7 +513,7 @@ impl ChatService {
         let (stop_reason, error) = match outcome {
             Outcome::Finished(r) => (r, None),
             Outcome::Stopped => (StopReason::Stopped, None),
-            Outcome::Failed(e) => {
+            Outcome::Failed(e) | Outcome::ContextFull { error: e, .. } => {
                 let e = if provider_label.is_empty() {
                     e
                 } else {
@@ -725,7 +819,12 @@ impl ChatService {
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::TaskList)),
             sandbox: sandbox_prompt,
             browser: browser_on,
+            context_notes: settings.context.compaction && !tool_set.is_empty(),
         });
+        let server_clearing = config.kind == ProviderKind::Anthropic
+            && settings.context.compaction
+            && settings.context.anthropic_clearing
+            && !tool_set.is_empty();
         Ok(Setup {
             provider,
             model: model.to_owned(),
@@ -741,6 +840,10 @@ impl ChatService {
             sandbox,
             shell,
             browser_llm,
+            model_id: conversation.model.clone(),
+            info,
+            server_clearing,
+            result_cap: crate::tools::MAX_RESULT_CHARS,
         })
     }
 
@@ -770,6 +873,10 @@ impl ChatService {
     }
 
     /// The tool loop: model, tools, model, … until the model is done.
+    ///
+    /// Before every request the context is checked: above the threshold, old tool results
+    /// are cleared, then the conversation is compacted (see [`crate::compaction`]). A
+    /// "context full" answer is retried once after compacting harder.
     #[allow(clippy::too_many_arguments)]
     async fn run(
         &self,
@@ -783,14 +890,47 @@ impl ChatService {
     ) -> Result<Outcome, AgentError> {
         let cid = conversation.id.as_str();
         let mut setup = self.setup(conversation, provider_label).await?;
-        let history = build_messages(thread);
+        let compactions = self.store.compactions(cid).await.unwrap_or_default();
+        let (history, compacted) = history_for(thread, &compactions);
+        let mut probe = ChatRequest::new(setup.model.clone(), Vec::new());
+        plan_request(
+            &mut probe,
+            setup.kind,
+            &setup.caps,
+            setup.max_output,
+            options,
+            setup.settings.models.thinking_budget,
+        );
+        let budget = self
+            .budget_for(
+                &setup.model_id,
+                setup.info.as_ref(),
+                setup.kind,
+                &setup.settings.context,
+                probe.max_tokens,
+            )
+            .await;
+        setup.result_cap = budget.result_cap_chars();
+        let memo = lock(&self.context_memo)
+            .get(cid)
+            .copied()
+            .unwrap_or_default();
+        let mut ctx = ContextState {
+            budget,
+            history,
+            compacted,
+            reply_from: 0,
+            clear_turns: 0,
+            factor: memo.factor,
+            overhead: memo.overhead,
+            last_raw: 0,
+            overflow_retried: false,
+        };
         let max_steps = setup.settings.tools.max_steps;
         let mut steps = 0u32;
+        let mut force = false;
         loop {
-            let mut request = ChatRequest::new(
-                setup.model.clone(),
-                request_messages(&history, &reply.blocks),
-            );
+            let mut request = ChatRequest::new(setup.model.clone(), Vec::new());
             request.system = Some(setup.system.clone());
             request.system_context = setup.system_context.clone();
             plan_request(
@@ -803,13 +943,59 @@ impl ChatService {
             );
             request.tools = setup.tool_set.specs();
             request.server_tools = setup.tool_set.server_tools.clone();
+            if setup.server_clearing {
+                request.clear_tool_results = Some(ToolResultClearing {
+                    trigger_tokens: ctx.budget.trigger,
+                    keep: 3,
+                });
+            }
+            ctx.overhead = overhead_tokens(&request);
+            let (messages, usage) = self
+                .fit_context(
+                    conversation,
+                    thread,
+                    reply_id,
+                    &setup,
+                    &mut ctx,
+                    reply,
+                    force,
+                    cancelled,
+                )
+                .await;
+            force = false;
+            ctx.last_raw = ctx.overhead.saturating_add(messages_tokens(&messages));
+            request.messages = messages;
+            self.remember_context(cid, &ctx, request.max_tokens);
+            self.emit(cid, StreamEvent::Context { usage });
 
             reply.begin_step();
             let outcome = self
                 .stream_step(cid, reply_id, &setup, request, reply, cancelled)
                 .await?;
+            self.calibrate(cid, &setup, &mut ctx, reply.usage_step);
+            if !matches!(outcome, Outcome::ContextFull { .. }) {
+                ctx.overflow_retried = false;
+            }
             let open = reply.open_calls();
             match outcome {
+                // The provider said it doesn't fit: learn the window, compact harder, retry.
+                Outcome::ContextFull { error, numbers } => {
+                    if ctx.overflow_retried {
+                        return Ok(Outcome::Failed(format!(
+                            "{error}. Oxide compacted the conversation and tried again, but it \
+                             still doesn't fit. Start a new chat, or pick a model with a larger \
+                             context window."
+                        )));
+                    }
+                    ctx.overflow_retried = true;
+                    self.learn_overflow(cid, &setup, &mut ctx, numbers);
+                    force = true;
+                }
+                // Anthropic proxies that don't know context editing: send without it.
+                Outcome::Failed(e) if setup.server_clearing && e.contains("context_management") => {
+                    tracing::info!("context editing refused; continuing without it: {e}");
+                    setup.server_clearing = false;
+                }
                 // Some local models end with "stop" after calling tools.
                 Outcome::Finished(StopReason::ToolUse | StopReason::EndTurn)
                     if !open.is_empty() =>
@@ -855,6 +1041,462 @@ impl ChatService {
         }
     }
 
+    /// The context window of a model: Settings' override, one a "context full" answer named,
+    /// the provider's listing, or a default.
+    fn window_for(
+        &self,
+        model_id: &str,
+        info: Option<&ModelInfo>,
+        kind: ProviderKind,
+        settings: &ContextSettings,
+    ) -> (u32, WindowSource) {
+        if let Some(w) = settings.window_for(model_id) {
+            return (w, WindowSource::Setting);
+        }
+        if let Some(w) = lock(&self.learned_windows).get(model_id) {
+            return (*w, WindowSource::Learned);
+        }
+        if let Some(w) = info.and_then(|i| i.context_window).filter(|w| *w > 0) {
+            return (w, WindowSource::Provider);
+        }
+        (default_window(kind), WindowSource::Default)
+    }
+
+    async fn budget_for(
+        &self,
+        model_id: &str,
+        info: Option<&ModelInfo>,
+        kind: ProviderKind,
+        settings: &ContextSettings,
+        max_output: Option<u32>,
+    ) -> Budget {
+        let (window, source) = self.window_for(model_id, info, kind, settings);
+        Budget::new(window, source, max_output, settings.threshold)
+    }
+
+    fn remember_context(&self, cid: &str, ctx: &ContextState, max_output: Option<u32>) {
+        lock(&self.context_memo).insert(
+            cid.to_owned(),
+            ContextMemo {
+                overhead: ctx.overhead,
+                factor: ctx.factor,
+                max_output,
+            },
+        );
+    }
+
+    /// Compares the provider's prompt count with Oxide's estimate of the same request.
+    fn calibrate(&self, cid: &str, setup: &Setup, ctx: &mut ContextState, usage: Option<Usage>) {
+        let Some(u) = usage else { return };
+        let reported = if setup.kind == ProviderKind::Anthropic {
+            u.input_tokens
+                .saturating_add(u.cache_read_tokens)
+                .saturating_add(u.cache_write_tokens)
+        } else {
+            u.input_tokens
+        };
+        if reported == 0 || ctx.last_raw < 500 {
+            return;
+        }
+        ctx.factor = (f64::from(reported) / f64::from(ctx.last_raw)).clamp(0.5, 4.0);
+        if let Some(m) = lock(&self.context_memo).get_mut(cid) {
+            m.factor = ctx.factor;
+        }
+    }
+
+    /// A "context full" answer: its numbers correct the window and the estimate.
+    fn learn_overflow(
+        &self,
+        cid: &str,
+        setup: &Setup,
+        ctx: &mut ContextState,
+        numbers: ContextNumbers,
+    ) {
+        if let Some(w) = numbers.window.filter(|w| *w >= 1_024) {
+            tracing::info!(model = %setup.model_id, window = w, "context window learned");
+            lock(&self.learned_windows).insert(setup.model_id.clone(), w);
+            ctx.budget = Budget::new(
+                w,
+                WindowSource::Learned,
+                Some(ctx.budget.reserve),
+                setup.settings.context.threshold,
+            );
+        }
+        if let Some(p) = numbers.prompt
+            && ctx.last_raw >= 500
+        {
+            ctx.factor = (f64::from(p) / f64::from(ctx.last_raw)).clamp(0.5, 4.0);
+        } else {
+            // No count: assume the estimate was low by a good margin.
+            ctx.factor = (ctx.factor * 1.25).min(4.0);
+        }
+        self.remember_context(cid, ctx, None);
+    }
+
+    /// The messages of the next request, made to fit. Above the trigger (or when `force`d
+    /// after a "context full" answer): old tool results are cleared first, then the oldest
+    /// part of the conversation is compacted.
+    #[allow(clippy::too_many_arguments)]
+    async fn fit_context(
+        &self,
+        conversation: &Conversation,
+        thread: &[Message],
+        reply_id: &str,
+        setup: &Setup,
+        ctx: &mut ContextState,
+        reply: &ReplyBuilder,
+        force: bool,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> (Vec<ChatMessage>, ContextUsage) {
+        let on = setup.settings.context.compaction;
+        let trigger = ctx.budget.trigger;
+        let build = |ctx: &ContextState| {
+            let mut m = request_messages(&ctx.history, &reply.blocks[ctx.reply_from..]);
+            clear_results(&mut m, ctx.clear_turns);
+            m
+        };
+        let mut messages = build(ctx);
+        // Anthropic clears old results on its side; Oxide clears only when forced there.
+        let client_clearing = !setup.server_clearing || force;
+        if (on || force) && (force || ctx.estimate(&messages) > trigger) {
+            let keep = if force { 1 } else { KEEP_RESULT_TURNS };
+            if client_clearing {
+                let target = result_turns(&messages).saturating_sub(keep);
+                if target > ctx.clear_turns {
+                    ctx.clear_turns = target;
+                    messages = build(ctx);
+                }
+            }
+            if force || ctx.estimate(&messages) > trigger {
+                let before = ctx.estimate(&messages);
+                let trig = if force {
+                    CompactionTrigger::Overflow
+                } else {
+                    CompactionTrigger::Auto
+                };
+                if self
+                    .compact_reply(
+                        conversation,
+                        thread,
+                        reply_id,
+                        setup,
+                        ctx,
+                        reply,
+                        trig,
+                        before,
+                        cancelled,
+                    )
+                    .await
+                {
+                    messages = build(ctx);
+                    if client_clearing && ctx.estimate(&messages) > trigger {
+                        ctx.clear_turns = result_turns(&messages).saturating_sub(keep);
+                        messages = build(ctx);
+                    }
+                }
+            }
+        }
+        let usage = ContextUsage {
+            conversation_id: conversation.id.clone(),
+            tokens: ctx.estimate(&messages),
+            window: ctx.budget.window,
+            window_source: ctx.budget.source,
+            threshold: if on { trigger } else { 0 },
+            compacted: ctx.compacted || ctx.reply_from > 0,
+            cleared_results: cleared_count(&messages),
+        };
+        (messages, usage)
+    }
+
+    /// Summarizes the start of the conversation while a reply runs: the thread before it,
+    /// and the reply's steps except the last few. Returns whether it compacted.
+    #[allow(clippy::too_many_arguments)]
+    async fn compact_reply(
+        &self,
+        conversation: &Conversation,
+        thread: &[Message],
+        reply_id: &str,
+        setup: &Setup,
+        ctx: &mut ContextState,
+        reply: &ReplyBuilder,
+        trigger: CompactionTrigger,
+        before: u32,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> bool {
+        let cid = conversation.id.as_str();
+        // Where the reply can be cut: after the results of a step.
+        let keep = if trigger == CompactionTrigger::Overflow {
+            1
+        } else {
+            KEEP_STEPS
+        };
+        let candidates: Vec<usize> = reply
+            .step_starts
+            .iter()
+            .copied()
+            .chain([reply.blocks.len()])
+            .filter(|&i| i > ctx.reply_from && anchor_before(&reply.blocks, i).is_some())
+            .collect();
+        let cut = (candidates.len() > keep).then(|| candidates[candidates.len() - 1 - keep]);
+        let covered = match cut {
+            Some(c) => request_messages(&ctx.history, &reply.blocks[ctx.reply_from..c]),
+            None => ctx.history.clone(),
+        };
+        // Nothing worth summarizing (just an earlier summary, or a short thread).
+        let worth = messages_tokens(&covered);
+        let already = ctx.compacted && cut.is_none() && ctx.history.len() <= 1;
+        if already || worth < 400 {
+            return false;
+        }
+        let Some(last_user) = thread.last() else {
+            return false;
+        };
+        self.emit(cid, StreamEvent::Compacting);
+        let summary = match self
+            .summarize(conversation, &setup.settings, &covered, cancelled)
+            .await
+        {
+            Ok(Some(s)) => s,
+            Ok(None) => return false,
+            Err(e) => {
+                tracing::warn!(conversation = %cid, "couldn't compact the conversation: {e}");
+                return false;
+            }
+        };
+        let (text, model) = summary;
+        let text = with_latest_request(&text, &text_blocks(&last_user.content));
+        let (message_id, anchor) = match cut {
+            Some(c) => (reply_id.to_owned(), anchor_before(&reply.blocks, c)),
+            None => (last_user.id.clone(), None),
+        };
+        ctx.history = vec![ChatMessage {
+            role: Role::User,
+            content: vec![ContentBlock::text(summary_text(&text))],
+        }];
+        ctx.compacted = true;
+        if let Some(c) = cut {
+            ctx.reply_from = c;
+        }
+        ctx.clear_turns = 0;
+        let after = ctx.estimate(&request_messages(
+            &ctx.history,
+            &reply.blocks[ctx.reply_from..],
+        ));
+        let compaction = Compaction {
+            id: new_id(),
+            conversation_id: cid.to_owned(),
+            message_id,
+            after_tool_use_id: anchor,
+            summary: text,
+            trigger,
+            tokens_before: before,
+            tokens_after: after,
+            model: Some(model),
+            created_at: now_ms(),
+        };
+        if let Err(e) = self.store.add_compaction(&compaction).await {
+            tracing::warn!("couldn't save a compaction: {e}");
+        }
+        tracing::info!(conversation = %cid, before, after, "conversation compacted");
+        self.emit(cid, StreamEvent::Compacted { compaction });
+        true
+    }
+
+    /// Summarizes `covered` with the compaction model (Settings → Models, else the chat's
+    /// own), in parts when it's longer than that model can read at once. `None` when the
+    /// reply was stopped meanwhile.
+    async fn summarize(
+        &self,
+        conversation: &Conversation,
+        settings: &AppSettings,
+        covered: &[ChatMessage],
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Result<Option<(String, String)>, AgentError> {
+        let model_id = settings
+            .context
+            .compaction_model
+            .clone()
+            .unwrap_or_else(|| conversation.model.clone());
+        let (provider_id, model) = split_model_id(&model_id)
+            .ok_or_else(|| AgentError::Invalid("unknown compaction model".into()))?;
+        let (config, provider) = self.registry.provider(provider_id).await?;
+        let info = self.registry.find(&model_id).await;
+        let caps = match (&info, config.kind) {
+            (Some(i), _) => i.capabilities.clone(),
+            (None, ProviderKind::Anthropic) => anthropic_curated(model),
+            (None, _) => ModelCapabilities::default(),
+        };
+        let (window, _) = self.window_for(&model_id, info.as_ref(), config.kind, &settings.context);
+        let out_tokens = (window / 8).clamp(256, 4_096);
+        let words = out_tokens / 2;
+        let room = (window / 2)
+            .saturating_sub(out_tokens)
+            .saturating_sub(1_000)
+            .max(500);
+        let parts = chunks(&transcript(covered), room as usize * 4);
+        let n = parts.len();
+        let mut so_far: Option<String> = None;
+        for (i, part) in parts.iter().enumerate() {
+            let prompt = summary_prompt(
+                so_far.as_deref(),
+                part,
+                (n > 1).then_some((i + 1, n)),
+                words,
+            );
+            let mut request = ChatRequest::new(model, vec![ChatMessage::user(prompt)]);
+            request.system = Some(SUMMARY_SYSTEM.to_owned());
+            request.max_tokens = Some(match config.kind {
+                ProviderKind::Anthropic => out_tokens,
+                // Reasoning models spend output tokens before the answer.
+                _ => out_tokens + 2_048,
+            });
+            if (caps.thinking == ThinkingStyle::Adaptive && caps.thinking_off)
+                || caps.thinking == ThinkingStyle::Switch
+            {
+                request.thinking = Thinking::Off;
+            }
+            let text = tokio::select! {
+                r = tokio::time::timeout(SUMMARY_TIMEOUT, complete_text(provider.as_ref(), request)) => match r {
+                    Ok(r) => r?,
+                    Err(_) => return Err(AgentError::Invalid("the summary took too long".into())),
+                },
+                _ = cancelled.wait_for(|c| *c) => return Ok(None),
+            };
+            let text = strip_thinking(&text);
+            if text.trim().is_empty() {
+                return Err(AgentError::Invalid(
+                    "the model wrote an empty summary".into(),
+                ));
+            }
+            so_far = Some(text);
+        }
+        Ok(so_far.map(|s| (s, model_id)))
+    }
+
+    /// How full a chat's context is for the thread ending at `leaf_id`, against the model's
+    /// window (the composer's meter).
+    pub async fn context_usage(
+        &self,
+        conversation_id: &str,
+        leaf_id: Option<&str>,
+    ) -> Result<ContextUsage, AgentError> {
+        let conversation = self.store.get_conversation(conversation_id).await?;
+        let messages = self.store.list_messages(conversation_id).await?;
+        let thread = leaf_id
+            .and_then(|l| path_to(&messages, l))
+            .unwrap_or_default();
+        let settings = self.store.app_settings().await?;
+        let kind = match split_model_id(&conversation.model) {
+            Some((p, _)) => self.store.get_provider(p).await.map(|c| c.kind).ok(),
+            None => None,
+        }
+        .unwrap_or(ProviderKind::LmStudio);
+        let info = self.registry.find(&conversation.model).await;
+        let memo = lock(&self.context_memo)
+            .get(conversation_id)
+            .copied()
+            .unwrap_or_default();
+        let budget = self
+            .budget_for(
+                &conversation.model,
+                info.as_ref(),
+                kind,
+                &settings.context,
+                memo.max_output,
+            )
+            .await;
+        let compactions = self.store.compactions(conversation_id).await?;
+        let (history, compacted) = history_for(&thread, &compactions);
+        let tokens = scale(
+            memo.overhead.saturating_add(messages_tokens(&history)),
+            memo.factor,
+        );
+        Ok(ContextUsage {
+            conversation_id: conversation_id.to_owned(),
+            tokens,
+            window: budget.window,
+            window_source: budget.source,
+            threshold: if settings.context.compaction {
+                budget.trigger
+            } else {
+                0
+            },
+            compacted,
+            cleared_results: 0,
+        })
+    }
+
+    /// The chat's compactions (for the transcript's dividers).
+    pub async fn compactions(&self, conversation_id: &str) -> Result<Vec<Compaction>, AgentError> {
+        Ok(self.store.compactions(conversation_id).await?)
+    }
+
+    /// **Compact now**: summarizes the thread ending at `leaf_id`, so the next reply starts
+    /// from the summary.
+    pub async fn compact_now(
+        self: &Arc<Self>,
+        conversation_id: &str,
+        leaf_id: &str,
+    ) -> Result<Compaction, AgentError> {
+        let (cancel, mut cancelled) = watch::channel(false);
+        {
+            let mut running = self.running();
+            if running.contains_key(conversation_id) {
+                return Err(AgentError::Busy);
+            }
+            running.insert(conversation_id.to_owned(), Running { cancel });
+        }
+        let result = self
+            .compact_thread(conversation_id, leaf_id, &mut cancelled)
+            .await;
+        self.running().remove(conversation_id);
+        result
+    }
+
+    async fn compact_thread(
+        &self,
+        conversation_id: &str,
+        leaf_id: &str,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Result<Compaction, AgentError> {
+        let conversation = self.store.get_conversation(conversation_id).await?;
+        let messages = self.store.list_messages(conversation_id).await?;
+        let thread = path_to(&messages, leaf_id).ok_or(AgentError::NotFound("message"))?;
+        let compactions = self.store.compactions(conversation_id).await?;
+        let (history, compacted) = history_for(&thread, &compactions);
+        let tokens = messages_tokens(&history);
+        if tokens < 200 || (compacted && history.len() <= 1) {
+            return Err(AgentError::Invalid("there's nothing to compact yet".into()));
+        }
+        let settings = self.store.app_settings().await?;
+        let (text, model) = self
+            .summarize(&conversation, &settings, &history, cancelled)
+            .await?
+            .ok_or_else(|| AgentError::Invalid("compacting was stopped".into()))?;
+        let memo = lock(&self.context_memo)
+            .get(conversation_id)
+            .copied()
+            .unwrap_or_default();
+        let compaction = Compaction {
+            id: new_id(),
+            conversation_id: conversation_id.to_owned(),
+            message_id: leaf_id.to_owned(),
+            after_tool_use_id: None,
+            tokens_before: scale(memo.overhead.saturating_add(tokens), memo.factor),
+            tokens_after: scale(
+                memo.overhead
+                    .saturating_add(text_tokens(&summary_text(&text))),
+                memo.factor,
+            ),
+            summary: text,
+            trigger: CompactionTrigger::Manual,
+            model: Some(model),
+            created_at: now_ms(),
+        };
+        self.store.add_compaction(&compaction).await?;
+        Ok(compaction)
+    }
+
     /// One model request, streamed into `reply`.
     async fn stream_step(
         &self,
@@ -865,8 +1507,18 @@ impl ChatService {
         reply: &mut ReplyBuilder,
         cancelled: &mut watch::Receiver<bool>,
     ) -> Result<Outcome, AgentError> {
+        let step_start = reply.blocks.len();
         let mut stream = tokio::select! {
-            s = setup.provider.stream(request) => s?,
+            s = setup.provider.stream(request) => match s {
+                Ok(s) => s,
+                Err(e) if e.is_context_full() => {
+                    return Ok(Outcome::ContextFull {
+                        error: e.to_string(),
+                        numbers: e.context_numbers(),
+                    });
+                }
+                Err(e) => return Err(e.into()),
+            },
             _ = cancelled.wait_for(|c| *c) => return Ok(Outcome::Stopped),
         };
         let mut ticker = tokio::time::interval(FLUSH_EVERY);
@@ -880,7 +1532,21 @@ impl ChatService {
                 }
                 next = stream.next() => match next {
                     None => break Outcome::Failed("the reply ended unexpectedly".into()),
+                    Some(Err(e)) if e.is_context_full() && reply.blocks.len() == step_start => {
+                        break Outcome::ContextFull {
+                            error: e.to_string(),
+                            numbers: e.context_numbers(),
+                        };
+                    }
                     Some(Err(e)) => break Outcome::Failed(e.to_string()),
+                    Some(Ok(ChatEvent::Stop(StopReason::ContextFull)))
+                        if reply.blocks.len() == step_start =>
+                    {
+                        break Outcome::ContextFull {
+                            error: "the conversation is too long for this model".into(),
+                            numbers: ContextNumbers::default(),
+                        };
+                    }
                     Some(Ok(ChatEvent::Stop(reason))) => break Outcome::Finished(reason),
                     Some(Ok(event)) => event,
                 },
@@ -1133,6 +1799,7 @@ impl ChatService {
         let sandbox = &setup.sandbox;
         let shell = setup.shell.as_ref();
         let browser_llm = setup.browser_llm.as_ref();
+        let cap = setup.result_cap;
         let fetch_hint = fetch_failure_hint(
             setup
                 .tool_set
@@ -1213,8 +1880,9 @@ impl ChatService {
                     out
                 } else if let ToolKind::Browser { tool } = &r.entry.kind {
                     let started = Instant::now();
+                    let input = capped_input(&r.entry, &r.input, cap);
                     let mut out = self
-                        .run_browser_tool(cid, tool, &r.input, &r.call.id, browser_llm)
+                        .run_browser_tool(cid, tool, &input, &r.call.id, browser_llm)
                         .await;
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
@@ -1232,10 +1900,8 @@ impl ChatService {
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
                 } else {
-                    let mut out = self
-                        .tools
-                        .run(&r.entry, &r.input, &r.call.id, settings)
-                        .await;
+                    let input = capped_input(&r.entry, &r.input, cap);
+                    let mut out = self.tools.run(&r.entry, &input, &r.call.id, settings).await;
                     // A page that couldn't be fetched: point to a search instead of guesses.
                     if out.is_error
                         && r.entry.kind == ToolKind::Builtin(Builtin::WebFetch)
@@ -1245,6 +1911,9 @@ impl ChatService {
                     }
                     out
                 };
+                // No single result may take more than its share of the context window.
+                let mut out = out;
+                fit_output(&mut out, cap);
                 self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
                     .await;
                 lock(done).push((i, out));
@@ -1727,6 +2396,40 @@ fn text_blocks(content: &[ContentBlock]) -> String {
         .join("\n\n")
 }
 
+/// A call's input with `max_chars` held to the result cap, for tools that read pages in
+/// parts (so their "read on from …" notes stay right).
+fn capped_input(entry: &ToolEntry, input: &Value, cap: usize) -> Value {
+    let default = if entry.kind == ToolKind::Builtin(Builtin::WebFetch) {
+        crate::tools::web::DEFAULT_FETCH_CHARS
+    } else if matches!(&entry.kind, ToolKind::Browser { tool } if tool == "read_page") {
+        browser_tools::READ_DEFAULT_CHARS
+    } else {
+        return input.clone();
+    };
+    let Some(o) = input.as_object() else {
+        return input.clone();
+    };
+    let asked = o
+        .get("max_chars")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(default);
+    let mut o = o.clone();
+    // Leave room for the page's heading and notes.
+    let room = cap.saturating_sub(300).max(1_000);
+    o.insert("max_chars".into(), Value::from(asked.min(room)));
+    Value::Object(o)
+}
+
+/// Drops a `<think>…</think>` block some local models put before their answer.
+fn strip_thinking(text: &str) -> String {
+    let t = text.trim();
+    match (t.find("<think>"), t.find("</think>")) {
+        (Some(0), Some(end)) => t[end + "</think>".len()..].trim().to_owned(),
+        _ => t.to_owned(),
+    }
+}
+
 /// The path from the root to `id`, or `None` if `id` isn't among `messages`.
 pub fn path_to(messages: &[Message], id: &str) -> Option<Vec<Message>> {
     let by_id: HashMap<&str, &Message> = messages.iter().map(|m| (m.id.as_str(), m)).collect();
@@ -1768,6 +2471,8 @@ struct ReplyBuilder {
     pending_thinking: String,
     /// Tool-call arguments not yet sent to the UI: (call id, JSON text).
     pending_input: Vec<(String, String)>,
+    /// Where each step's blocks start.
+    step_starts: Vec<usize>,
 }
 
 fn add_usage(a: Option<Usage>, b: Option<Usage>) -> Option<Usage> {
@@ -1786,6 +2491,9 @@ impl ReplyBuilder {
     fn begin_step(&mut self) {
         self.end_thinking();
         self.usage_done = add_usage(self.usage_done, self.usage_step.take());
+        if self.step_starts.last() != Some(&self.blocks.len()) {
+            self.step_starts.push(self.blocks.len());
+        }
     }
 
     fn total_usage(&self) -> Option<Usage> {
@@ -2083,6 +2791,8 @@ pub(crate) mod tests {
     pub enum Step {
         Event(ChatEvent),
         Fail(&'static str),
+        /// As the first step: the request is refused with this HTTP status and message.
+        Reject(u16, &'static str),
         /// Wait until the test sends on the gate channel.
         Gate,
     }
@@ -2100,7 +2810,11 @@ pub(crate) mod tests {
         gate_tx: mpsc::UnboundedSender<()>,
         unverified: bool,
         probe_answer: bool,
+        /// The model's context window in its listing.
+        window: Option<u32>,
         pub requests: Mutex<Vec<ChatRequest>>,
+        /// Summarizing requests (answered without a script).
+        pub summaries: Mutex<Vec<ChatRequest>>,
         pub list_calls: AtomicUsize,
         pub probe_calls: AtomicUsize,
     }
@@ -2123,7 +2837,9 @@ pub(crate) mod tests {
                     gate_tx,
                     unverified: false,
                     probe_answer: false,
+                    window: None,
                     requests: Mutex::new(Vec::new()),
+                    summaries: Mutex::new(Vec::new()),
                     list_calls: AtomicUsize::new(0),
                     probe_calls: AtomicUsize::new(0),
                 }),
@@ -2136,6 +2852,10 @@ pub(crate) mod tests {
 
         pub fn probe_answer(self, tools: bool) -> Self {
             self.rebuild(|i| i.probe_answer = tools)
+        }
+
+        pub fn window(self, tokens: u32) -> Self {
+            self.rebuild(|i| i.window = Some(tokens))
         }
 
         fn rebuild(self, f: impl FnOnce(&mut FakeInner)) -> Self {
@@ -2178,7 +2898,7 @@ pub(crate) mod tests {
                     tools: !self.fake.unverified,
                     ..ModelCapabilities::default()
                 },
-                context_window: None,
+                context_window: self.fake.window,
                 max_output_tokens: None,
             };
             let unverified = if self.fake.unverified {
@@ -2196,6 +2916,21 @@ pub(crate) mod tests {
         }
 
         fn stream(&self, request: ChatRequest) -> BoxFuture<'_, Result<ChatStream, LlmError>> {
+            if request.system.as_deref() == Some(SUMMARY_SYSTEM) {
+                let n = {
+                    let mut s = self.fake.summaries.lock().expect("lock");
+                    s.push(request);
+                    s.len()
+                };
+                let events = vec![
+                    Ok(ChatEvent::TextDelta(format!(
+                        "SUMMARY {n}: the user wants a sheet."
+                    ))),
+                    Ok(ChatEvent::Stop(StopReason::EndTurn)),
+                ];
+                return async move { Ok(futures_util::stream::iter(events).boxed() as ChatStream) }
+                    .boxed();
+            }
             self.fake.requests.lock().expect("lock").push(request);
             let script = {
                 let mut s = self.fake.scripts.lock().expect("lock");
@@ -2205,6 +2940,13 @@ pub(crate) mod tests {
                     s.remove(0)
                 }
             };
+            if let Some(Step::Reject(status, message)) = script.first() {
+                let e = LlmError::Http {
+                    status: *status,
+                    message: (*message).to_owned(),
+                };
+                return async move { Err(e) }.boxed();
+            }
             let gate = self.fake.gate.lock().expect("lock").take();
             async move {
                 let state = (script.into_iter(), gate);
@@ -2215,6 +2957,7 @@ pub(crate) mod tests {
                             Step::Fail(m) => {
                                 return Some((Err(LlmError::Stream(m.into())), (steps, gate)));
                             }
+                            Step::Reject(..) => {}
                             Step::Gate => {
                                 if let Some(g) = gate.as_mut() {
                                     g.recv().await;
@@ -2330,9 +3073,17 @@ pub(crate) mod tests {
         mcp: Option<Arc<FakeMcp>>,
         skills: Option<crate::skills::Skills>,
     ) -> Fixture {
+        fixture_fake(FakeProvider::new(scripts), mcp, skills, "What is Rust?").await
+    }
+
+    async fn fixture_fake(
+        fake: FakeProvider,
+        mcp: Option<Arc<FakeMcp>>,
+        skills: Option<crate::skills::Skills>,
+        first: &str,
+    ) -> Fixture {
         let store = Store::open_in_memory().await.expect("store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
-        let fake = FakeProvider::new(scripts);
         let registry = Arc::new(ModelRegistry::with_connector(
             store.clone(),
             secrets.clone(),
@@ -2351,7 +3102,7 @@ pub(crate) mod tests {
         let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
         let (chat, first) = store
             .start_conversation(StartConversation {
-                text: "What is Rust?".into(),
+                text: first.into(),
                 model: "lmstudio/fake-model".into(),
                 project_id: None,
                 attachments: Vec::new(),
@@ -4731,5 +5482,424 @@ class Agent:
             .collect();
         assert_eq!(ids, vec!["a", "c", "d"]);
         assert!(path_to(&all, "x").is_none());
+    }
+
+    // ---- Context management (Phase 13b) ----
+
+    /// A tool call step without usage, so estimates aren't recalibrated.
+    fn read_step(id: &str) -> Vec<Step> {
+        let mut s = call(id, "fs__read", &format!("{{\"path\":\"{id}.txt\"}}"));
+        s.push(ev(ChatEvent::Stop(StopReason::ToolUse)));
+        s
+    }
+
+    fn answer(t: &str) -> Vec<Step> {
+        vec![text(t), ev(ChatEvent::Stop(StopReason::EndTurn))]
+    }
+
+    async fn context_fixture(fake: FakeProvider, result_chars: usize, first: &str) -> Fixture {
+        let mcp = Arc::new(FakeMcp {
+            tools: vec![tool("fs", "read", true)],
+            result_chars,
+            ..FakeMcp::default()
+        });
+        let f = fixture_fake(fake, Some(mcp), None, first).await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.tools.auto_allow_read_only = true;
+        settings.tools.max_steps = 100;
+        settings.models.auto_title = false;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f
+    }
+
+    /// Oxide's estimate of a request (these tests report no provider counts).
+    fn estimate(r: &ChatRequest) -> u32 {
+        overhead_tokens(r) + messages_tokens(&r.messages)
+    }
+
+    fn request_text(r: &ChatRequest) -> String {
+        transcript(&r.messages)
+    }
+
+    async fn wait_done(f: &Fixture, n: usize) {
+        f.sink
+            .wait_for(|r| {
+                r.events()
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Done { .. } | StreamEvent::Failed { .. }))
+                    .count()
+                    >= n
+            })
+            .await;
+    }
+
+    fn last_done(f: &Fixture) -> Message {
+        f.sink
+            .events()
+            .into_iter()
+            .rev()
+            .find_map(|e| match e {
+                StreamEvent::Done { message: Some(m) } => Some(m),
+                _ => None,
+            })
+            .expect("a saved reply")
+    }
+
+    #[tokio::test]
+    async fn a_long_tool_loop_clears_old_results_and_caps_new_ones() {
+        let mut scripts: Vec<Vec<Step>> = (0..12).map(|i| read_step(&format!("r{i}"))).collect();
+        scripts.push(answer("All read."));
+        let f = context_fixture(
+            FakeProvider::new(scripts).window(8_000),
+            5_000,
+            "Read them all",
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert_eq!(m.stop_reason, Some(StopReason::EndTurn));
+        // The transcript keeps every result, each cut to its share of the small window.
+        let results: Vec<String> = m
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => Some(text_blocks(content)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 12);
+        assert!(
+            results
+                .iter()
+                .all(|r| r.contains("Cut to fit this model's context window"))
+        );
+        let budget = Budget::new(8_000, WindowSource::Provider, None, 75);
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 13);
+        for (i, r) in reqs.iter().enumerate() {
+            assert!(
+                estimate(r) <= budget.hard_limit(),
+                "request {i}: {}",
+                estimate(r)
+            );
+        }
+        // Late requests carry notes for the old results, and every call is still there.
+        let last = request_text(&reqs[12]);
+        assert!(
+            last.contains("[Result cleared to save context: fs__read r0.txt"),
+            "{last}"
+        );
+        assert_eq!(last.matches("[Tool call: fs__read").count(), 12);
+        assert!(
+            f.fake.summaries.lock().expect("lock").is_empty(),
+            "clearing was enough"
+        );
+        let cleared = f
+            .sink
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::Context { usage } => Some(usage.cleared_results),
+                _ => None,
+            })
+            .max();
+        assert!(cleared.is_some_and(|c| c >= 8), "{cleared:?}");
+        assert!(
+            f.store
+                .compactions(&f.chat.id)
+                .await
+                .expect("lists")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_long_request_is_compacted_once_and_the_summary_is_reused() {
+        let big = "Make me a spreadsheet of badminton players. ".repeat(600);
+        let mut scripts = vec![read_step("a"), read_step("b")];
+        scripts.push(answer("Here's the sheet."));
+        scripts.push(answer("Doubles too."));
+        let f = context_fixture(FakeProvider::new(scripts).window(8_000), 0, &big).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_done(&f, 1).await;
+        assert_eq!(saved(&f).stop_reason, Some(StopReason::EndTurn));
+        let events = f.sink.events();
+        let at = |pred: fn(&StreamEvent) -> bool| events.iter().position(pred);
+        let compacting = at(|e| matches!(e, StreamEvent::Compacting)).expect("compacting");
+        let compacted = at(|e| matches!(e, StreamEvent::Compacted { .. })).expect("compacted");
+        assert!(compacting < compacted);
+        let all = f.store.compactions(&f.chat.id).await.expect("lists");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].message_id, f.first.id);
+        assert_eq!(all[0].after_tool_use_id, None);
+        assert_eq!(all[0].trigger, CompactionTrigger::Auto);
+        assert!(all[0].tokens_before > all[0].tokens_after);
+        assert!(
+            all[0]
+                .summary
+                .contains("## The user's latest request (word for word)")
+        );
+        let reqs = f.fake.requests();
+        let first = request_text(&reqs[0]);
+        assert!(first.contains(crate::compaction::SUMMARY_HEAD) && first.contains("SUMMARY "));
+        // A request longer than the summarizer can read at once goes in parts.
+        let made = f.fake.summaries.lock().expect("lock").len();
+        assert!(made > 1);
+        assert!(estimate(&reqs[0]) < 6_000, "{}", estimate(&reqs[0]));
+        // The summarizer read the whole request.
+        let asked = request_text(&f.fake.summaries.lock().expect("lock")[0]);
+        assert!(asked.contains("badminton players"));
+
+        // The next turn starts from the stored summary: no new summary is made.
+        let reply = last_done(&f);
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply.id),
+                vec![ContentBlock::text("And doubles?")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        wait_done(&f, 2).await;
+        assert_eq!(f.fake.summaries.lock().expect("lock").len(), made);
+        let next = f.fake.requests().last().cloned().expect("a request");
+        let text = request_text(&next);
+        assert!(text.contains(&format!("SUMMARY {made}")) && text.contains("And doubles?"));
+        // Only the start of the request stays word for word (in the summary).
+        assert!(!text.contains(&big[..6_000]));
+        assert_eq!(
+            text.matches("[Tool call: fs__read").count(),
+            2,
+            "the reply follows"
+        );
+        assert_eq!(
+            f.store.compactions(&f.chat.id).await.expect("lists").len(),
+            1
+        );
+        let usage = f
+            .service
+            .context_usage(&f.chat.id, Some(&last_done(&f).id))
+            .await
+            .expect("usage");
+        assert!(usage.compacted);
+        assert_eq!(usage.window, 8_000);
+        assert_eq!(usage.window_source, WindowSource::Provider);
+    }
+
+    #[tokio::test]
+    async fn a_reply_is_compacted_while_it_runs_and_later_turns_resume_after_the_cut() {
+        let big = "Find every champion since 2016. ".repeat(190);
+        let mut scripts: Vec<Vec<Step>> = (0..30).map(|i| read_step(&format!("s{i}"))).collect();
+        scripts.push(answer("Done."));
+        scripts.push(answer("Next."));
+        let f = context_fixture(FakeProvider::new(scripts).window(8_000), 4_000, &big).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_done(&f, 1).await;
+        let reply = last_done(&f);
+        assert_eq!(reply.stop_reason, Some(StopReason::EndTurn));
+        let budget = Budget::new(8_000, WindowSource::Provider, None, 75);
+        for r in f.fake.requests() {
+            assert!(estimate(&r) <= budget.hard_limit(), "{}", estimate(&r));
+        }
+        let all = f.store.compactions(&f.chat.id).await.expect("lists");
+        let inside: Vec<&Compaction> = all.iter().filter(|c| c.message_id == reply.id).collect();
+        assert!(!inside.is_empty(), "{all:?}");
+        let anchor = inside
+            .last()
+            .and_then(|c| c.after_tool_use_id.clone())
+            .expect("anchored to a step");
+        // The next turn: the summary, then the reply from the step after the anchor.
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply.id),
+                vec![ContentBlock::text("Thanks")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        wait_done(&f, 2).await;
+        let next = f.fake.requests().last().cloned().expect("a request");
+        let text = request_text(&next);
+        let n: usize = anchor.trim_start_matches('s').parse().expect("number");
+        assert!(text.contains(crate::compaction::SUMMARY_HEAD));
+        assert!(!text.contains(&format!("s{n}.txt\"")), "{text}");
+        assert!(text.contains(&format!("s{}.txt", n + 1)), "{text}");
+        assert!(text.contains("Thanks"));
+        assert!(estimate(&next) <= budget.hard_limit());
+    }
+
+    #[tokio::test]
+    async fn a_context_full_answer_compacts_and_retries_once() {
+        let first = "Tell me about badminton. ".repeat(250);
+        let fake = FakeProvider::new(vec![
+            vec![Step::Reject(
+                400,
+                "request exceeds the context window: prompt (9000 tokens) leaves no room to \
+                 answer in the context (4096); requests are never truncated",
+            )],
+            answer("Fits now."),
+        ]);
+        let f = context_fixture(fake, 0, &first).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert_eq!(text_blocks(&m.content), "Fits now.");
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 2);
+        assert!(request_text(&reqs[1]).contains("SUMMARY "));
+        let all = f.store.compactions(&f.chat.id).await.expect("lists");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].trigger, CompactionTrigger::Overflow);
+        // The window the answer named is used from now on.
+        let usage = f
+            .service
+            .context_usage(&f.chat.id, Some(&m.id))
+            .await
+            .expect("usage");
+        assert_eq!(
+            (usage.window, usage.window_source),
+            (4_096, WindowSource::Learned)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_context_full_answer_fails_the_reply_plainly() {
+        let reject = Step::Reject(400, "This model's maximum context length is 4096 tokens");
+        let fake = FakeProvider::new(vec![vec![reject.clone()], vec![reject]]);
+        let f = context_fixture(fake, 0, &"Long question. ".repeat(200)).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        match f.sink.events().last() {
+            Some(StreamEvent::Failed { error, .. }) => {
+                assert!(error.contains("still doesn't fit"), "{error}");
+            }
+            other => panic!("fails: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fifty_turn_chat_keeps_working_past_the_window() {
+        let scripts: Vec<Vec<Step>> = (0..50)
+            .map(|i| answer(&format!("Answer {i}. {}", "Some detail here. ".repeat(70))))
+            .collect();
+        let f = context_fixture(FakeProvider::new(scripts).window(8_000), 0, "Turn 0").await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_done(&f, 1).await;
+        for i in 1..50 {
+            let leaf = last_done(&f);
+            f.service
+                .send(
+                    &f.chat.id,
+                    Some(&leaf.id),
+                    vec![ContentBlock::text(format!(
+                        "Turn {i}. {}",
+                        "A follow-up question. ".repeat(60)
+                    ))],
+                    GenerateOptions::default(),
+                )
+                .await
+                .expect("sends");
+            wait_done(&f, i + 1).await;
+            assert_eq!(
+                last_done(&f).stop_reason,
+                Some(StopReason::EndTurn),
+                "turn {i}"
+            );
+        }
+        let budget = Budget::new(8_000, WindowSource::Provider, None, 75);
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 50);
+        for (i, r) in reqs.iter().enumerate() {
+            assert!(
+                estimate(r) <= budget.hard_limit(),
+                "turn {i}: {}",
+                estimate(r)
+            );
+        }
+        let all = f.store.compactions(&f.chat.id).await.expect("lists");
+        let summaries = f.fake.summaries.lock().expect("lock").len();
+        assert!((3..=25).contains(&all.len()), "{}", all.len());
+        assert!(summaries >= all.len());
+        assert!(request_text(&reqs[49]).contains("Turn 49."));
+    }
+
+    #[tokio::test]
+    async fn compact_now_and_the_context_meter() {
+        let first = "Plan a trip to Japan with details. ".repeat(80);
+        let fake = FakeProvider::new(vec![answer("Here's a plan."), answer("Sure.")]);
+        let f = context_fixture(fake, 0, &first).await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_done(&f, 1).await;
+        let reply = last_done(&f);
+        let before = f
+            .service
+            .context_usage(&f.chat.id, Some(&reply.id))
+            .await
+            .expect("usage");
+        assert!(!before.compacted);
+        assert_eq!(before.window_source, WindowSource::Default);
+        assert!(before.threshold > 0 && before.tokens > 600);
+        let c = f
+            .service
+            .compact_now(&f.chat.id, &reply.id)
+            .await
+            .expect("compacts");
+        assert_eq!(c.trigger, CompactionTrigger::Manual);
+        assert_eq!(c.message_id, reply.id);
+        let after = f
+            .service
+            .context_usage(&f.chat.id, Some(&reply.id))
+            .await
+            .expect("usage");
+        assert!(after.compacted && after.tokens < before.tokens, "{after:?}");
+        assert!(matches!(
+            f.service.compact_now(&f.chat.id, &reply.id).await,
+            Err(AgentError::Invalid(_))
+        ));
+        assert_eq!(
+            f.service
+                .compactions(&f.chat.id)
+                .await
+                .expect("lists")
+                .len(),
+            1
+        );
+        // The next reply starts from the summary.
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply.id),
+                vec![ContentBlock::text("More?")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        wait_done(&f, 2).await;
+        let text = request_text(&f.fake.requests()[1]);
+        assert!(text.contains("SUMMARY 1") && !text.contains("Here's a plan."));
     }
 }

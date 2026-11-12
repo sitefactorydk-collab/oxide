@@ -9,12 +9,13 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
-import { memo, useEffect, useState, type ReactNode } from "react";
-import type { Feedback, Message, Rating, Usage } from "@/bindings";
+import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
+import type { Compaction, Feedback, Message, Rating, Usage } from "@/bindings";
 import { Markdown } from "@/components/markdown/Markdown";
 import { IconButton } from "@/components/ui/IconButton";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
+import { CompactionDivider } from "@/features/context/CompactionDivider";
 import { useModelLabel } from "@/features/models/queries";
 import { cn } from "@/lib/cn";
 import { useCopy } from "@/lib/useCopy";
@@ -298,6 +299,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   onSelectVersion,
   onRetry,
   onRate,
+  compactions = [],
 }: {
   message: Message;
   isLast: boolean;
@@ -306,6 +308,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   onSelectVersion: (message: Message, index: number) => void;
   onRetry: (message: Message) => void;
   onRate: (message: Message, feedback: Feedback | null) => void;
+  /** Compactions made while this reply was written (shown after the step they follow). */
+  compactions?: Compaction[];
 }) {
   const [copied, copy] = useCopy();
   const note = stopNote(message);
@@ -319,7 +323,14 @@ export const AssistantMessage = memo(function AssistantMessage({
         ) : seg.kind === "thinking" ? (
           <ThinkingBlock key={i} thinking={{ seconds: seg.seconds, text: seg.text }} />
         ) : (
-          <ToolCallBlock key={seg.call.id} call={seg.call} />
+          <Fragment key={seg.call.id}>
+            <ToolCallBlock call={seg.call} />
+            {compactions
+              .filter((c) => c.afterToolUseId === seg.call.id)
+              .map((c) => (
+                <CompactionDivider key={c.id} compaction={c} />
+              ))}
+          </Fragment>
         ),
       )}
       {note && (
@@ -412,6 +423,9 @@ export function LiveReplyView({ conversationId }: { conversationId: string }) {
           return (
             <Markdown key={i} text={b.text} streaming={isLast} className="ox-prose select-text" />
           );
+        }
+        if (b.kind === "compaction") {
+          return <CompactionDivider key={b.compaction.id} compaction={b.compaction} />;
         }
         if (b.kind === "thinking") {
           return b.endedAt !== null ? (

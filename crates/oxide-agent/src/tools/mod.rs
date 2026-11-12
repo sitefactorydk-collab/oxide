@@ -960,6 +960,8 @@ pub(crate) mod tests {
         pub calls: Mutex<Vec<(String, String, Value)>>,
         /// Delay for calls, to test stopping and parallel runs.
         pub delay_ms: u64,
+        /// Pads every result to this many characters (0: no padding).
+        pub result_chars: usize,
     }
 
     pub fn tool(server: &str, name: &str, read_only: bool) -> McpTool {
@@ -999,10 +1001,12 @@ pub(crate) mod tests {
                 if tool == "broken" {
                     return Err("the server crashed".into());
                 }
+                let mut text = format!("{tool} ran with {arguments}");
+                while text.len() < self.result_chars {
+                    text.push_str(" lorem");
+                }
                 Ok(McpToolResult {
-                    content: vec![McpContent::Text {
-                        text: format!("{tool} ran with {arguments}"),
-                    }],
+                    content: vec![McpContent::Text { text }],
                     structured: None,
                     is_error: tool == "fails",
                     duration_ms: 1,

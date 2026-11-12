@@ -13,6 +13,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { AttachmentChips } from "@/features/attachments/AttachmentChips";
 import { limitsSummary } from "@/features/attachments/limits";
 import { useAttachments } from "@/features/attachments/useAttachments";
+import { ContextMeter } from "@/features/context/ContextMeter";
 import { findListing, findModel } from "@/features/models/models";
 import { useModels } from "@/features/models/queries";
 import { isExtensionFile, useExtensionDrop } from "@/features/extensions/store";
@@ -49,6 +50,7 @@ export function Composer({
   placeholder,
   autoFocus,
   conversationId,
+  leafId = null,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -63,6 +65,8 @@ export function Composer({
   autoFocus?: boolean;
   /** The chat this composer writes in (`undefined` on the new chat screens). */
   conversationId?: string;
+  /** The last message of the thread shown (for the context meter). */
+  leafId?: string | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -235,6 +239,14 @@ export function Composer({
           <p className="flex-1 truncate px-2 text-center text-xs text-fg-subtle">
             AI can be wrong. Check anything important.
           </p>
+          {conversationId && (
+            <ContextMeter
+              conversationId={conversationId}
+              leafId={leafId}
+              modelId={modelId}
+              streaming={streaming}
+            />
+          )}
           <ModelPicker value={modelId} onChange={onModelChange} />
         </div>
       )}

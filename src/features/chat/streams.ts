@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type {
   ChatStreamEvent,
+  Compaction,
   ContentBlock,
+  ContextUsage,
   Message,
   ToolApprovalRequest,
   Usage,
@@ -44,7 +46,9 @@ export interface ToolCallView {
 export type LiveBlock =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string; startedAt: number; endedAt: number | null }
-  | { kind: "tool"; call: ToolCallView };
+  | { kind: "tool"; call: ToolCallView }
+  /** The conversation was compacted here (a summary stands in for what came before). */
+  | { kind: "compaction"; compaction: Compaction };
 
 /** A reply being written, built from `chatStream` events. */
 export interface LiveReply {
@@ -55,6 +59,10 @@ export interface LiveReply {
   startedAt: number;
   blocks: LiveBlock[];
   usage: Usage | null;
+  /** How full the context was at the latest request. */
+  context: ContextUsage | null;
+  /** Oxide is summarizing the start of the conversation. */
+  compacting: boolean;
 }
 
 export interface ReplyFailure {
@@ -141,6 +149,8 @@ export function reduceStream(
             startedAt: now,
             blocks: [],
             usage: null,
+            context: null,
+            compacting: false,
           },
         },
         failures: without(state.failures, id),
@@ -241,6 +251,22 @@ export function reduceStream(
     case "usage":
       if (!live) return state;
       return put({ ...live, usage: event.usage });
+    case "context":
+      if (!live) return state;
+      return put({ ...live, context: event.usage, compacting: false });
+    case "compacting":
+      if (!live) return state;
+      return put({ ...live, compacting: true });
+    case "compacted":
+      if (!live) return state;
+      return put({
+        ...live,
+        compacting: false,
+        blocks: [
+          ...endThinking(live.blocks, now),
+          { kind: "compaction", compaction: event.compaction },
+        ],
+      });
     case "done":
       return { live: without(state.live, id), failures: without(state.failures, id) };
     case "failed":

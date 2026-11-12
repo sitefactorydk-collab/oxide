@@ -25,6 +25,8 @@ mod types;
 #[cfg(test)]
 pub(crate) mod test_server;
 
-pub use error::LlmError;
+pub use error::{ContextNumbers, LlmError, context_numbers};
 pub use provider::{Endpoint, ModelListing, Provider, complete_text, connect};
-pub use types::{ChatEvent, ChatMessage, ChatRequest, ChatStream, Thinking, ToolSpec};
+pub use types::{
+    ChatEvent, ChatMessage, ChatRequest, ChatStream, Thinking, ToolResultClearing, ToolSpec,
+};

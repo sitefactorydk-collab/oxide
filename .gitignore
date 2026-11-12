@@ -23,3 +23,6 @@ Thumbs.db
 
 # Local script logs
 logs/
+
+# The 2026-11-12 chat export behind Phase 13b (4.5 MB of fetched web text); kept locally only
+docs/*context-fill.json

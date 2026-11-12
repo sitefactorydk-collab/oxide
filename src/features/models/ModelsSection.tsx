@@ -2,6 +2,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ModelInfo, ProviderModels } from "@/bindings";
 import { NumberSetting } from "@/components/NumberSetting";
+import { ContextSettingsFields, WindowField } from "@/features/context/ContextSettingsFields";
 import { useSetModelSettings, useSettings, DEFAULT_SETTINGS } from "@/features/settings/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -53,6 +54,11 @@ export function ModelsSection() {
       <BudgetField
         value={models.thinkingBudget}
         onChange={(thinkingBudget) => setModels({ thinkingBudget })}
+      />
+      <ContextSettingsFields
+        models={usable}
+        modelLabel={(m) => `${m.label} (${providerName(lists, m)})`}
+        Toggle={Toggle}
       />
 
       <div className="flex items-center justify-between border-t border-line pt-6">
@@ -115,7 +121,8 @@ function ProviderModelList({ list }: { list: ProviderModels }) {
                   <div className="truncate font-mono text-xs text-fg-subtle">{m.model}</div>
                 )}
               </div>
-              <div className="flex shrink-0 gap-1">
+              <div className="flex shrink-0 items-center gap-1">
+                <WindowField model={m} />
                 <Badge on={m.capabilities.tools}>
                   {m.capabilities.tools ? "Tools" : "No tools"}
                 </Badge>

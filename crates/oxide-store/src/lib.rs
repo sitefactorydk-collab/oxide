@@ -6,6 +6,7 @@
 
 mod artifacts;
 mod chat_tools;
+mod compactions;
 mod conversations;
 mod knowledge;
 mod memory;

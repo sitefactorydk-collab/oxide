@@ -147,6 +147,40 @@ async stopGeneration(conversationId: string) : Promise<Result<boolean, CommandEr
 }
 },
 /**
+ * How full a chat's context is for the thread ending at `leaf_id` (the composer's meter).
+ */
+async chatContext(conversationId: string, leafId: string | null) : Promise<Result<ContextUsage, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_context", { conversationId, leafId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The summaries that stand in for the start of a chat (the transcript's dividers).
+ */
+async chatCompactions(conversationId: string) : Promise<Result<Compaction[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_compactions", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Compact now**: summarizes the thread ending at `leaf_id`; the next reply starts from the
+ * summary.
+ */
+async compactChat(conversationId: string, leafId: string) : Promise<Result<Compaction, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compact_chat", { conversationId, leafId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Full-text search over chat titles and message text.
  */
 async searchConversations(query: string, limit: number) : Promise<Result<SearchHit[], CommandError>> {
@@ -1372,7 +1406,11 @@ taskListChanged: "task-list-changed"
 
 /** user-defined types **/
 
-export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings }
+export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings; 
+/**
+ * Context management (shown in Settings → Models).
+ */
+context: ContextSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -1726,6 +1764,43 @@ export type CommandError =
  */
 { kind: "internal"; message: string }
 /**
+ * A summary that stands in for the start of a chat in later requests.
+ * 
+ * It covers the thread from the first message up to and including `message_id`. With
+ * `after_tool_use_id` set, it covers that (assistant) message only up to the tool results
+ * of the step that ended with that call: the reply was compacted while it was being
+ * written, and its later steps are sent as they are.
+ */
+export type Compaction = { id: string; conversationId: string; messageId: string; afterToolUseId: string | null; 
+/**
+ * The summary, in Markdown.
+ */
+summary: string; trigger: CompactionTrigger; 
+/**
+ * Estimated prompt tokens before and after.
+ */
+tokensBefore: number; tokensAfter: number; 
+/**
+ * The model that wrote the summary.
+ */
+model: string | null; createdAt: number }
+/**
+ * Why a compaction was made.
+ */
+export type CompactionTrigger = 
+/**
+ * The chat grew past the threshold.
+ */
+"auto" | 
+/**
+ * The user pressed **Compact now**.
+ */
+"manual" | 
+/**
+ * The provider answered that the context was full; Oxide compacted and tried again.
+ */
+"overflow"
+/**
  * A piece of message content. Mirrors the block types of the model APIs.
  */
 export type ContentBlock = { type: "text"; text: string } | { type: "image"; mediaType: string; source: MediaSource } | { type: "document"; mediaType: string; name: string; source: MediaSource } | 
@@ -1750,6 +1825,71 @@ export type ContentBlock = { type: "text"; text: string } | { type: "image"; med
  * (`raw_json`), because it must be sent back unchanged while the reply continues.
  */
 { type: "serverToolResult"; toolUseId: string; rawJson: string } | { type: "artifactRef"; artifactId: string; title: string; version: number }
+/**
+ * Context management (Settings → Models).
+ */
+export type ContextSettings = { 
+/**
+ * Clear old tool results and compact long chats automatically.
+ */
+compaction: boolean; 
+/**
+ * Share of the context window (percent) at which that starts.
+ */
+threshold: number; 
+/**
+ * Model that writes summaries (`<providerId>/<model>`). `None`: the chat's own model.
+ */
+compactionModel: string | null; 
+/**
+ * On Anthropic, let the API clear old tool results itself (context editing).
+ */
+anthropicClearing: boolean; 
+/**
+ * Context windows set by hand, for models whose server doesn't report one.
+ */
+windows: ContextWindowOverride[] }
+/**
+ * How full a chat's context is: what the next request would send, against the model's
+ * window.
+ */
+export type ContextUsage = { conversationId: string; 
+/**
+ * Estimated prompt tokens (system prompt, tools and messages).
+ */
+tokens: number; 
+/**
+ * The model's context window.
+ */
+window: number; 
+/**
+ * Where the window came from.
+ */
+windowSource: WindowSource; 
+/**
+ * Tokens at which old tool results are cleared and the chat compacted (0: off).
+ */
+threshold: number; 
+/**
+ * A stored summary stands in for the start of the chat.
+ */
+compacted: boolean; 
+/**
+ * Tool results replaced by short notes in the request (while a reply runs).
+ */
+clearedResults: number }
+/**
+ * A user-set context window for one model (Settings → Models).
+ */
+export type ContextWindowOverride = { 
+/**
+ * `<providerId>/<model>`.
+ */
+model: string; 
+/**
+ * The window in tokens.
+ */
+tokens: number }
 /**
  * One chat. Messages hang off it as a tree (see [`crate::Message::parent_id`]).
  */
@@ -2995,6 +3135,18 @@ export type StreamEvent =
  */
 { type: "toolResult"; id: string; content: ContentBlock[]; isError: boolean; durationMs: number } | { type: "usage"; usage: Usage } | 
 /**
+ * How full the context is, just before a request goes to the model.
+ */
+{ type: "context"; usage: ContextUsage } | 
+/**
+ * Oxide is summarizing the start of the conversation to make room.
+ */
+{ type: "compacting" } | 
+/**
+ * A summary now stands in for the start of the conversation (also saved with the chat).
+ */
+{ type: "compacted"; compaction: Compaction } | 
+/**
  * The reply is saved. `message` is `None` when it was stopped before any output.
  */
 { type: "done"; message: Message | null } | 
@@ -3192,6 +3344,26 @@ export type WebSearchTest = { ok: boolean; message: string;
  * Titles of the first results.
  */
 sample: string[] }
+/**
+ * Where a context window comes from.
+ */
+export type WindowSource = 
+/**
+ * The provider's model listing.
+ */
+"provider" | 
+/**
+ * Settings → Models.
+ */
+"setting" | 
+/**
+ * A "context full" answer named it.
+ */
+"learned" | 
+/**
+ * Unknown: Oxide's default.
+ */
+"default"
 
 /** tauri-specta globals **/
 

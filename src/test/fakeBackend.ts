@@ -5,6 +5,7 @@ import type {
   ArtifactVersion,
   Attachment,
   AttachmentLimits,
+  Compaction,
   ContentBlock,
   ChatStreamEvent,
   CommandError,
@@ -99,6 +100,8 @@ interface FakeState {
   /** Granted folders per chat. */
   workspaces: Map<string, ChatWorkspace>;
   tasks: Map<string, TaskList>;
+  /** Stored summaries ("Compact now", or `compactHeldReply`). */
+  compactions: Compaction[];
   searchKeys: WebSearchKeys;
   clock: { offset: number; zone: string | null } | null;
   artifacts: Artifact[];
@@ -129,6 +132,8 @@ export interface FakeSeed {
     sandbox: Partial<AppSettings["sandbox"]>;
     /** Changes to the browser settings (off by default). */
     browser: Partial<AppSettings["browser"]>;
+    /** Changes to context management. */
+    context: Partial<AppSettings["context"]>;
   }>;
   empty?: boolean;
   replies?: ReplyMode;
@@ -191,6 +196,14 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         agentModel: null,
         ...seed.settings?.browser,
       },
+      context: {
+        compaction: true,
+        threshold: 75,
+        compactionModel: null,
+        anthropicClearing: true,
+        windows: [],
+        ...seed.settings?.context,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -205,6 +218,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     grants: new Map(),
     workspaces: new Map(),
     tasks: new Map(),
+    compactions: [],
     searchKeys: { brave: null, tavily: null },
     clock: null,
     artifacts: [],
@@ -439,6 +453,34 @@ function addKnowledge(
 /** Sends a stream event as the backend would. */
 export function emitStream(conversationId: string, event: StreamEvent): void {
   void chatStream.emit({ conversationId, event });
+}
+
+/**
+ * The held reply in `conversationId` is compacted while it runs: "compacting", then
+ * "compacted" (the summary is stored, as the backend does).
+ */
+export function compactHeldReply(
+  conversationId: string,
+  summary = "## Task\nA sheet.",
+): Compaction {
+  const r = state.held.get(conversationId);
+  if (!r) throw new Error(`no held reply in ${conversationId}`);
+  const compaction: Compaction = {
+    id: nextId("k"),
+    conversationId,
+    messageId: r.messageId,
+    afterToolUseId: null,
+    summary,
+    trigger: "auto",
+    tokensBefore: 98_000,
+    tokensAfter: 6_000,
+    model: r.model,
+    createdAt: Date.now(),
+  };
+  state.compactions.push(compaction);
+  emitStream(conversationId, { type: "compacting" });
+  emitStream(conversationId, { type: "compacted", compaction });
+  return compaction;
 }
 
 /** Sends a conversation update as the backend would (e.g. an automatic title). */
@@ -776,6 +818,59 @@ export const fakeCommands: typeof RealCommands = {
     return ok(true);
   },
   listModels: () => ok(state.models),
+  chatContext: (conversationId, leafId) => {
+    const convo = state.conversations.find((c) => c.id === conversationId);
+    if (!convo) return fail("notFound", "conversation not found");
+    const thread: Message[] = [];
+    let cur = state.messages.find((m) => m.id === leafId);
+    while (cur) {
+      thread.unshift(cur);
+      const parent: string | null = cur.parentId;
+      cur = state.messages.find((m) => m.id === parent);
+    }
+    const chars = thread
+      .flatMap((m) => m.content)
+      .reduce((n, b) => n + (b.type === "text" ? b.text.length : 400), 0);
+    const listed = state.models.flatMap((l) => l.models).find((m) => m.id === convo.model);
+    const override = state.settings.context.windows.find((w) => w.model === convo.model);
+    const window = override?.tokens ?? listed?.contextWindow ?? 32_768;
+    const compacted = state.compactions.some(
+      (c) => c.conversationId === conversationId && thread.some((m) => m.id === c.messageId),
+    );
+    return ok({
+      conversationId,
+      tokens: compacted ? 3_000 : 2_500 + Math.ceil(chars / 4),
+      window,
+      windowSource: override ? "setting" : listed?.contextWindow ? "provider" : "default",
+      threshold: state.settings.context.compaction
+        ? Math.floor((window * state.settings.context.threshold) / 100)
+        : 0,
+      compacted,
+      clearedResults: 0,
+    });
+  },
+  chatCompactions: (conversationId) =>
+    ok(state.compactions.filter((c) => c.conversationId === conversationId)),
+  compactChat: (conversationId, leafId) => {
+    if (state.held.has(conversationId)) {
+      return fail("invalid", "a reply is already being written in this chat");
+    }
+    if (!state.messages.some((m) => m.id === leafId)) return fail("notFound", "message not found");
+    const compaction: Compaction = {
+      id: nextId("k"),
+      conversationId,
+      messageId: leafId,
+      afterToolUseId: null,
+      summary: "## Task\nThe chat so far, summarized.",
+      trigger: "manual",
+      tokensBefore: 12_000,
+      tokensAfter: 900,
+      model: null,
+      createdAt: Date.now(),
+    };
+    state.compactions.push(compaction);
+    return ok(compaction);
+  },
   setMessageFeedback: (messageId, feedback) => {
     const m = state.messages.find((x) => x.id === messageId);
     if (!m) return fail("notFound", "message not found");

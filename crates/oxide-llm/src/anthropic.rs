@@ -21,6 +21,9 @@ use crate::{
 /// `anthropic-version` header value.
 pub const ANTHROPIC_VERSION: &str = "2026-10-21";
 
+/// Beta header for context editing (server-side clearing of old tool results).
+pub const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
+
 /// Output limit used when the request doesn't set one.
 pub const DEFAULT_MAX_TOKENS: u32 = 8_192;
 
@@ -102,9 +105,12 @@ impl AnthropicProvider {
         let key = self.key()?;
         let body = request_body(&request).await?;
         let url = format!("{}/messages", self.endpoint.base_url);
-        let req = with_auth(self.client.post(&url), Some(key))
+        let mut req = with_auth(self.client.post(&url), Some(key))
             .header("accept", "text/event-stream")
             .json(&body);
+        if request.clear_tool_results.is_some() {
+            req = req.header("anthropic-beta", CONTEXT_MANAGEMENT_BETA);
+        }
         let res = send_with_retry(req, &self.endpoint.base_url).await?;
         Ok(sse_stream(res, AnthropicDecoder::default()))
     }
@@ -231,6 +237,18 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
     }
     if let Some(effort) = req.effort {
         body.insert("output_config".into(), json!({ "effort": effort.as_str() }));
+    }
+    if let Some(c) = req.clear_tool_results {
+        // Results of Anthropic's own web search stay: they can't be fetched again cheaply.
+        body.insert(
+            "context_management".into(),
+            json!({ "edits": [{
+                "type": "clear_tool_uses_20250919",
+                "trigger": { "type": "input_tokens", "value": c.trigger_tokens },
+                "keep": { "type": "tool_uses", "value": c.keep },
+                "exclude_tools": ["web_search"],
+            }] }),
+        );
     }
     body.insert("messages".into(), json!(messages));
     Ok(Value::Object(body))
@@ -620,6 +638,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_editing_sends_the_beta_header() {
+        let server = serve(vec![Reply::sse(STREAM)]).await;
+        let provider = connect(endpoint(&server.base)).expect("connects");
+        let mut req = ChatRequest::new("claude-x", vec![ChatMessage::user("hi")]);
+        req.clear_tool_results = Some(crate::ToolResultClearing {
+            trigger_tokens: 1000,
+            keep: 2,
+        });
+        let _ = collect(provider.stream(req).await.expect("starts")).await;
+        let req = server.requests().await.remove(0);
+        assert!(
+            req.head
+                .to_lowercase()
+                .contains(&format!("anthropic-beta: {CONTEXT_MANAGEMENT_BETA}"))
+        );
+    }
+
+    #[tokio::test]
     async fn streams_thinking_text_tools_usage_and_stop() {
         let server = serve(vec![Reply::sse(STREAM)]).await;
         let provider = connect(endpoint(&server.base)).expect("connects");
@@ -670,6 +706,10 @@ mod tests {
         assert!(req.head.starts_with("POST /v1/messages "), "{}", req.head);
         let head = req.head.to_lowercase();
         assert!(head.contains("authorization: bearer sk-ant-test"));
+        assert!(
+            !head.contains("anthropic-beta"),
+            "no beta without context editing"
+        );
         assert!(head.contains(&format!("anthropic-version: {ANTHROPIC_VERSION}")));
         let body: Value = serde_json::from_str(&req.body).expect("json body");
         assert_eq!(body["model"], "claude-x");
@@ -933,6 +973,19 @@ mod tests {
         req.native_pdfs = false;
         let body = request_body(&req).await.expect("builds");
         assert_eq!(body["output_config"], json!({"effort": "low"}));
+        assert!(body.get("context_management").is_none());
+        req.clear_tool_results = Some(crate::ToolResultClearing {
+            trigger_tokens: 150_000,
+            keep: 3,
+        });
+        let cm = request_body(&req).await.expect("builds")["context_management"].clone();
+        assert_eq!(cm["edits"][0]["type"], "clear_tool_uses_20250919");
+        assert_eq!(cm["edits"][0]["trigger"]["value"], 150_000);
+        assert_eq!(
+            cm["edits"][0]["keep"],
+            json!({"type": "tool_uses", "value": 3})
+        );
+        req.clear_tool_results = None;
         let first = &body["messages"][0]["content"];
         assert_eq!(first[1]["type"], "text");
         assert!(

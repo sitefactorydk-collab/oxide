@@ -56,8 +56,9 @@ impl OpenAiCompatProvider {
             .map_err(|e| LlmError::Decode(format!("model list: {}", describe(&e))))
     }
 
-    /// Ids from an OpenAI-style `GET /models`.
-    async fn model_ids(&self) -> Result<Vec<String>, LlmError> {
+    /// Ids from an OpenAI-style `GET /models`, with the context window when the entry
+    /// names one.
+    async fn model_entries(&self) -> Result<Vec<(String, Option<u32>)>, LlmError> {
         let v = self
             .get_json(&format!("{}/models", self.endpoint.base_url))
             .await?;
@@ -67,7 +68,10 @@ impl OpenAiCompatProvider {
             .ok_or_else(|| LlmError::Decode("no model list in the response".into()))?;
         Ok(data
             .iter()
-            .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|m| {
+                let id = m.get("id").and_then(Value::as_str)?;
+                Some((id.to_owned(), context_of(m)))
+            })
             .collect())
     }
 
@@ -91,12 +95,12 @@ impl OpenAiCompatProvider {
     async fn models(&self) -> Result<ModelListing, LlmError> {
         match self.endpoint.kind {
             ProviderKind::OpenAi => {
-                let mut ids = self.model_ids().await?;
+                let mut ids = self.model_entries().await?;
                 ids.sort();
                 let models = ids
                     .iter()
-                    .filter_map(|id| match openai_curated(id) {
-                        OpenAiModel::Chat(caps) => Some(self.info(id, caps, None)),
+                    .filter_map(|(id, context)| match openai_curated(id) {
+                        OpenAiModel::Chat(caps) => Some(self.info(id, caps, *context)),
                         OpenAiModel::NotChat => None,
                     })
                     .collect();
@@ -113,11 +117,11 @@ impl OpenAiCompatProvider {
                         "LM Studio native model list unavailable ({e}); using /v1/models"
                     );
                     let models = self
-                        .model_ids()
+                        .model_entries()
                         .await?
                         .iter()
-                        .filter(|id| !id.contains("embed"))
-                        .map(|id| self.info(id, ModelCapabilities::default(), None))
+                        .filter(|(id, _)| !id.contains("embed"))
+                        .map(|(id, context)| self.info(id, ModelCapabilities::default(), *context))
                         .collect();
                     Ok(ModelListing {
                         models,
@@ -126,11 +130,11 @@ impl OpenAiCompatProvider {
                 }
             },
             ProviderKind::Strata | ProviderKind::Anthropic => {
-                let ids: Vec<String> = self
-                    .model_ids()
+                let entries: Vec<(String, Option<u32>)> = self
+                    .model_entries()
                     .await?
                     .into_iter()
-                    .filter(|id| !id.contains("embed"))
+                    .filter(|(id, _)| !id.contains("embed"))
                     .collect();
                 // Strata honors `chat_template_kwargs.enable_thinking` (tested in Phase 4);
                 // models without a thinking mode ignore it.
@@ -139,13 +143,13 @@ impl OpenAiCompatProvider {
                     thinking_off: true,
                     ..ModelCapabilities::default()
                 };
-                let models = ids
+                let models = entries
                     .iter()
-                    .map(|id| self.info(id, caps.clone(), None))
+                    .map(|(id, context)| self.info(id, caps.clone(), *context))
                     .collect();
                 Ok(ModelListing {
                     models,
-                    unverified: ids,
+                    unverified: entries.into_iter().map(|(id, _)| id).collect(),
                 })
             }
         }
@@ -165,11 +169,8 @@ impl OpenAiCompatProvider {
             .filter_map(|entry| {
                 let id = entry.get("id").and_then(Value::as_str)?;
                 let caps = lmstudio_from_native(entry)?;
-                let context = entry
-                    .get("max_context_length")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| u32::try_from(n).ok());
-                Some(self.info(id, caps, context))
+                // The loaded length (when the model is loaded) is what requests can use.
+                Some(self.info(id, caps, context_of(entry)))
             })
             .collect();
         Ok(ModelListing {
@@ -249,6 +250,25 @@ impl Provider for OpenAiCompatProvider {
 }
 
 /// Builds the Chat Completions request body.
+/// The context window a model-list entry reports, under the names servers use: LM Studio
+/// (`loaded_context_length`, then `max_context_length`), vLLM (`max_model_len`), llama.cpp
+/// (`meta.n_ctx`), and the generic `context_length` / `context_window`.
+fn context_of(entry: &Value) -> Option<u32> {
+    const KEYS: [&str; 7] = [
+        "/loaded_context_length",
+        "/context_length",
+        "/context_window",
+        "/max_context_length",
+        "/max_model_len",
+        "/n_ctx",
+        "/meta/n_ctx",
+    ];
+    KEYS.iter()
+        .filter_map(|k| entry.pointer(k).and_then(Value::as_u64))
+        .find(|n| *n >= 256)
+        .and_then(|n| u32::try_from(n).ok())
+}
+
 pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::new();
     let system: Vec<&str> = [req.system_context.as_deref(), req.system.as_deref()]
@@ -931,7 +951,7 @@ mod tests {
         let server = serve(vec![Reply::json(
             r#"{"object":"list","data":[
                 {"id":"qwen/qwen3-14b","type":"llm","capabilities":["tool_use"],"max_context_length":32768},
-                {"id":"gemma-3","type":"vlm"},
+                {"id":"gemma-3","type":"vlm","max_context_length":131072,"loaded_context_length":8192},
                 {"id":"nomic-embed","type":"embeddings"}
             ]}"#,
         )])
@@ -943,6 +963,8 @@ mod tests {
         assert!(listing.models[0].capabilities.tools);
         assert_eq!(listing.models[0].context_window, Some(32768));
         assert!(!listing.models[1].capabilities.tools && listing.models[1].capabilities.images);
+        // A loaded model's own length wins over its maximum.
+        assert_eq!(listing.models[1].context_window, Some(8192));
         let req = server.requests().await.remove(0);
         assert!(req.head.starts_with("GET /api/v0/models "), "{}", req.head);
     }
@@ -950,7 +972,7 @@ mod tests {
     #[tokio::test]
     async fn strata_models_are_unverified_until_probed() {
         let server = serve(vec![
-            Reply::json(r#"{"data":[{"id":"strata-a"},{"id":"strata-embed"}]}"#),
+            Reply::json(r#"{"data":[{"id":"strata-a","context_length":131072},{"id":"strata-embed"}]}"#),
             Reply::json(r#"{"choices":[{"message":{"role":"assistant","content":null,
                 "tool_calls":[{"id":"c","type":"function","function":{"name":"ping","arguments":"{}"}}]}}]}"#),
             Reply::json(r#"{"choices":[{"message":{"role":"assistant","content":"pong"}}]}"#),
@@ -963,6 +985,7 @@ mod tests {
         let listing = provider.list_models().await.expect("lists");
         assert_eq!(listing.unverified, vec!["strata-a"]);
         assert!(!listing.models[0].capabilities.tools);
+        assert_eq!(listing.models[0].context_window, Some(131_072));
         assert!(provider.probe_tools("strata-a").await.expect("probes"));
         assert!(!provider.probe_tools("strata-a").await.expect("probes"));
         assert!(!provider.probe_tools("strata-a").await.expect("probes"));

@@ -8,6 +8,7 @@ pub mod artifact;
 pub mod attachment;
 pub mod browser;
 pub mod chat;
+pub mod context;
 pub mod conversation;
 pub mod desktop;
 pub mod extension;
@@ -34,6 +35,10 @@ pub use browser::{
 };
 pub use chat::{
     ChatStreamEvent, ConversationChanged, GenerateOptions, StopReason, StreamEvent, Usage,
+};
+pub use context::{
+    Compaction, CompactionTrigger, ContextSettings, ContextUsage, ContextWindowOverride,
+    WindowSource,
 };
 pub use conversation::{Conversation, SearchHit, StartConversation};
 pub use desktop::DesktopAction;

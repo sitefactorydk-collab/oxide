@@ -112,6 +112,8 @@ Oxide/
 
 This is what "all major features" means for Oxide. The phase that delivers each item is in brackets.
 
+**Context management:** automatic chat compaction (older parts of a long conversation, and old tool results inside a long agentic reply, are replaced by a summary so the request fits the model's context window), a context meter, and recovery from "context full" errors [P13b].
+
 **Chat:** streaming replies, stop, retry/regenerate, edit-and-resend with branch navigation (‹ 1/3 ›), copy, conversation title auto-generation, rename, star, delete, search, keyboard shortcuts [P3–P4]. Extended thinking toggle and collapsible thinking blocks [P3–P4]. Model picker in the composer [P3]. Attachments: images, PDFs, text and code files, drag-drop and paste [P4].
 
 **Projects:** custom instructions, knowledge files, project-scoped chats, project memory [P7].
@@ -353,6 +355,22 @@ Requested by the user after Phase 5: give Oxide's agent an isolated workspace li
 - Registered as a built-in MCP server (shown in Connectors, can be toggled), with a live screenshot feed in the tool block.
 
 **Exit:** "find the opening hours of X and summarize" completes with screenshots on Windows.
+
+### Phase 13b — Context management & chat compaction
+(Anthropic uses server-side clearing, not server-side compaction; see PROGRESS.md.)
+Requested by the user after Phase 13: a long agentic reply on Strata `swift-iq2_xs` (128K context) made 35 tool calls in one reply (mostly `web_fetch` of 3–40k characters each, ≈ 410 KB of tool results) and filled the context to 100% before failing. Nothing in Oxide limits how much a conversation or a single reply sends.
+- **Know the budget:** each model's context window (`ModelInfo.context_window` where the provider reports it; Strata and LM Studio from their model listing or a per-model override in Settings → Models; a safe default when unknown) minus the reply's output reserve. Token counts are estimated locally (characters/4, calibrated per chat from the provider's reported input tokens of the previous request).
+- **Inside a running reply (the tool loop):** before every model request, if the estimated prompt is above a threshold (default 75% of the window):
+  1. **Clear old tool results first:** results older than the last few steps are replaced by a short stub (`[cleared: web_fetch https://… · 40k characters — call it again if you need it]`), keeping the tool calls themselves, so the model sees what it already did.
+  2. **Then compact:** if still above, the oldest part of the conversation is summarized by a model (the chat's own, or a configurable "compaction model") into a structured summary (the task, decisions, facts found with their sources, files made, what is left) that replaces it in the request.
+- **Across turns:** the same compaction runs before a new reply when the history no longer fits. The summary is **stored** with the chat (it replaces the covered messages in requests; the transcript keeps everything), so it is made once, not every turn.
+- **Tool output sizes follow the window:** `web_fetch`, `read_page`, file reads and MCP results get per-result caps scaled to the context window (e.g. at most ~10% of it), so a small-context model is never handed 40k characters at once.
+- **Recovery:** a "context full" answer from the provider (`StopReason::ContextFull`, HTTP 400 "context length", Strata/LM Studio's equivalents) triggers one automatic compaction and a retry instead of failing the reply.
+- **Anthropic:** use the API's own context-management features (server-side clearing of old tool results / compaction) when the model supports them, checked against the API docs at implementation time; Oxide's own compaction is the fallback everywhere else.
+- **UI:** a context meter in the composer (fill of the current chat vs the model's window), a "Conversation compacted" divider in the transcript with the summary viewable, a **Compact now** action, and Settings → Models: compaction on/off, threshold, compaction model.
+- **Tests:** a fake provider with a tiny window drives a long tool loop and a long multi-turn chat through clearing, compaction and the context-full retry; the stored summary is reused.
+
+**Exit:** the reply that failed on 2026-11-12 (“can you make me a spread sheet with all the greatest male badminton players over the last 10 years?” on Strata `swift-iq2_xs`, 128K) finishes on Windows with the context staying below the window (Strata's monitor never reaches 100%), the transcript shows where it compacted, and a 50-turn chat keeps working past the window.
 
 ### Phase 14 — Chrome extension & WebSocket bridge
 - `oxide-bridge` (Rust, `tokio-tungstenite`):

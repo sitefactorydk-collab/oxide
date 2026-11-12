@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { commands, events } from "@/bindings";
 import { artifactKeys } from "@/features/artifacts/queries";
 import { artifactCallInfo, artifactRefOf } from "@/features/artifacts/partial";
+import { contextKeys } from "@/features/context/queries";
 import { useArtifactPanel } from "@/features/artifacts/store";
 import { memoryKeys } from "@/features/memory/queries";
 import { toolKeys } from "@/features/tools/queries";
@@ -67,6 +68,9 @@ export function useChatEvents(): void {
         }
         if (e.type === "toolApproval" || e.type === "done" || e.type === "failed") {
           void qc.invalidateQueries({ queryKey: toolKeys.pending });
+        }
+        if (e.type === "compacted" || e.type === "done" || e.type === "failed") {
+          void qc.invalidateQueries({ queryKey: contextKeys.chat(cid) });
         }
         if (e.type === "done" || e.type === "failed") {
           if (e.message) addMessageToCache(qc, e.message);

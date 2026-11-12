@@ -5,6 +5,7 @@ import {
   type AppSettings,
   type BrowserSettings,
   type ChatFont,
+  type ContextSettings,
   type DesktopSettings,
   type MemorySettings,
   type ModelSettings,
@@ -16,6 +17,7 @@ import {
   type ToolSettings,
   type WebSearchSettings,
 } from "@/bindings";
+import { contextKeys } from "@/features/context/queries";
 import { desktopKeys } from "@/features/desktop/keys";
 import { projectKeys } from "@/features/projects/queries";
 import { unwrap } from "@/lib/api";
@@ -64,6 +66,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     idleMinutes: 15,
     agentModel: null,
   },
+  context: {
+    compaction: true,
+    threshold: 75,
+    compactionModel: null,
+    anthropicClearing: true,
+    windows: [],
+  },
 };
 
 export function useSettings() {
@@ -90,6 +99,8 @@ export function useUpdateSettings() {
       Promise.all([
         qc.invalidateQueries({ queryKey: projectKeys.allKnowledge() }),
         qc.invalidateQueries({ queryKey: desktopKeys.status }),
+        // The meter's window and threshold come from Settings → Models.
+        qc.invalidateQueries({ queryKey: contextKeys.all }),
       ]),
   });
   return (change: (s: AppSettings) => AppSettings) => {
@@ -162,6 +173,12 @@ export function useSetModelSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ModelSettings>) =>
     update((s) => ({ ...s, models: { ...s.models, ...patch } }));
+}
+
+export function useSetContextSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ContextSettings>) =>
+    update((s) => ({ ...s, context: { ...s.context, ...patch } }));
 }
 
 export function useSetShellSettings() {
