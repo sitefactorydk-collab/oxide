@@ -1077,6 +1077,58 @@ async browserRemoveChromium() : Promise<Result<null, CommandError>> {
 }
 },
 /**
+ * Whether Oxide listens, which Chrome is connected, the paired ones and a waiting code.
+ */
+async chromeStatus() : Promise<Result<ChromeStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chrome_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Shows a new six-word code for the extension's popup (valid for 5 minutes).
+ */
+async chromeStartPairing() : Promise<Result<PairingCode, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chrome_start_pairing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chromeCancelPairing() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chrome_cancel_pairing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a paired browser: its token stops working and it disconnects.
+ */
+async chromeForget(browserId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chrome_forget", { browserId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the folder to load unpacked in `chrome://extensions`.
+ */
+async chromeOpenExtensionFolder() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chrome_open_extension_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1380,6 +1432,7 @@ export const events = __makeEvents__<{
 browserChanged: BrowserChanged,
 browserLive: BrowserLive,
 chatStream: ChatStream,
+chromeChanged: ChromeChanged,
 conversationUpdated: ConversationUpdated,
 desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
@@ -1391,6 +1444,7 @@ taskListChanged: TaskListChanged
 browserChanged: "browser-changed",
 browserLive: "browser-live",
 chatStream: "chat-stream",
+chromeChanged: "chrome-changed",
 conversationUpdated: "conversation-updated",
 desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
@@ -1407,6 +1461,10 @@ taskListChanged: "task-list-changed"
 /** user-defined types **/
 
 export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings; 
+/**
+ * Settings → Chrome (the extension and its bridge).
+ */
+chrome: ChromeSettings; 
 /**
  * Context management (shown in Settings → Models).
  */
@@ -1746,6 +1804,60 @@ export type ChatWorkspace = { folders: ChatFolder[];
  * `delete_file` deletes for good. Off: it moves things into `_to_delete`.
  */
 allowDelete: boolean }
+/**
+ * The Chrome link changed: listening, a Chrome connected or went, pairing
+ * (`events.chromeChanged`).
+ */
+export type ChromeChanged = ChromeStatus
+/**
+ * Settings → Chrome. Off by default: while on, Oxide listens for its extension.
+ */
+export type ChromeSettings = { 
+/**
+ * Listen for the extension and give models its tools while a paired Chrome is connected.
+ */
+enabled: boolean; 
+/**
+ * Port on 127.0.0.1.
+ */
+port: number; 
+/**
+ * Acting in Chrome (opening, clicking, typing, closing tabs) asks first. The extension
+ * asks per site as well.
+ */
+ask: boolean }
+/**
+ * The Chrome link as Settings shows it.
+ */
+export type ChromeStatus = { 
+/**
+ * Settings → Chrome is on.
+ */
+enabled: boolean; 
+/**
+ * The bridge is listening.
+ */
+listening: boolean; port: number; 
+/**
+ * Why it couldn't listen (port taken, …), written for users.
+ */
+error: string | null; 
+/**
+ * The paired browser connected now (models get the tools while one is).
+ */
+connected: string | null; 
+/**
+ * The extension's version, when one is connected.
+ */
+extensionVersion: string | null; paired: PairedBrowser[]; pairing: PairingCode | null; 
+/**
+ * Chats working in Chrome now.
+ */
+sessions: string[]; 
+/**
+ * The folder to load unpacked in `chrome://extensions`, when Oxide knows it.
+ */
+extensionDir: string | null }
 export type CommandError = 
 /**
  * The thing asked for doesn't exist (any more).
@@ -2667,6 +2779,31 @@ thinkingBudget: number }
 export type NewMemory = { projectId: string | null; text: string }
 export type NewProject = { name: string; description: string }
 /**
+ * A Chrome that was paired with Oxide (its token is in the keychain).
+ */
+export type PairedBrowser = { 
+/**
+ * Oxide's id for this pairing.
+ */
+id: string; 
+/**
+ * What the extension calls its browser ("Chrome 142 on Windows").
+ */
+name: string; 
+/**
+ * The extension's id (from its `chrome-extension://<id>` origin); the token works only
+ * from there.
+ */
+extensionId: string; pairedAt: number; lastSeen: number | null }
+/**
+ * A pairing code waiting to be typed into the extension.
+ */
+export type PairingCode = { 
+/**
+ * Six words separated by spaces.
+ */
+code: string; expiresAt: number }
+/**
  * What a picker should choose.
  */
 export type PickKind = 
@@ -3300,7 +3437,12 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  * The browser agent: a page opened, read or clicked, or a whole browsing task (the
  * label is the URL or the goal).
  */
-"browser"
+"browser" | 
+/**
+ * The user's Chrome through Oxide's extension: a tab opened, read, clicked or typed in
+ * (the label is the URL or what was clicked or typed).
+ */
+"chrome"
 /**
  * Token counts for one reply.
  */

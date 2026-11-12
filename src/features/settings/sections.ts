@@ -7,6 +7,7 @@ import {
   Globe,
   Info,
   KeyRound,
+  PanelTop,
   Palette,
   Plug,
   Puzzle,
@@ -103,6 +104,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Compass,
     blurb:
       "A web browser models can open, read, click and type in, and an autonomous browsing agent for whole tasks.",
+  },
+  {
+    id: "chrome",
+    label: "Chrome",
+    icon: PanelTop,
+    blurb:
+      "Oxide's Chrome extension: pair your everyday Chrome so models can work in its tabs, with your sign-ins.",
   },
   {
     id: "memory",

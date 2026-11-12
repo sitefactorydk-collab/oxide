@@ -54,6 +54,11 @@ pub struct BrowserChanged(pub BrowserStatus);
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct BrowserLive(pub BrowserFrame);
 
+/// The Chrome link changed: listening, a Chrome connected or went, pairing
+/// (`events.chromeChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct ChromeChanged(pub oxide_core::ChromeStatus);
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
@@ -121,6 +126,34 @@ impl oxide_pyenv::BrowserSink for TauriBrowserSink {
     fn frame(&self, frame: BrowserFrame) {
         if let Err(e) = BrowserLive(frame).emit(&self.app) {
             tracing::warn!("couldn't send a browser screenshot: {e}");
+        }
+    }
+}
+
+/// Forwards the Chrome bridge's changes to every window; Stop pressed in a tab stops that
+/// chat's reply.
+pub struct TauriChromeSink {
+    app: AppHandle,
+}
+
+impl TauriChromeSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_bridge::BridgeSink for TauriChromeSink {
+    fn changed(&self, status: &oxide_core::ChromeStatus) {
+        if let Err(e) = ChromeChanged(status.clone()).emit(&self.app) {
+            tracing::warn!("couldn't send a Chrome update: {e}");
+        }
+    }
+
+    fn stopped(&self, session: &str) {
+        use tauri::Manager;
+        if let Some(state) = self.app.try_state::<crate::state::AppState>() {
+            tracing::info!(conversation = %session, "stopped from Chrome");
+            state.chat.stop(session);
         }
     }
 }

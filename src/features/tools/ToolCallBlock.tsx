@@ -4,6 +4,7 @@ import {
   Braces,
   ChevronRight,
   Compass,
+  PanelTop,
   FileText,
   FolderOpen,
   FolderSearch,
@@ -64,7 +65,9 @@ function KindIcon({ call }: { call: ToolCallView }) {
                         ? Box
                         : kind === "browser"
                           ? Compass
-                          : Plug;
+                          : kind === "chrome"
+                            ? PanelTop
+                            : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -230,13 +233,15 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           )}
           {request.destructive && (
             <p className="mt-1 text-sm text-danger">
-              {request.server
-                ? "The server says this tool can change or delete data."
-                : request.tool === "run_command"
-                  ? "Commands run on your computer and can change or delete files."
-                  : request.tool === "run_python"
-                    ? "Python runs on your computer, not in a sandbox. It can read, change or delete your files."
-                    : "This changes files in a folder you shared."}
+              {request.server === "chrome"
+                ? "This closes a tab Oxide opened in your Chrome."
+                : request.server
+                  ? "The server says this tool can change or delete data."
+                  : request.tool === "run_command"
+                    ? "Commands run on your computer and can change or delete files."
+                    : request.tool === "run_python"
+                      ? "Python runs on your computer, not in a sandbox. It can read, change or delete your files."
+                      : "This changes files in a folder you shared."}
             </p>
           )}
         </div>
@@ -250,6 +255,14 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
               : request.tool === "close"
                 ? "The chat's browser closes."
                 : "The chat's browser acts on the website as you would."}
+        </p>
+      )}
+      {request.server === "chrome" && (
+        <p className="text-sm text-fg-muted">
+          {request.tool === "navigate" || request.tool === "tabs_create"
+            ? "This opens the page in your own Chrome, with your sign-ins (or searches Google for these words)."
+            : "This acts in your own Chrome, with your sign-ins, as you would."}{" "}
+          The extension asks once per site and shows Stop in the tab.
         </p>
       )}
       {request.server === null && request.tool.startsWith("sandbox_copy") && (

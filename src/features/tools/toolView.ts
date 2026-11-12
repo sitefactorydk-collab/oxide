@@ -184,6 +184,29 @@ export const BROWSER_TOOL_VERBS: Record<string, [string, string]> = {
   close: ["Closing the browser", "Closed the browser"],
 };
 
+/** The Chrome extension's tools (Phase 14): verbs while running and after. */
+export const CHROME_TOOL_VERBS: Record<string, [string, string]> = {
+  tabs_list: ["Listing Chrome tabs", "Listed Chrome tabs"],
+  tabs_create: ["Opening a tab in Chrome", "Opened a tab in Chrome"],
+  tabs_select: ["Switching to a Chrome tab", "Switched to a Chrome tab"],
+  tabs_close: ["Closing a Chrome tab", "Closed a Chrome tab"],
+  navigate: ["Opening in Chrome", "Opened in Chrome"],
+  read_page: ["Reading the page in Chrome", "Read the page in Chrome"],
+  find: ["Finding in Chrome", "Found in Chrome"],
+  click: ["Clicking in Chrome", "Clicked in Chrome"],
+  type: ["Typing in Chrome", "Typed in Chrome"],
+  press_key: ["Pressing a key in Chrome", "Pressed a key in Chrome"],
+  scroll: ["Scrolling in Chrome", "Scrolled in Chrome"],
+  form_input: ["Filling in a form in Chrome", "Filled in a form in Chrome"],
+  screenshot: ["Taking a screenshot in Chrome", "Took a screenshot in Chrome"],
+  get_console: ["Reading Chrome's console", "Read Chrome's console"],
+};
+
+/** Whether a call is one of the Chrome extension's. */
+export function isChromeCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
+  return call.server === "chrome" && call.tool in CHROME_TOOL_VERBS;
+}
+
 /** Whether a call is one of the browser agent's. */
 export function isBrowserCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
   return call.server === "browser" && call.tool in BROWSER_TOOL_VERBS;
@@ -266,6 +289,32 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
     }
     return "";
   }
+  if (isChromeCall(call)) {
+    const ref = typeof input.ref === "number" ? `[${input.ref}]` : null;
+    const tab = typeof input.tab_id === "number" ? `tab ${input.tab_id}` : null;
+    switch (call.tool) {
+      case "navigate":
+      case "tabs_create":
+        return str("url") ?? "";
+      case "find":
+        return str("query") ?? "";
+      case "click":
+        return ref ?? str("text") ?? "";
+      case "type": {
+        const t = str("text");
+        return t ? `“${t}”` : "";
+      }
+      case "press_key":
+        return str("key") ?? "";
+      case "form_input":
+        return ref ?? "";
+      case "tabs_select":
+      case "tabs_close":
+        return tab ?? "";
+      default:
+        return "";
+    }
+  }
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -318,6 +367,7 @@ export type ToolKind =
   | "python"
   | "sandbox"
   | "browser"
+  | "chrome"
   | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
@@ -334,6 +384,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.server === null && call.tool === "run_python") return "python";
   if (isSandboxCall(call)) return "sandbox";
   if (isBrowserCall(call)) return "browser";
+  if (isChromeCall(call)) return "chrome";
   return "connector";
 }
 
@@ -381,6 +432,10 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
     }
     case "browser": {
       const [doing, did] = BROWSER_TOOL_VERBS[call.tool] ?? ["Browsing", "Browsed"];
+      return { action: busy ? doing : did, detail };
+    }
+    case "chrome": {
+      const [doing, did] = CHROME_TOOL_VERBS[call.tool] ?? ["Using Chrome", "Used Chrome"];
       return { action: busy ? doing : did, detail };
     }
     case "connector": {
@@ -437,7 +492,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                           ? "Sandbox"
                           : u.kind === "browser"
                             ? "Browser"
-                            : (u.server ?? "Connector");
+                            : u.kind === "chrome"
+                              ? "Chrome"
+                              : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

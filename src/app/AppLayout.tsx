@@ -1,6 +1,7 @@
 import { matchPath, useLocation, useNavigate } from "react-router";
 import { Toaster } from "@/components/ui/Toaster";
 import { useBrowserEvents } from "@/features/browser/queries";
+import { useChromeEvents } from "@/features/chrome/queries";
 import { useChatEvents } from "@/features/chat/useChatEvents";
 import { useDesktopActions } from "@/features/desktop/useDesktopActions";
 import { McpAskDialog } from "@/features/mcp/McpAskDialog";
@@ -37,6 +38,7 @@ export function AppLayout() {
   usePythonEvents();
   useSandboxEvents();
   useBrowserEvents();
+  useChromeEvents();
   useDesktopActions();
 
   const settingsOpen = isSettingsPath(location.pathname);

@@ -25,5 +25,6 @@ pub async fn save_settings(
     crate::desktop::apply_settings(&app, &saved.desktop);
     state.sandboxes.configure(&saved.sandbox);
     state.browser.configure(&saved.browser);
+    state.chrome.configure(&saved.chrome).await;
     Ok(saved)
 }

@@ -5,6 +5,7 @@ import {
   type AppSettings,
   type BrowserSettings,
   type ChatFont,
+  type ChromeSettings,
   type ContextSettings,
   type DesktopSettings,
   type MemorySettings,
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     idleMinutes: 15,
     agentModel: null,
   },
+  chrome: { enabled: false, port: 47820, ask: true },
   context: {
     compaction: true,
     threshold: 75,
@@ -203,6 +205,12 @@ export function useSetBrowserSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<BrowserSettings>) =>
     update((s) => ({ ...s, browser: { ...s.browser, ...patch } }));
+}
+
+export function useSetChromeSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ChromeSettings>) =>
+    update((s) => ({ ...s, chrome: { ...s.chrome, ...patch } }));
 }
 
 export function useSetToolSettings() {

@@ -2,6 +2,7 @@ import { useQueries } from "@tanstack/react-query";
 import {
   Box,
   Compass,
+  PanelTop,
   FileText,
   FolderPlus,
   Globe,
@@ -72,6 +73,7 @@ export function PlusMenu({
   const settings = useSettings().data ?? DEFAULT_SETTINGS;
   const sandboxEnabled = settings.sandbox.enabled;
   const browserEnabled = settings.browser.enabled;
+  const chromeEnabled = settings.chrome.enabled;
   const running = servers.filter((s) => s.status === "running");
   const lists = useQueries({
     queries: running.map((s) => ({
@@ -203,6 +205,16 @@ export function PlusMenu({
             >
               <Compass />
               Browser
+            </MenuCheckboxItem>
+          )}
+          {chromeEnabled && (
+            <MenuCheckboxItem
+              checked={switches.chromeOn}
+              onCheckedChange={(v) => switches.toggleChrome(v === true)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <PanelTop />
+              Chrome
             </MenuCheckboxItem>
           )}
           <MenuSub>

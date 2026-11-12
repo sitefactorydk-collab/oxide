@@ -6,6 +6,7 @@ use std::sync::Arc;
 use oxide_agent::{
     AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Skills, Tools,
 };
+use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
 use oxide_pyenv::{BrowserAgents, BrowserSink, PythonConfig, PythonEnv, PythonSink};
 use oxide_sandbox::{SandboxSink, Sandboxes};
@@ -32,6 +33,8 @@ pub struct AppState {
     pub sandboxes: Sandboxes,
     /// The browser agent: a server (and browser) per chat, in the managed Python.
     pub browser: BrowserAgents,
+    /// The Chrome extension's bridge (a WebSocket on 127.0.0.1 while Settings → Chrome is on).
+    pub chrome: Bridge,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -48,6 +51,23 @@ fn uv_dirs() -> Vec<PathBuf> {
         "/binaries"
     )));
     dirs
+}
+
+/// The built extension users load unpacked: next to the app (a packaged build), else the
+/// repo's `extension/dist` (a development build). `None` until it has been built.
+fn extension_dir() -> Option<String> {
+    let mut dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.join("extension"));
+    }
+    if let Some(repo) = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        dirs.push(repo.join("extension").join("dist"));
+    }
+    dirs.into_iter()
+        .find(|d| d.join("manifest.json").is_file())
+        .map(|d| d.to_string_lossy().into_owned())
 }
 
 /// Where the app keeps its files.
@@ -67,6 +87,8 @@ pub struct McpParts {
 impl AppState {
     /// Opens the database in `data_dir` (creating it) and uses the OS keychain for secrets,
     /// with entries grouped under `service` (the app identifier). Reply events go to `sink`.
+    // One sink per subsystem (chat, Python, sandbox, browser, Chrome) plus the MCP parts.
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         dirs: &AppDirs,
         service: &str,
@@ -74,6 +96,7 @@ impl AppState {
         python_sink: Arc<dyn PythonSink>,
         sandbox_sink: Arc<dyn SandboxSink>,
         browser_sink: Arc<dyn BrowserSink>,
+        chrome_sink: Arc<dyn BridgeSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -106,10 +129,13 @@ impl AppState {
             sandbox_sink,
         );
         let browser = BrowserAgents::new(python.clone(), browser_sink, Some(dirs.logs.clone()));
+        let chrome = Bridge::open(data_dir.join("chrome.json"), secrets.clone(), chrome_sink).await;
+        chrome.set_extension_dir(extension_dir());
         match store.app_settings().await {
             Ok(s) => {
                 sandboxes.configure(&s.sandbox);
                 browser.configure(&s.browser);
+                chrome.configure(&s.chrome).await;
             }
             Err(e) => tracing::warn!("settings: {e}"),
         }
@@ -122,7 +148,8 @@ impl AppState {
         .with_skills(skills.clone())
         .with_python(python.clone())
         .with_sandboxes(sandboxes.clone())
-        .with_browser(browser.clone());
+        .with_browser(browser.clone())
+        .with_chrome(chrome.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         Ok(Self {
             store,
@@ -136,6 +163,7 @@ impl AppState {
             python,
             sandboxes,
             browser,
+            chrome,
         })
     }
 }

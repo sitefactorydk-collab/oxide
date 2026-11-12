@@ -14,6 +14,7 @@ use futures_util::StreamExt;
 use futures_util::future::join_all;
 use oxide_core::RUN_PYTHON;
 use oxide_core::browser::{BROWSER_SWITCH, browser_tool_reads_only};
+use oxide_core::chrome::{CHROME_SWITCH, chrome_tool_reads_only};
 use oxide_core::context::WindowSource;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
@@ -52,6 +53,7 @@ use crate::memory::{MEMORY_SYSTEM, Scope, memory_prompt, parse_proposals};
 use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
 use crate::tools::browser as browser_tools;
+use crate::tools::chrome as chrome_tools;
 use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
 use crate::tools::python::{python_entry, run_python};
 use crate::tools::sandbox as sandbox_tools;
@@ -320,6 +322,13 @@ impl ChatService {
             let id = conversation_id.to_owned();
             rt.spawn(async move { python.forget_chat(&id).await });
         }
+        // Its tabs in Chrome (banners come down).
+        if let Some(c) = self.tools.chrome().cloned()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            let id = conversation_id.to_owned();
+            rt.spawn(async move { c.release(&id).await });
+        }
         // Its browser.
         if let Some(b) = self.tools.browser().cloned()
             && let Ok(rt) = tokio::runtime::Handle::try_current()
@@ -542,6 +551,11 @@ impl ChatService {
                 (StopReason::Error, Some(e))
             }
         };
+        // The reply is over: its tabs in Chrome lose their banners (and a Stop pressed there
+        // no longer blocks the next reply).
+        if let Some(c) = self.tools.chrome() {
+            c.release(&cid).await;
+        }
         // Calls that never ran get a result, so the reply stays a valid history.
         let note = if stop_reason == StopReason::Stopped {
             STOPPED_NOTE
@@ -688,6 +702,7 @@ impl ChatService {
         let mut sandbox_prompt = None;
         let mut browser_llm = None;
         let mut browser_on = false;
+        let mut chrome_on = false;
         if caps.tools {
             let at = tool_set
                 .entries
@@ -766,6 +781,17 @@ impl ChatService {
                     .unwrap_or_else(|| conversation.model.clone());
                 browser_llm = self.browser_llm(&model_id).await;
             }
+            // The user's Chrome: only while a paired Chrome is connected.
+            if settings.chrome.enabled
+                && chat_tools.allows_builtin(CHROME_SWITCH)
+                && self
+                    .tools
+                    .chrome()
+                    .is_some_and(oxide_bridge::Bridge::connected)
+            {
+                own.extend(chrome_tools::chrome_entries());
+                chrome_on = true;
+            }
             tool_set.entries.splice(at..at, own);
         }
         let project = match &conversation.project_id {
@@ -839,6 +865,7 @@ impl ChatService {
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::TaskList)),
             sandbox: sandbox_prompt,
             browser: browser_on,
+            chrome: chrome_on,
             context_notes: settings.context.compaction && !tool_set.is_empty(),
         });
         let server_clearing = config.kind == ProviderKind::Anthropic
@@ -1797,6 +1824,9 @@ impl ChatService {
             ToolKind::Browser { tool } => {
                 !browser_tool_reads_only(tool) && setup.settings.browser.ask
             }
+            // Acting in the user's own Chrome asks unless Settings → Chrome says not to (the
+            // extension also asks per site). Looking never asks here.
+            ToolKind::Chrome { tool } => !chrome_tool_reads_only(tool) && setup.settings.chrome.ask,
             ToolKind::Builtin(_) => setup.settings.tools.ask_before_web,
             ToolKind::Mcp { .. } => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -1928,10 +1958,33 @@ impl ChatService {
                 .any(|e| matches!(e.kind, ToolKind::Browser { .. })),
             setup.tool_set.can_search(),
         );
+        // Chrome calls act on one tab in sequence: each waits for the Chrome calls before it
+        // (also while an earlier one waits for approval), so a read sees the page an earlier
+        // navigate opened.
+        let chrome_order: Vec<Option<usize>> = ready
+            .iter()
+            .scan(0usize, |k, r| {
+                Some(matches!(r.entry.kind, ToolKind::Chrome { .. }).then(|| {
+                    *k += 1;
+                    *k - 1
+                }))
+            })
+            .collect();
+        let (chrome_done, chrome_turn) = watch::channel(0usize);
+        let chrome_done = &chrome_done;
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
+            let mut chrome_turn = chrome_turn.clone();
+            let order = chrome_order.get(i).copied().flatten();
             async move {
+                let _in_order = match order {
+                    Some(k) => {
+                        let _ = chrome_turn.wait_for(|n| *n >= k).await;
+                        Some(InOrder(chrome_done))
+                    }
+                    None => None,
+                };
                 let key = Self::grant_key(&r.entry, &r.input);
                 let granted = lock(grants).contains(&key);
                 if r.ask && !granted {
@@ -2004,6 +2057,13 @@ impl ChatService {
                     let mut out = self
                         .run_browser_tool(cid, tool, &input, &r.call.id, browser_llm)
                         .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let ToolKind::Chrome { tool } = &r.entry.kind {
+                    let started = Instant::now();
+                    let input = capped_input(&r.entry, &r.input, cap);
+                    let mut out = self.run_chrome_tool(cid, tool, &input).await;
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
@@ -2198,6 +2258,17 @@ impl ChatService {
         }
     }
 
+    /// Calls one of the Chrome extension's tools in the chat's session.
+    async fn run_chrome_tool(&self, cid: &str, tool: &str, input: &Value) -> ToolOutput {
+        let Some(c) = self.tools.chrome() else {
+            return ToolOutput::error("Chrome isn't available in this build.");
+        };
+        match c.call(cid, tool, input.clone()).await {
+            Ok(r) => self.tools.mcp_output(r).await,
+            Err(e) => ToolOutput::error(e.to_string()),
+        }
+    }
+
     fn emit_call(&self, cid: &str, call: &OpenCall, entry: &ToolEntry) {
         self.emit(
             cid,
@@ -2255,6 +2326,7 @@ impl ChatService {
                         | Builtin::SandboxCopyOut),
                     ) => sandbox_tools::label(b, input),
                     ToolKind::Browser { ref tool } => browser_tools::browser_label(tool, input),
+                    ToolKind::Chrome { ref tool } => chrome_tools::chrome_label(tool, input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,
@@ -2490,6 +2562,15 @@ impl ChatService {
 }
 
 /// The text blocks of a message (no tool results or files), joined by blank lines.
+/// Lets the next in-order call run when this one is over (however it ends).
+struct InOrder<'a>(&'a watch::Sender<usize>);
+
+impl Drop for InOrder<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|n| *n += 1);
+    }
+}
+
 /// What a failed `web_fetch` adds, so the model searches for the right page instead of
 /// guessing other addresses.
 fn fetch_failure_hint(browser: bool, search: bool) -> Option<&'static str> {
@@ -2523,6 +2604,8 @@ fn capped_input(entry: &ToolEntry, input: &Value, cap: usize) -> Value {
         crate::tools::web::DEFAULT_FETCH_CHARS
     } else if matches!(&entry.kind, ToolKind::Browser { tool } if tool == "read_page") {
         browser_tools::READ_DEFAULT_CHARS
+    } else if matches!(&entry.kind, ToolKind::Chrome { tool } if tool == "read_page") {
+        chrome_tools::READ_DEFAULT_CHARS
     } else {
         return input.clone();
     };
@@ -4698,6 +4781,245 @@ pub(crate) mod tests {
         let reqs = f.fake.requests();
         let last = reqs.last().expect("a request");
         assert!(last.tools.iter().all(|t| !t.name.starts_with("browser__")));
+    }
+
+    // ---- Chrome (the extension, through the bridge) ----------------------------------------
+
+    /// Like `fixture`, with a listening Chrome bridge; `connect` pairs a stand-in extension
+    /// that answers every tool with `[<session>] <tool> <arguments>` (and an image for
+    /// screenshots).
+    async fn fixture_chrome(
+        scripts: Vec<Vec<Step>>,
+        connect: bool,
+    ) -> (
+        Fixture,
+        oxide_bridge::Bridge,
+        Arc<Mutex<Vec<(String, String)>>>,
+        tempfile::TempDir,
+    ) {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let fake = FakeProvider::new(scripts);
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let bridge = oxide_bridge::Bridge::open(
+            tmp.path().join("chrome.json"),
+            secrets.clone(),
+            Arc::new(oxide_bridge::NoSink),
+        )
+        .await;
+        let port = {
+            let l = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("binds");
+            l.local_addr().expect("addr").port()
+        };
+        bridge
+            .configure(&oxide_core::ChromeSettings {
+                enabled: true,
+                port,
+                ask: true,
+            })
+            .await;
+        let calls: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        if connect {
+            let seen = calls.clone();
+            oxide_bridge::testing::fake_extension(&bridge, move |session, tool, args| {
+                lock(&seen).push((session.to_owned(), tool.to_owned()));
+                if tool == "screenshot" {
+                    serde_json::json!({"content": [
+                        {"type": "text", "text": "Screenshot of the tab"},
+                        {"type": "image", "data": "aGVsbG8=", "mimeType": "image/jpeg"}
+                    ]})
+                } else {
+                    oxide_bridge::testing::text_result(&format!("[{session}] {tool} {args}"))
+                }
+            })
+            .await;
+            assert!(bridge.connected());
+        }
+        let tools = Tools::new(None, secrets, None).with_chrome(bridge.clone());
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Check my order status".into(),
+                model: "lmstudio/fake-model".into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+                tools: None,
+            })
+            .await
+            .expect("chat");
+        (
+            Fixture {
+                store,
+                service,
+                fake,
+                sink,
+                chat,
+                first,
+            },
+            bridge,
+            calls,
+            tmp,
+        )
+    }
+
+    #[tokio::test]
+    async fn chrome_tools_run_in_the_users_chrome_and_ask_before_acting() {
+        let mut steps = call(
+            "c1",
+            "chrome__navigate",
+            r#"{"url":"https://shop.example/orders"}"#,
+        );
+        steps.extend(call("c2", "chrome__read_page", r#"{"max_chars":500000}"#));
+        steps.extend(call("c3", "chrome__screenshot", "{}"));
+        let (f, bridge, calls, _tmp) = fixture_chrome(
+            vec![
+                turn(steps, StopReason::ToolUse),
+                turn(vec![text("Your order shipped.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            true,
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.chrome.enabled = true;
+        f.store.save_app_settings(settings).await.expect("saves");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Opening a page asks; reading and screenshots don't.
+        let req = wait_approval(&f, "c1").await;
+        assert_eq!(req.tool, "navigate");
+        assert_eq!(req.server.as_deref(), Some("chrome"));
+        assert_eq!(f.service.pending_approvals().len(), 1);
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "c1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let (r, bad) = result_of(&m, "c1");
+        assert!(!bad, "{r}");
+        assert!(
+            r.contains(&format!("[{}] navigate", f.chat.id)) && r.contains("shop.example"),
+            "the chat is the extension's session: {r}"
+        );
+        // read_page's length is held to the result cap.
+        let (r, _) = result_of(&m, "c2");
+        assert!(r.contains("read_page") && !r.contains("500000"), "{r}");
+        assert!(m.content.iter().any(|b| matches!(b,
+            ContentBlock::ToolResult { tool_use_id, content, .. }
+                if tool_use_id == "c3"
+                    && content.iter().any(|c| matches!(c, ContentBlock::Image { .. })))));
+        assert_eq!(
+            lock(&calls)
+                .iter()
+                .map(|(_, t)| t.as_str())
+                .collect::<Vec<_>>(),
+            vec!["navigate", "read_page", "screenshot"]
+        );
+        let reqs = f.fake.requests();
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        for want in [
+            "chrome__tabs_list",
+            "chrome__navigate",
+            "chrome__click",
+            "chrome__get_console",
+        ] {
+            assert!(names.contains(&want), "{names:?}");
+        }
+        let system = reqs[0].system.clone().unwrap_or_default();
+        assert!(system.contains("chrome__navigate opens"), "{system}");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(|u| u.kind == ToolUsageKind::Chrome
+            && u.label.as_deref() == Some("https://shop.example/orders")
+            && u.server.as_deref() == Some("chrome")
+            && !u.is_error));
+        // The reply is over: the chat's session is released.
+        assert!(bridge.status().sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chrome_tools_need_the_setting_a_paired_chrome_and_the_chat_switch() {
+        // (enabled in Settings, a Chrome connected, switched off in the chat) → offered?
+        for (enabled, connected, chat_off, offered) in [
+            (false, true, false, false),
+            (true, false, false, false),
+            (true, true, true, false),
+            (true, true, false, true),
+        ] {
+            let (f, _bridge, _calls, _tmp) = fixture_chrome(
+                vec![turn(vec![text("ok")], StopReason::EndTurn), title_step()],
+                connected,
+            )
+            .await;
+            let mut settings = f.store.app_settings().await.expect("settings");
+            settings.chrome.enabled = enabled;
+            f.store.save_app_settings(settings).await.expect("saves");
+            if chat_off {
+                let mut tools = f.store.chat_tools(&f.chat.id).await.expect("tools");
+                tools.disabled_builtins.push(CHROME_SWITCH.into());
+                f.store
+                    .set_chat_tools(&f.chat.id, &tools)
+                    .await
+                    .expect("saves");
+            }
+            f.service
+                .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+                .await
+                .expect("starts");
+            f.sink.wait_finished().await;
+            let reqs = f.fake.requests();
+            let has = reqs[0].tools.iter().any(|t| t.name.starts_with("chrome__"));
+            assert_eq!(has, offered, "{enabled} {connected} {chat_off}");
+            let system = reqs[0].system.clone().unwrap_or_default();
+            assert_eq!(system.contains("chrome__"), offered);
+        }
+    }
+
+    #[tokio::test]
+    async fn chrome_going_away_mid_reply_is_explained() {
+        let (f, bridge, _calls, _tmp) = fixture_chrome(
+            vec![
+                turn(call("c1", "chrome__read_page", "{}"), StopReason::ToolUse),
+                turn(vec![text("Chrome went away.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            true,
+        )
+        .await;
+        let mut settings = f.store.app_settings().await.expect("settings");
+        settings.chrome.enabled = true;
+        f.store
+            .save_app_settings(settings.clone())
+            .await
+            .expect("saves");
+        // Offered while connected, then Chrome goes before the call runs.
+        let setup = f
+            .service
+            .setup(&f.chat, &mut String::new())
+            .await
+            .expect("setup");
+        assert!(setup.tool_set.find("chrome__read_page").is_some());
+        settings.chrome.enabled = false;
+        bridge.configure(&settings.chrome).await;
+        assert!(bridge.wait_disconnected().await);
+        let out = f
+            .service
+            .run_chrome_tool(&f.chat.id, "read_page", &serde_json::json!({}))
+            .await;
+        assert!(out.is_error);
+        assert!(
+            matches!(&out.content[0], ContentBlock::Text { text } if text.contains("isn't connected")),
+            "{out:?}"
+        );
     }
 
     /// A stand-in for Browser-Use that reports the model it was given.

@@ -11,8 +11,14 @@ import {
 import { useId, useState } from "react";
 import type { McpServerConfig, McpServerState, McpTransport } from "@/bindings";
 import { useBrowserStatus } from "@/features/browser/queries";
+import { useChromeStatus } from "@/features/chrome/queries";
 import { useDockerStatus } from "@/features/sandbox/queries";
-import { DEFAULT_SETTINGS, useSetBrowserSettings, useSettings } from "@/features/settings/queries";
+import {
+  DEFAULT_SETTINGS,
+  useSetBrowserSettings,
+  useSetChromeSettings,
+  useSettings,
+} from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -86,6 +92,7 @@ export function ConnectorsSection() {
       )}
 
       <BuiltInBrowserServer />
+      <BuiltInChromeServer />
       <BuiltInSandboxServer />
 
       <p className="mt-2 text-sm text-fg-subtle">
@@ -517,6 +524,52 @@ function BuiltInBrowserServer() {
           checked={browser.enabled}
           label="Use browser"
           onChange={(enabled) => setBrowser({ enabled })}
+        />
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The Chrome extension (Phase 14): Oxide's own bridge to the user's Chrome, so it isn't an
+ * entry of the config file. Its switch is Settings → Chrome's.
+ */
+function BuiltInChromeServer() {
+  const { data } = useSettings();
+  const chrome = (data ?? DEFAULT_SETTINGS).chrome;
+  const setChrome = useSetChromeSettings();
+  const { data: status } = useChromeStatus();
+  const openSettings = useOpenSettings();
+  const state = !chrome.enabled
+    ? "Off"
+    : status?.error
+      ? "Can't listen (see Chrome settings)"
+      : status?.connected
+        ? `Connected: ${status.connected}`
+        : status && status.paired.length > 0
+          ? "Waiting for Chrome"
+          : "Not paired yet";
+  return (
+    <section
+      aria-label="chrome (built in)"
+      className="flex items-start gap-3 rounded-xl border border-line bg-raised p-4"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-md font-medium text-fg">chrome</span>
+          <span className="rounded bg-sunken px-1.5 text-xs text-fg-subtle">Built in</span>
+        </div>
+        <p className="mt-1 text-sm text-fg-subtle">
+          Your own Chrome through Oxide&apos;s extension, after pairing. Its tools reach models as{" "}
+          <span className="font-mono">chrome__…</span> while a paired Chrome is connected. {state}.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button onClick={() => openSettings("chrome")}>Chrome settings</Button>
+        <Switch
+          checked={chrome.enabled}
+          label="Use Chrome"
+          onChange={(enabled) => setChrome({ enabled })}
         />
       </div>
     </section>

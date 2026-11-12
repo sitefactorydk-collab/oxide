@@ -33,6 +33,7 @@ import type {
   BrowserFrame,
   BrowserStatus,
   ChatWorkspace,
+  ChromeStatus,
   TaskList,
   ToolApprovalRequest,
   ToolUsage,
@@ -40,6 +41,12 @@ import type {
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
 import { fakeBrowserCommands, resetFakeBrowser, setBrowserEmitters } from "./fakeBrowser";
+import {
+  configureFakeChrome,
+  fakeChromeCommands,
+  resetFakeChrome,
+  setChromeEmitter,
+} from "./fakeChrome";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -132,6 +139,8 @@ export interface FakeSeed {
     sandbox: Partial<AppSettings["sandbox"]>;
     /** Changes to the browser settings (off by default). */
     browser: Partial<AppSettings["browser"]>;
+    /** Changes to the Chrome settings (off by default). */
+    chrome: Partial<AppSettings["chrome"]>;
     /** Changes to context management. */
     context: Partial<AppSettings["context"]>;
   }>;
@@ -196,6 +205,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         agentModel: null,
         ...seed.settings?.browser,
       },
+      chrome: { enabled: false, port: 47820, ask: true, ...seed.settings?.chrome },
       context: {
         compaction: true,
         threshold: 75,
@@ -240,6 +250,8 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakePython();
   resetFakeSandbox();
   resetFakeBrowser();
+  resetFakeChrome();
+  configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
 
 export const FAKE_LIMITS: AttachmentLimits = {
@@ -335,6 +347,8 @@ setBrowserEmitters(
   (s) => void browserChanged.emit(s),
   (f) => void browserLive.emit(f),
 );
+const chromeChanged = fakeEvent<ChromeStatus>("chrome-changed");
+setChromeEmitter((s) => void chromeChanged.emit(s));
 
 export const fakeEvents = {
   chatStream,
@@ -347,6 +361,7 @@ export const fakeEvents = {
   sandboxChanged,
   browserChanged,
   browserLive,
+  chromeChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -725,6 +740,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakePythonCommands,
   ...fakeSandboxCommands,
   ...fakeBrowserCommands,
+  ...fakeChromeCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,
@@ -1238,6 +1254,7 @@ export const fakeCommands: typeof RealCommands = {
         thinkingBudget: Math.min(64000, Math.max(1024, settings.models.thinkingBudget)),
       },
     };
+    configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
     return ok(state.settings);
   },
 

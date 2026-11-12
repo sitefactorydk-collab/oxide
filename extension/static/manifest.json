@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Oxide",
+  "short_name": "Oxide",
+  "description": "Lets the Oxide desktop app read and act on tabs in this browser, after you pair it.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "icons": { "32": "icons/32.png", "64": "icons/64.png", "128": "icons/128.png" },
+  "action": {
+    "default_title": "Oxide",
+    "default_popup": "popup.html",
+    "default_icon": { "32": "icons/32.png", "64": "icons/64.png" }
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["tabs", "tabGroups", "scripting", "storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:* 'self'"
+  }
+}

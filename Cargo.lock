@@ -3583,6 +3583,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "oxide-agent",
+ "oxide-bridge",
  "oxide-computer",
  "oxide-core",
  "oxide-llm",
@@ -3618,6 +3619,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "image",
+ "oxide-bridge",
  "oxide-core",
  "oxide-llm",
  "oxide-mcp",
@@ -3637,6 +3639,20 @@ dependencies = [
 [[package]]
 name = "oxide-bridge"
 version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "oxide-core",
+ "oxide-store",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "oxide-computer"

@@ -77,8 +77,20 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "browser"])],
     });
 
+  /** The user's Chrome ("Chrome" in the "+" menu, when it's on in Settings). */
+  const chromeOn = !tools.disabledBuiltins.includes("chrome");
+  const toggleChrome = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "chrome")
+        : [...new Set([...tools.disabledBuiltins, "chrome"])],
+    });
+
   return {
     tools,
+    chromeOn,
+    toggleChrome,
     sandboxOn,
     toggleSandbox,
     browserOn,

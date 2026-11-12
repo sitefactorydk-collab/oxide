@@ -243,6 +243,8 @@ pub struct AppSettings {
     pub python: PythonSettings,
     pub sandbox: SandboxSettings,
     pub browser: BrowserSettings,
+    /// Settings → Chrome (the extension and its bridge).
+    pub chrome: crate::chrome::ChromeSettings,
     /// Context management (shown in Settings → Models).
     pub context: ContextSettings,
 }
@@ -294,6 +296,7 @@ impl AppSettings {
             .clamp(1, crate::python::MAX_PYTHON_TIMEOUT_SECS);
         self.sandbox = self.sandbox.normalized();
         self.browser = self.browser.normalized();
+        self.chrome = self.chrome.normalized();
         self.context = self.context.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)

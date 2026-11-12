@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Oxide</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/64.png" alt="" width="28" height="28" />
+      <div>
+        <h1>Oxide</h1>
+        <p id="state" class="state"><span class="dot"></span><span id="state-text">…</span></p>
+      </div>
+    </header>
+
+    <p id="error" class="error" hidden></p>
+
+    <section id="pair" hidden>
+      <h2>Pair with Oxide</h2>
+      <p class="hint">
+        In Oxide, open <b>Settings → Chrome</b>, turn it on and click <b>Pair</b>. Type the six
+        words it shows here.
+      </p>
+      <form id="pair-form">
+        <label
+          >Code
+          <input id="code" autocomplete="off" spellcheck="false" placeholder="six words from Oxide"
+        /></label>
+        <label class="port">Port <input id="port" type="number" min="1024" max="65535" /></label>
+        <button type="submit" id="pair-button">Pair</button>
+      </form>
+    </section>
+
+    <section id="working" hidden>
+      <h2>Working now</h2>
+      <ul id="working-list"></ul>
+      <button type="button" id="stop-all" class="danger">Stop Oxide</button>
+    </section>
+
+    <section id="paired" hidden>
+      <div class="row">
+        <span class="hint" id="port-line"></span>
+        <button type="button" id="reconnect" class="link">Reconnect</button>
+        <button type="button" id="unpair" class="link">Unpair</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Sites</h2>
+      <p class="hint">Oxide asks before it uses a site. Your choices:</p>
+      <ul id="sites"></ul>
+      <form id="site-form" class="row">
+        <input id="site" placeholder="example.com" autocomplete="off" spellcheck="false" />
+        <select id="site-choice">
+          <option value="allow">Allow</option>
+          <option value="block">Block</option>
+        </select>
+        <button type="submit">Add</button>
+      </form>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

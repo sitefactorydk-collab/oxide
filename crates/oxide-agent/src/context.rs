@@ -219,6 +219,8 @@ pub struct PromptContext<'a> {
     pub sandbox: Option<SandboxPrompt>,
     /// The browser agent's tools are on.
     pub browser: bool,
+    /// The user's Chrome through Oxide's extension (a paired Chrome is connected).
+    pub chrome: bool,
     /// Old tool results may be cleared and long chats summarized (Settings → Models).
     pub context_notes: bool,
 }
@@ -415,6 +417,24 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              payment details or other sensitive data, and don't buy, post, send or sign up for \
              anything unless the user asked for exactly that. Close the browser with \
              browser__close when you're done.",
+        );
+    }
+    if ctx.chrome {
+        s.push_str(
+            "\n\nYou can work in the user's own Chrome through the chrome__ tools (Oxide's \
+             extension): it has their sign-ins, so use it for their accounts and for pages that \
+             need them. chrome__navigate opens a page in this chat's tab (search words search \
+             Google) and returns its text with links, buttons and fields numbered (like [3] \
+             button \"Search\"); chrome__read_page and chrome__find read it again; chrome__click, \
+             chrome__type, chrome__press_key, chrome__form_input and chrome__scroll act on those \
+             numbers; chrome__screenshot shows the tab; chrome__tabs_list and \
+             chrome__tabs_select work in a tab the user already has open. Numbers change when \
+             the page changes, so read again after acting. The user sees a banner in the tab \
+             and may be asked to allow each site; if they don't allow a site or press Stop, \
+             respect it and don't try again unless they ask. Never type passwords, payment \
+             details or other sensitive data (the extension refuses those fields), and don't \
+             buy, post, send, delete or sign up for anything unless the user asked for exactly \
+             that. Close tabs you opened with chrome__tabs_close when you're done with them.",
         );
     }
     if ctx.task_list {
@@ -658,6 +678,23 @@ mod tests {
         assert!(p.contains("install packages"), "{p}");
         assert!(p.contains("No folder is shared"), "{p}");
         assert!(!system_prompt(&PromptContext::default()).contains("sandbox"));
+    }
+
+    #[test]
+    fn chrome_paragraph_only_when_on() {
+        let p = system_prompt(&PromptContext {
+            chrome: true,
+            ..Default::default()
+        });
+        assert!(
+            p.contains("chrome__navigate") && p.contains("sign-ins"),
+            "{p}"
+        );
+        assert!(
+            p.contains("press Stop") && p.contains("Never type passwords"),
+            "{p}"
+        );
+        assert!(!system_prompt(&PromptContext::default()).contains("chrome__"));
     }
 
     #[test]

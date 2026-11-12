@@ -6,6 +6,7 @@ import { ExtensionsSection } from "@/features/extensions/ExtensionsSection";
 import { SkillsSection } from "@/features/extensions/SkillsSection";
 import { PythonSection } from "@/features/python/PythonSection";
 import { BrowserSection } from "@/features/browser/BrowserSection";
+import { ChromeSection } from "@/features/chrome/ChromeSection";
 import { SandboxSection } from "@/features/sandbox/SandboxSection";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
@@ -126,6 +127,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <SandboxSection />;
     case "browser":
       return <BrowserSection />;
+    case "chrome":
+      return <ChromeSection />;
     case "about":
       return <AboutSection />;
     default:

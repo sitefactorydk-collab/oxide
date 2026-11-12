@@ -77,6 +77,9 @@ pub enum ToolUsageKind {
     /// The browser agent: a page opened, read or clicked, or a whole browsing task (the
     /// label is the URL or the goal).
     Browser,
+    /// The user's Chrome through Oxide's extension: a tab opened, read, clicked or typed in
+    /// (the label is the URL or what was clicked or typed).
+    Chrome,
 }
 
 /// One tool call, logged per chat.

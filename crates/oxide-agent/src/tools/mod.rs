@@ -6,6 +6,7 @@
 //! `server__tool` with other characters replaced.
 
 pub mod browser;
+pub mod chrome;
 pub mod files;
 pub mod html;
 pub mod python;
@@ -138,6 +139,11 @@ pub enum ToolKind {
     Browser {
         tool: String,
     },
+    /// A tool of the user's Chrome through Oxide's extension (run by the chat service,
+    /// which knows the chat's session).
+    Chrome {
+        tool: String,
+    },
 }
 
 /// One tool as offered to the model.
@@ -161,6 +167,7 @@ impl ToolEntry {
             ToolKind::Mcp { server, .. } => Some(server),
             ToolKind::SandboxFile { .. } => Some(oxide_core::sandbox::SANDBOX_SERVER),
             ToolKind::Browser { .. } => Some(oxide_core::browser::BROWSER_SERVER),
+            ToolKind::Chrome { .. } => Some(oxide_core::chrome::CHROME_SERVER),
         }
     }
 
@@ -170,7 +177,8 @@ impl ToolEntry {
             ToolKind::Builtin(b) => b.name(),
             ToolKind::Mcp { tool, .. }
             | ToolKind::SandboxFile { tool }
-            | ToolKind::Browser { tool } => tool,
+            | ToolKind::Browser { tool }
+            | ToolKind::Chrome { tool } => tool,
         }
     }
 
@@ -179,6 +187,7 @@ impl ToolEntry {
         match &self.kind {
             ToolKind::SandboxFile { tool } => format!("builtin/sandbox__{tool}"),
             ToolKind::Browser { tool } => format!("builtin/browser__{tool}"),
+            ToolKind::Chrome { tool } => format!("builtin/chrome__{tool}"),
             _ => format!("{}/{}", self.server().unwrap_or("builtin"), self.tool()),
         }
     }
@@ -199,6 +208,7 @@ impl ToolEntry {
             )
             | ToolKind::SandboxFile { .. } => ToolUsageKind::Sandbox,
             ToolKind::Browser { .. } => ToolUsageKind::Browser,
+            ToolKind::Chrome { .. } => ToolUsageKind::Chrome,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -298,6 +308,7 @@ pub struct Tools {
     python: Option<oxide_pyenv::PythonEnv>,
     sandboxes: Option<oxide_sandbox::Sandboxes>,
     browser: Option<oxide_pyenv::BrowserAgents>,
+    chrome: Option<oxide_bridge::Bridge>,
 }
 
 impl Tools {
@@ -314,6 +325,7 @@ impl Tools {
             python: None,
             sandboxes: None,
             browser: None,
+            chrome: None,
         }
     }
 
@@ -345,6 +357,17 @@ impl Tools {
 
     pub fn browser(&self) -> Option<&oxide_pyenv::BrowserAgents> {
         self.browser.as_ref()
+    }
+
+    /// Gives models the Chrome extension's tools (when it is on in settings and a paired
+    /// Chrome is connected).
+    pub fn with_chrome(mut self, chrome: oxide_bridge::Bridge) -> Self {
+        self.chrome = Some(chrome);
+        self
+    }
+
+    pub fn chrome(&self) -> Option<&oxide_bridge::Bridge> {
+        self.chrome.as_ref()
     }
 
     /// Gives models the skills in this folder (`load_skill`).
@@ -474,9 +497,8 @@ impl Tools {
                 | Builtin::SandboxCopyOut,
             )
             | ToolKind::SandboxFile { .. }
-            | ToolKind::Browser { .. } => {
-                ToolOutput::error("This tool runs in the chat, not here.")
-            }
+            | ToolKind::Browser { .. }
+            | ToolKind::Chrome { .. } => ToolOutput::error("This tool runs in the chat, not here."),
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp

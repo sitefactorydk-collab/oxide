@@ -23,11 +23,13 @@ image.workspace = true
 oxide-mcp.workspace = true
 oxide-pyenv.workspace = true
 oxide-sandbox.workspace = true
+oxide-bridge.workspace = true
 reqwest.workspace = true
 url = "2"
 
 [dev-dependencies]
 tempfile.workspace = true
+oxide-bridge = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

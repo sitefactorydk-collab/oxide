@@ -8,7 +8,26 @@ license.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+# The stand-in extension client (`oxide_bridge::testing`), for other crates' tests.
+testing = []
+
 [dependencies]
+oxide-core.workspace = true
+oxide-store.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+base64.workspace = true
+uuid.workspace = true
+# The WebSocket handshake's accept key (RFC 6455).
+sha1 = "0.10"
+rand = "0.8"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

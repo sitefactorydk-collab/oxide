@@ -29,8 +29,8 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, browser, chats, desktop, extensions, mcp, memory, models, projects,
-        providers, python, sandbox, settings, system, tools, workspace,
+        artifacts, attachments, browser, chats, chrome, desktop, extensions, mcp, memory, models,
+        projects, providers, python, sandbox, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -43,6 +43,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::SandboxChanged,
             events::BrowserChanged,
             events::BrowserLive,
+            events::ChromeChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -160,6 +161,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             browser::browser_setup,
             browser::browser_close,
             browser::browser_remove_chromium,
+            // Chrome extension
+            chrome::chrome_status,
+            chrome::chrome_start_pairing,
+            chrome::chrome_cancel_pairing,
+            chrome::chrome_forget,
+            chrome::chrome_open_extension_folder,
             // System
             system::open_external,
             // Desktop integration
@@ -331,6 +338,7 @@ pub fn run() -> anyhow::Result<()> {
                 Arc::new(events::TauriPythonSink::new(app.handle().clone())),
                 Arc::new(events::TauriSandboxSink::new(app.handle().clone())),
                 Arc::new(events::TauriBrowserSink::new(app.handle().clone())),
+                Arc::new(events::TauriChromeSink::new(app.handle().clone())),
                 move |models, secrets| state::McpParts {
                     sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
                     agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),
@@ -383,7 +391,9 @@ pub fn run() -> anyhow::Result<()> {
                 // Sandboxes stop too; their files stay. Chats' browsers close.
                 let sandboxes = state.sandboxes.clone();
                 let browser = state.browser.clone();
+                let chrome = state.chrome.clone();
                 tauri::async_runtime::block_on(async move {
+                    chrome.shutdown().await;
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(15),
                         futures_util::future::join(sandboxes.shutdown(), browser.shutdown()),

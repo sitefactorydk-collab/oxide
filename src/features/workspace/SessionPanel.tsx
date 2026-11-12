@@ -3,6 +3,7 @@ import {
   Box,
   Braces,
   Compass,
+  PanelTop,
   CheckCircle2,
   Circle,
   CircleDot,
@@ -273,6 +274,7 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
     python: Braces,
     sandbox: Box,
     browser: Compass,
+    chrome: PanelTop,
   };
   const Icon = icons[kind] ?? Plug;
   return <Icon aria-hidden className="size-4" />;

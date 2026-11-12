@@ -33,7 +33,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Python | Oxide manages its own `uv` (a Tauri sidecar per target, pinned to one release in `scripts/uv-pins.json` and fetched by `npm run fetch-uv`). On first use it installs CPython 3.12 and a venv under `<app data>\python\` with the packages in the locked `python/uv.lock` (embedded in the app). `run_python` always asks for approval: the code is not sandboxed (Phase 12) |
 | Docker sandbox | Own crate `oxide-sandbox` driving the `docker` CLI (works with Docker Desktop's context). A container per chat (`oxide-sandbox-<chat id>`), workspace volume or folder at `/workspace`, no network by default; the reference filesystem MCP server runs per chat from its image and is **not** an MCP-manager entry (manager servers are shared by all chats). Default image `python:3.12-bookworm` (Phase 12b) |
 | Browser agent | Browser-Use (1.0) wrapped as a local MCP server (`python/oxide_browser_agent`, official `mcp` SDK 2.x, stdio), run **per chat** from the uv venv by `oxide-pyenv` (not an MCP-manager entry), with granular tools on Playwright sharing the browser over CDP. Its packages are the `browser` dependency group, installed on first use. It drives Chrome or Edge installed on the computer (own throwaway profile), else Playwright's Chromium, or the user's own Chrome over CDP (Phase 13) |
-| Chrome link | Own MV3 extension that talks to Oxide over a localhost **WebSocket with token pairing** |
+| Chrome link | Own MV3 extension (`extension/`, TypeScript built with `tsc`) that talks to Oxide over a localhost **WebSocket with token pairing** (`oxide-bridge`, its own small RFC 6455 implementation; JSON-RPC 2.0). Its tools reach models as `chrome__<tool>` while a paired Chrome is connected (Phase 14) |
 | Storage | SQLite via `sqlx` (migrations checked in). API keys in the OS keychain via `keyring`. Project knowledge search uses SQLite FTS5 with BM25 ranking (Phase 7) |
 | OS dialogs and links | `tauri-plugin-dialog` (file picker, save dialog) and `tauri-plugin-opener` (links open in the system browser), called from Rust commands so the frontend still only uses `@/bindings` (Phase 4) |
 | IPC typing | `tauri-specta` generates TS bindings from Rust commands and events. No hand-written IPC types |
@@ -74,7 +74,7 @@ Oxide/
 │  └─ oxide-computer/       screenshots + input (xcap, enigo) for computer use
 ├─ python/
 │  └─ oxide_browser_agent/  Browser-Use MCP server (pyproject.toml, uv.lock)
-├─ extension/               MV3 Chrome extension (TypeScript, built with Vite)
+├─ extension/               MV3 Chrome extension (TypeScript, built with tsc)
 └─ .github/workflows/       CI + release matrix
 ```
 
@@ -373,6 +373,7 @@ Requested by the user after Phase 13: a long agentic reply on Strata `swift-iq2_
 **Exit:** the reply that failed on 2026-11-12 (“can you make me a spread sheet with all the greatest male badminton players over the last 10 years?” on Strata `swift-iq2_xs`, 128K) finishes on Windows with the context staying below the window (Strata's monitor never reaches 100%), the transcript shows where it compacted, and a 50-turn chat keeps working past the window.
 
 ### Phase 14 — Chrome extension & WebSocket bridge
+(WebSocket hand-written instead of `tokio-tungstenite`, extension built with `tsc` instead of Vite; see PROGRESS.md.)
 - `oxide-bridge` (Rust, `tokio-tungstenite`):
   - Listens on `127.0.0.1` only, on a fixed default port that can be changed.
   - Accepts only `chrome-extension://<id>` origins and requires a **pairing token**: Oxide shows a 6-word code, the user pastes it into the extension popup, and the bridge exchanges it for a long-lived token stored in the keychain and in `chrome.storage.local`.
