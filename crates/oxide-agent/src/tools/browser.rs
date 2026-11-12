@@ -52,7 +52,8 @@ fn describe(tool: &str) -> (&'static str, &'static str, Value) {
         BROWSER_SEARCH => (
             "Search Google",
             "Search the web on Google in the browser and return the results page, with each \
-             result's link numbered for browser__click. Use it to find the right page whenever \
+             result's link numbered for browser__click (and Google's AI Overview first, when \
+             there is one). Use it to find the right page whenever \
              you don't know its exact address, instead of guessing URLs.",
             json!({
                 "type": "object",

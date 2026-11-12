@@ -402,7 +402,9 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              browser__screenshot shows the page, and browser__browser_task hands a whole \
              multi-step goal to an autonomous browsing agent. Whenever you don't know the exact \
              address of the page you need, find it with browser__search first and open a real \
-             result; never guess URLs. When a page fails (not found, access denied, unknown \
+             result; never guess URLs. When Google's results include an AI Overview that \
+             answers the question, use it and say it comes from Google's AI Overview; open its \
+             sources when accuracy matters. When a page fails (not found, access denied, unknown \
              site), search for the right one instead of trying made-up addresses. If a search is \
              refused with a check for robots, never try to solve or get around it: ask the user \
              to complete it, or use another way to find the page. Use the \
@@ -645,6 +647,7 @@ mod tests {
         assert!(p.contains("Never type passwords"), "{p}");
         assert!(p.contains("find it with browser__search first"), "{p}");
         assert!(p.contains("never try to solve or get around it"), "{p}");
+        assert!(p.contains("Google's AI Overview"), "{p}");
         assert!(!system_prompt(&PromptContext::default()).contains("browser__"));
     }
 

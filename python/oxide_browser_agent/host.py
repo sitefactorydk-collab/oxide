@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import quote_plus, unquote, urlsplit
 
 from .config import Config
-from .pagetext import PAGE_TEXT_JS, REF_ATTR
+from .pagetext import AI_OVERVIEW_JS, PAGE_TEXT_JS, REF_ATTR
 
 NAV_TIMEOUT_MS = 45_000
 ACTION_TIMEOUT_MS = 10_000
@@ -459,8 +459,26 @@ class BrowserHost:
         if is_blocked(page.url, info.get("text") or ""):
             _log(f"the search engine showed a check for robots ({host_of(page.url)})")
             raise BrowserFailure(self._blocked_message())
+        overview = await self._ai_overview(page)
+        if overview:
+            info["overview"] = overview
         info["status"] = None
         return info
+
+    async def _ai_overview(self, page: Any) -> str | None:
+        """The text of Google's AI Overview on a results page, opened up when it is cut
+        ("Show more"), or None."""
+        try:
+            if await page.evaluate(AI_OVERVIEW_JS) is None:
+                return None
+            more = page.get_by_role("button", name=re.compile(r"^\s*show more\s*$", re.I))
+            if await more.count() > 0 and await more.first.is_visible():
+                await more.first.click(timeout=3_000)
+                await asyncio.sleep(0.5)
+            return await page.evaluate(AI_OVERVIEW_JS)
+        except Exception as e:  # noqa: BLE001 - the results are there without it
+            _log(f"couldn't read the AI Overview: {first_line(e)}")
+            return None
 
     async def _answer_consent(self, page: Any) -> None:
         for pattern in (CONSENT_REJECT, CONSENT_ACCEPT):

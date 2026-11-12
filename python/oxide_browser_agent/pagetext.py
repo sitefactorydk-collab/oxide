@@ -155,6 +155,34 @@ PAGE_TEXT_JS = r"""
 """
 
 
+# Google's "AI Overview" at the top of a results page: the text of its section, found from its
+# heading (Google's markup has no stable names). `null` when there is none.
+AI_OVERVIEW_JS = r"""
+() => {
+  const isHeading = (e) => /^\s*AI Overview\s*$/i.test(e.textContent || "");
+  const heads = [...document.querySelectorAll("h1,h2,h3,h4,[role=heading],div,span,strong")]
+    .filter((e) => e.childElementCount === 0 && isHeading(e))
+    .filter((e) => e.offsetParent !== null || e.getClientRects().length > 0);
+  if (heads.length === 0) return null;
+  const total = (document.body.innerText || "").length;
+  let box = heads[0];
+  // Up to the section around the heading: big enough to hold the answer, well short of the
+  // whole page.
+  while (box.parentElement && (box.innerText || "").length < 1500) {
+    const outer = (box.parentElement.innerText || "").length;
+    if (outer >= Math.min(8000, total * 0.6) && (box.innerText || "").length >= 40) break;
+    box = box.parentElement;
+  }
+  const text = (box.innerText || "")
+    .replace(/^\s*AI Overview\s*/i, "")
+    .replace(/^\s*Show (more|less)\s*$/gim, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text.length > 40 ? text.slice(0, 6000) : null;
+}
+"""
+
+
 def slice_text(text: str, start: int, max_chars: int) -> str:
     """``max_chars`` characters from ``start``, with a note when there is more."""
     total = len(text)

@@ -751,14 +751,30 @@ fn staging_id() -> String {
 
 /// Renames, retrying for a few seconds (Windows refuses while a stopped server's process is
 /// still exiting).
+/// Renames a folder, retrying for about 20 s: on Windows an antivirus or indexer scan can keep
+/// files of a freshly stopped server (or a fresh unpack) open for a while after the process
+/// has gone (os error 32).
 async fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    rename_with_retries(from, to, &RENAME_DELAYS_MS).await
+}
+
+/// Waits between rename attempts (about 20 s in all).
+const RENAME_DELAYS_MS: [u64; 22] = [
+    100, 150, 250, 250, 500, 500, 500, 750, 750, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_500,
+    1_500, 1_500, 1_500, 2_000, 2_000, 2_000,
+];
+
+async fn rename_with_retries(from: &Path, to: &Path, delays_ms: &[u64]) -> std::io::Result<()> {
     let mut last = None;
-    for _ in 0..20 {
+    for delay in delays_ms.iter().copied().chain(std::iter::once(0)) {
         match tokio::fs::rename(from, to).await {
             Ok(()) => return Ok(()),
             Err(e) => last = Some(e),
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        if delay == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
     Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
 }
@@ -777,6 +793,31 @@ async fn remove_dir(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renames_keep_trying_for_about_twenty_seconds() {
+        let total: u64 = RENAME_DELAYS_MS.iter().sum();
+        assert!((18_000..=25_000).contains(&total), "{total}");
+    }
+
+    #[tokio::test]
+    async fn a_rename_succeeds_once_the_folder_is_free() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (from, to) = (tmp.path().join("a"), tmp.path().join("b"));
+        // Nothing to rename yet: it appears while the retries wait.
+        let late = from.clone();
+        let make = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            tokio::fs::create_dir(&late).await.expect("mkdir");
+        });
+        rename_with_retries(&from, &to, &[50, 50, 50, 50, 50])
+            .await
+            .expect("renames");
+        make.await.expect("task");
+        assert!(to.is_dir() && !from.exists());
+        let err = rename_with_retries(&tmp.path().join("missing"), &to, &[10, 10]).await;
+        assert!(err.is_err());
+    }
     use oxide_core::ExtensionFieldType as T;
 
     fn field(key: &str, kind: T) -> ExtensionField {

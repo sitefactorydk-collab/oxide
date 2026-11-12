@@ -65,7 +65,15 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/search":
             q = parse_qs(u.query).get("q", [""])[0]
-            if q == "robot":
+            if q == "tivoli hours":
+                body = """<!doctype html><title>tivoli hours - Search</title>
+<div id="top"><div><div><span>AI Overview</span></div>
+<div><p>Tivoli Gardens in Copenhagen is open daily from 11:00 to 22:00 in the summer season,
+with longer hours on Fridays.</p><p id="more" hidden>Tickets for adults cost 185 DKK.</p>
+<button onclick="document.getElementById('more').hidden=false">Show more</button></div></div></div>
+<div><a href="/hours">Opening hours - Tivoli</a><p>Plan your visit.</p></div>
+<div><a href="/">Tivoli Gardens - Wikipedia</a><p>An amusement park.</p></div>"""
+            elif q == "robot":
                 body = "<title>Sorry</title><p>Our systems have detected unusual traffic.</p>"
             else:
                 body = f"<!doctype html><title>Results</title><p>You searched for {q}</p>"
@@ -156,6 +164,16 @@ class PureTests(unittest.TestCase):
         self.assertTrue(is_blocked("https://x", "Our systems have detected unusual traffic"))
         self.assertFalse(is_blocked("https://www.google.com/search?q=a", "Results for a"))
         self.assertFalse(is_unknown_host("net::ERR_CONNECTION_REFUSED"))
+
+    def test_the_ai_overview_leads_the_results_text(self):
+        from oxide_browser_agent.server import page_summary
+
+        text = page_summary(
+            {"title": "t", "url": "u", "text": "RESULTS-BODY", "overview": "Open 11-22."}, 1000
+        )
+        self.assertIn("Google's AI Overview", text)
+        self.assertLess(text.index("Open 11-22."), text.index("RESULTS-BODY"))
+        self.assertNotIn("AI Overview", page_summary({"title": "t", "url": "u", "text": "r"}, 1000))
 
     def test_slices_say_where_they_are(self):
         self.assertEqual(slice_text("abc", 0, 10), "abc")
@@ -327,6 +345,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 info = await host.navigate(web.url + "/empty-404")
                 self.assertIn("answered with an error", info["note"])
                 self.assertIn("You searched for 127.0.0.1 empty", info["text"])
+                # Google's AI Overview comes first, opened up.
+                info = await host.search("tivoli hours")
+                self.assertIn("open daily from 11:00 to 22:00", info["overview"])
+                self.assertIn("185 DKK", info["overview"])
+                self.assertNotIn("Wikipedia", info["overview"])
+                info = await host.search("opening hours bakery")
+                self.assertNotIn("overview", info)
                 # A check for robots is a refused search, never something to get around.
                 with self.assertRaises(BrowserFailure) as e:
                     await host.search("robot")

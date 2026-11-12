@@ -69,7 +69,15 @@ def page_summary(info: dict[str, Any], chars: int, start: int = 0) -> str:
     if info.get("status") and int(info["status"]) >= 400:
         head.append(f"HTTP status: {info['status']}")
     body = info.get("text") or "(The page has no visible text.)"
-    return "\n".join(head) + "\n\n" + slice_text(body, start, chars)
+    overview = ""
+    if info.get("overview") and start == 0:
+        overview = (
+            "Google's AI Overview (an AI-written summary at the top of the results; use it when "
+            "it answers the question, say that it comes from Google's AI Overview, and check "
+            "its sources when accuracy matters):\n"
+            f"{info['overview']}\n\n--- The results page ---\n"
+        )
+    return "\n".join(head) + "\n\n" + overview + slice_text(body, start, chars)
 
 
 def image(data: bytes) -> ImageContent:
@@ -160,7 +168,7 @@ async def navigate(
     title="Search Google",
     description=(
         "Search the web on Google in the browser and return the results page, with each "
-        "result's link numbered for click. Use it to find the right page whenever you don't "
+        "result's link numbered for click (and Google's AI Overview first, when there is one). Use it to find the right page whenever you don't "
         "know its exact address, instead of guessing URLs."
     ),
     annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
