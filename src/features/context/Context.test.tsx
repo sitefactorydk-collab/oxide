@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { compactHeldReply, fakeState, finishReply } from "@/test/fakeBackend";
+import { compactHeldReply, fakeState, finishReply, startCompacting } from "@/test/fakeBackend";
 import { renderApp } from "@/test/renderApp";
 
 async function send(text: string) {
@@ -42,6 +42,10 @@ describe("context management", () => {
     await send("Research everything");
     const live = await screen.findByLabelText("Reply in progress");
     expect(await within(live).findByText("Partial")).toBeInTheDocument();
+    act(() => startCompacting("c2"));
+    expect(await within(live).findByRole("status")).toHaveTextContent(
+      "Compacting the conversation",
+    );
     act(() => {
       compactHeldReply("c2");
     });
@@ -63,6 +67,8 @@ describe("context management", () => {
     });
     const note = await within(live).findByRole("note", { name: "Old tool results cleared" });
     expect(note).toHaveTextContent("Replaced by short notes to save room");
+    // The reply goes on: "Working" shows under the note until the model writes again.
+    expect(within(live).getByRole("status")).toHaveTextContent("Working");
     fireEvent.click(within(note).getByRole("button", { name: /Old tool results cleared/ }));
     expect(await within(note).findByText(/web_fetch/)).toBeInTheDocument();
   });

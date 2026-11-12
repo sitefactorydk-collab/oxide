@@ -5,7 +5,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 ## Status
 - **Last completed:** Phase 12b — Docker sandbox workspace (committed 2026-11-12 as `phase 12b: Docker sandbox workspace`; exit check passed on Windows on 2026-11-12)
 - **Phase 13** — Browser agent (Browser-Use): done (`1af53b2`, fix `86f147d`; all exit checks passed by hand on 2026-11-12). Follow-up (Google search instead of guessed addresses) committed as `09c1ca2` (2026-11-12 13:53, all checks and the real-browser test green; the hidden test browser's real Google search was refused with a robot check and reported plainly, as designed); then click fixes `23e3fd5` and Google's AI Overview + longer extension-folder retries `4412e21` (2026-11-12 15:16, all green)
-- **Phase 13b** — Context management & chat compaction: committed `d58672b` (2026-11-12 18:08, all checks green); fix after the first real run built, waiting for `scripts\win\phase13b-fix.cmd` and the manual exit checks (see its section)
+- **Phase 13b** — Context management & chat compaction: committed `d58672b` + `fccd2c7` (2026-11-12, all checks green); the badminton reply no longer fills the context; a UI fix waits for `scripts\win\phase13b-fix.cmd`, then Compact now and the settings checks (see its section)
 - **Next phase:** Phase 14 — Chrome extension & WebSocket bridge
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -34,7 +34,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 13b — Context management & chat compaction — 2026-11-12
-Status: committed (`d58672b`); first real run found a repetition loop and silent clearing — fix built, waiting for `scripts\win\phase13b-fix.cmd` and the manual exit checks below.
+Status: committed (`d58672b`, fix `fccd2c7`); the badminton reply ran without context errors or loops (stopped by the user while still researching); a small UI fix is waiting for `scripts\win\phase13b-fix.cmd`; Compact now and the settings checks are still open.
 
 **Windows run 1 (2026-11-12 18:08):** every check green, committed as `d58672b phase 13b: context management & chat compaction`. `logs\phase13b-models.json`: Strata's `/v1/models` names no context window (only `id`, `meta.label` “Swift 1.5 IQ2_XS”), so its window must be set in Settings → Models (131072).
 
@@ -43,6 +43,9 @@ Status: committed (`d58672b`); first real run found a repetition loop and silent
 - **Gentler clearing:** oldest result turns first, one at a time, only until the estimate is 15 % of the window under the trigger (`Budget::clear_goal`; 131K window: 98K → 79K), never the last 2 result turns.
 - **Clearing is shown:** each clearing round is saved as a `cleared` compaction (never used as a summary; `pick_compaction` skips it) and shown as an **“Old tool results cleared”** note at that point of the reply (tokens before → after; click for the list of cleared calls).
 - System prompt: facts go in the visible reply text (thinking isn't kept between steps); never fill gaps from memory.
+
+**Windows run 2 (19:19):** all green, committed `fccd2c7 phase 13b: stop repetition loops, clear gently and show it`. **Second real badminton run** (export `docs\can you make me a spread sheet…test-3.json`): no context error, no repetition loop; it used `browser__search` (Google showed no usable results in the hidden browser) and `web_fetch`; clearing ran twice (98.1K → 72.5K, 96.6K → 67.7K tokens; “Old tool results cleared” notes shown); Strata's monitor stayed below 100 %. The user stopped it after ~45 min (102 blocks, 1.16 M input tokens over its requests) while it was still researching: the model keeps its notes in thinking (not sent back) and re-reads pages it had read (World Tour Finals 3×). A model-quality limit on IQ2_XS, not a context failure. UI fix after it (`phase13b-fix.cmd` again, message `logs\commit-msg-phase13b-fix.txt`): the live reply shows **Working** after a clearing or compaction note, and **Compacting the conversation** while a summary is made (they showed nothing before).
+- Possible later improvement: send the current reply's thinking back to OpenAI-compatible servers as `reasoning_content` (if Strata accepts it), so notes in thinking survive clearing.
 
 Agent-side checks passed: Rust fmt, clippy `-D warnings` and tests on Linux (core 72, store 49, llm 48, agent 134 + 2 ignored, mcp, pyenv, sandbox unchanged); tsc, eslint and prettier on the device VM. Vitest and `src-tauri` run only on Windows; `src/bindings/index.ts` was edited by hand and `phase13b.ps1` regenerates it.
 

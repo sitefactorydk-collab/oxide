@@ -484,6 +484,11 @@ export function compactHeldReply(
   return compaction;
 }
 
+/** The held reply in `conversationId` starts summarizing the conversation. */
+export function startCompacting(conversationId: string) {
+  emitStream(conversationId, { type: "compacting" });
+}
+
 /** Sends a conversation update as the backend would (e.g. an automatic title). */
 export function emitConversationUpdated(conversation: Conversation): void {
   void conversationUpdated.emit({ conversation });

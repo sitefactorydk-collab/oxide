@@ -411,9 +411,12 @@ export function LiveReplyView({ conversationId }: { conversationId: string }) {
   const live = useStreams((s) => s.live[conversationId]);
   if (!live) return null;
   const last = live.blocks[live.blocks.length - 1];
-  // "Working" while nothing new is showing: before any output, and after a tool finished.
+  // "Working" while nothing new is showing: before any output, after a tool finished, while
+  // the conversation is summarized, and after a clearing or compaction note.
   const working =
+    live.compacting ||
     last === undefined ||
+    last.kind === "compaction" ||
     (last.kind === "tool" && (last.call.status === "done" || last.call.status === "error"));
   return (
     <div aria-busy="true" aria-label="Reply in progress" className="flex flex-col gap-2">
@@ -446,7 +449,12 @@ export function LiveReplyView({ conversationId }: { conversationId: string }) {
         }
         return <ToolCallBlock key={b.call.id} call={b.call} />;
       })}
-      {working && <WorkingLine startedAt={live.startedAt} />}
+      {working && (
+        <WorkingLine
+          startedAt={live.startedAt}
+          label={live.compacting ? "Compacting the conversation" : "Working"}
+        />
+      )}
     </div>
   );
 }
@@ -510,11 +518,17 @@ function Elapsed({ since }: { since: number }) {
 }
 
 /** Live status line while a reply is being generated, before any text arrives. */
-export function WorkingLine({ startedAt }: { startedAt: number }) {
+export function WorkingLine({
+  startedAt,
+  label = "Working",
+}: {
+  startedAt: number;
+  label?: string;
+}) {
   return (
     <div role="status" className="inline-flex items-center gap-2 py-1 text-md text-fg-muted">
       <WorkingDots />
-      Working
+      {label}
       <Elapsed since={startedAt} />
     </div>
   );
