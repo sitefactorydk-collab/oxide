@@ -34,6 +34,7 @@ import type {
   BrowserStatus,
   ChatWorkspace,
   ChromeStatus,
+  ScheduleChange,
   TaskList,
   ToolApprovalRequest,
   ToolUsage,
@@ -51,6 +52,7 @@ import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
 import { fakeSandboxCommands, resetFakeSandbox, setSandboxEmitter } from "./fakeSandbox";
+import { fakeScheduleCommands, resetFakeSchedule, setScheduleEmitter } from "./fakeSchedule";
 import {
   seedConversations,
   seedMessages,
@@ -251,6 +253,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeSandbox();
   resetFakeBrowser();
   resetFakeChrome();
+  resetFakeSchedule();
   configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
 
@@ -349,6 +352,8 @@ setBrowserEmitters(
 );
 const chromeChanged = fakeEvent<ChromeStatus>("chrome-changed");
 setChromeEmitter((s) => void chromeChanged.emit(s));
+const scheduleChanged = fakeEvent<ScheduleChange>("schedule-changed");
+setScheduleEmitter((c) => void scheduleChanged.emit(c));
 
 export const fakeEvents = {
   chatStream,
@@ -362,6 +367,7 @@ export const fakeEvents = {
   browserChanged,
   browserLive,
   chromeChanged,
+  scheduleChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -741,6 +747,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeSandboxCommands,
   ...fakeBrowserCommands,
   ...fakeChromeCommands,
+  ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
       message: `pong, ${name}`,

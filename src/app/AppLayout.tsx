@@ -8,6 +8,7 @@ import { McpAskDialog } from "@/features/mcp/McpAskDialog";
 import { useMcpEvents } from "@/features/mcp/useMcpEvents";
 import { usePythonEvents } from "@/features/python/queries";
 import { useSandboxEvents } from "@/features/sandbox/queries";
+import { useScheduleEvents } from "@/features/scheduled/queries";
 import { SearchDialog } from "@/features/search/SearchDialog";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import {
@@ -39,6 +40,7 @@ export function AppLayout() {
   useSandboxEvents();
   useBrowserEvents();
   useChromeEvents();
+  useScheduleEvents();
   useDesktopActions();
 
   const settingsOpen = isSettingsPath(location.pathname);

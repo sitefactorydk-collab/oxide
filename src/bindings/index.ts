@@ -1129,6 +1129,108 @@ async chromeOpenExtensionFolder() : Promise<Result<null, CommandError>> {
 }
 },
 /**
+ * Every task, by name, each with its latest run.
+ */
+async listScheduledTasks() : Promise<Result<ScheduledTask[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_scheduled_tasks") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getScheduledTask(id: string) : Promise<Result<ScheduledTask, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_scheduled_task", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createScheduledTask(input: TaskInput) : Promise<Result<ScheduledTask, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_scheduled_task", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateScheduledTask(id: string, input: TaskInput) : Promise<Result<ScheduledTask, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_scheduled_task", { id, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pauses (`false`) or resumes a task.
+ */
+async setScheduledTaskEnabled(id: string, enabled: boolean) : Promise<Result<ScheduledTask, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_scheduled_task_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes a task and its history; the runs' chats stay.
+ */
+async deleteScheduledTask(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_scheduled_task", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs a task now, in a new chat. Returns the run (skipped if one is still going).
+ */
+async runScheduledTask(id: string) : Promise<Result<TaskRun, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_scheduled_task", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A task's runs, newest first (at most `limit`, default 50).
+ */
+async scheduledTaskRuns(taskId: string, limit: number | null) : Promise<Result<TaskRun[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scheduled_task_runs", { taskId, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The next few times a schedule runs, in the computer's time zone. Fails with a sentence
+ * for the user when the schedule isn't valid.
+ */
+async previewSchedule(schedule: TaskSchedule) : Promise<Result<number[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_schedule", { schedule }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The scheduled run that wrote in a chat, if the chat is one.
+ */
+async taskRunForChat(conversationId: string) : Promise<Result<TaskRun | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("task_run_for_chat", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1439,6 +1541,7 @@ mcpChanged: McpChanged,
 memoryChanged: MemoryChanged,
 pythonChanged: PythonChanged,
 sandboxChanged: SandboxChanged,
+scheduleChanged: ScheduleChanged,
 taskListChanged: TaskListChanged
 }>({
 browserChanged: "browser-changed",
@@ -1451,6 +1554,7 @@ mcpChanged: "mcp-changed",
 memoryChanged: "memory-changed",
 pythonChanged: "python-changed",
 sandboxChanged: "sandbox-changed",
+scheduleChanged: "schedule-changed",
 taskListChanged: "task-list-changed"
 })
 
@@ -1478,6 +1582,18 @@ export type ApprovalDecision = "allowOnce" |
  * Allow this tool for the rest of the chat (saved).
  */
 "allowChat" | "deny"
+/**
+ * How runs handle tool calls that would ask for approval.
+ */
+export type ApprovalMode = 
+/**
+ * As in a chat: calls that ask wait for the user, and Oxide sends a notification.
+ */
+"ask" | 
+/**
+ * Every tool call runs without asking (saving a skill still asks).
+ */
+"auto"
 /**
  * An artifact: its latest state. `key` is the id the model chose (unique in the chat).
  */
@@ -2041,7 +2157,11 @@ export type DesktopAction =
 /**
  * Open Settings, at `section` when given.
  */
-{ type: "openSettings"; section: string | null }
+{ type: "openSettings"; section: string | null } | 
+/**
+ * Open Scheduled tasks, at this task when given.
+ */
+{ type: "openScheduled"; taskId: string | null }
 /**
  * The tray, a menu, quick entry or a deep link asks the main window to do something
  * (`events.desktopRequest`; sent to the main window only).
@@ -2721,6 +2841,18 @@ usage: Usage | null;
  */
 feedback: Feedback | null }
 /**
+ * What happens to a run that was missed (Oxide closed, the computer asleep).
+ */
+export type MissedRunPolicy = 
+/**
+ * Run once as soon as Oxide is back, however many were missed.
+ */
+"runOnce" | 
+/**
+ * Note it in the history and wait for the next time.
+ */
+"skip"
+/**
  * What a model supports. Filled from the provider's own metadata where it has any, and from
  * Oxide's curated tables or a probe otherwise.
  */
@@ -3000,6 +3132,50 @@ export type Rating = "good" | "bad"
  */
 export type Role = "user" | "assistant"
 /**
+ * Where a run is.
+ */
+export type RunStatus = "running" | 
+/**
+ * A tool call waits for the user's approval.
+ */
+"waitingApproval" | 
+/**
+ * The reply finished.
+ */
+"done" | 
+/**
+ * The reply failed (or Oxide closed while it ran).
+ */
+"failed" | 
+/**
+ * Someone pressed Stop.
+ */
+"stopped" | 
+/**
+ * Missed while Oxide was closed or the computer slept, and the task skips missed runs.
+ */
+"missed" | 
+/**
+ * Not run: the previous run was still going.
+ */
+"skipped"
+/**
+ * What started a run.
+ */
+export type RunTrigger = 
+/**
+ * Its time came.
+ */
+"schedule" | 
+/**
+ * "Run now".
+ */
+"manual" | 
+/**
+ * A run that was missed, made up when Oxide was back.
+ */
+"catchUp"
+/**
  * Something about the sandbox changed (sent as `events.sandboxChanged`): Docker or the images
  * (`conversation_id` is `None`), or one chat's sandbox.
  */
@@ -3100,6 +3276,38 @@ export type SandboxStorage =
  * folder), mounted into the container. Only that folder is mounted.
  */
 "folder"
+/**
+ * A task or one of its runs changed (`events.scheduleChanged`).
+ */
+export type ScheduleChange = { taskId: string; 
+/**
+ * The run that changed, if the change was a run's.
+ */
+run: TaskRun | null; 
+/**
+ * The task was deleted.
+ */
+deleted: boolean }
+/**
+ * A scheduled task or one of its runs changed (`events.scheduleChanged`).
+ */
+export type ScheduleChanged = ScheduleChange
+/**
+ * A saved task.
+ */
+export type ScheduledTask = { id: string; name: string; prompt: string; schedule: TaskSchedule; model: string; projectId: string | null; folders: string[]; tools: ChatTools; thinking: boolean; approval: ApprovalMode; missed: MissedRunPolicy; 
+/**
+ * Off: paused (a one-time task is switched off after its run).
+ */
+enabled: boolean; 
+/**
+ * When it runs next (`None`: paused, or nothing left to run).
+ */
+nextRunAt: number | null; 
+/**
+ * The latest run, if any.
+ */
+lastRun: TaskRun | null; createdAt: number; updatedAt: number }
 /**
  * A chat matching a search, with the best matching message excerpt if the hit was in the text.
  * 
@@ -3347,6 +3555,22 @@ export type StreamEvent =
  */
 { type: "failed"; error: string; message: Message | null }
 /**
+ * What a task is made of (create and edit).
+ */
+export type TaskInput = { name: string; prompt: string; schedule: TaskSchedule; 
+/**
+ * `<providerId>/<model>`.
+ */
+model: string; projectId?: string | null; 
+/**
+ * Folders each run's chat gets (full paths).
+ */
+folders?: string[]; 
+/**
+ * Tool switches each run's chat starts with.
+ */
+tools?: ChatTools; thinking?: boolean; approval?: ApprovalMode; missed?: MissedRunPolicy; enabled?: boolean }
+/**
  * One step of a chat's task list.
  */
 export type TaskItem = { title: string; status: TaskStatus }
@@ -3358,6 +3582,39 @@ export type TaskList = { conversationId: string; items: TaskItem[]; updatedAt: n
  * The model set a chat's task list (`events.taskListChanged`).
  */
 export type TaskListChanged = TaskList
+/**
+ * One run of a task (its history).
+ */
+export type TaskRun = { id: string; taskId: string; 
+/**
+ * The chat the run wrote in (`None` if it never started, or the chat was deleted).
+ */
+conversationId: string | null; trigger: RunTrigger; 
+/**
+ * The scheduled moment (`None` for "Run now").
+ */
+scheduledFor: number | null; startedAt: number; finishedAt: number | null; status: RunStatus; 
+/**
+ * The reply's text (shortened).
+ */
+output: string | null; 
+/**
+ * Why it failed or wasn't run.
+ */
+error: string | null }
+/**
+ * When a task runs.
+ */
+export type TaskSchedule = 
+/**
+ * Five-field cron (`minute hour day-of-month month day-of-week`) in local time, or a
+ * macro (`@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`).
+ */
+{ kind: "cron"; expr: string } | 
+/**
+ * One run at this moment.
+ */
+{ kind: "once"; at: number }
 /**
  * Where a step of the task list is.
  */

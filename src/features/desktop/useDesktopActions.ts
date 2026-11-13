@@ -34,6 +34,9 @@ export function useDesktopActions(): void {
       case "openSettings":
         openSettings(action.section ?? undefined);
         break;
+      case "openScheduled":
+        navigate(action.taskId ? `/scheduled/${action.taskId}` : "/scheduled");
+        break;
     }
   };
 

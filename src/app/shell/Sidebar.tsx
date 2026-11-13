@@ -1,4 +1,5 @@
 import {
+  CalendarClock,
   ChevronDown,
   Ellipsis,
   FolderClosed,
@@ -59,6 +60,7 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
         <NavItem to="/chats" icon={MessagesSquare} label="Chats" />
         <NavItem to="/projects" icon={FolderClosed} label="Projects" />
         <NavItem to="/artifacts" icon={Shapes} label="Artifacts" />
+        <NavItem to="/scheduled" icon={CalendarClock} label="Scheduled" end={false} />
       </nav>
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -102,17 +104,20 @@ function NavItem({
   icon: Icon,
   label,
   shortcut,
+  end = true,
 }: {
   to: string;
   icon: LucideIcon;
   label: string;
   shortcut?: string;
+  /** Only the exact path counts as active (`false`: its sub-pages too). */
+  end?: boolean;
 }) {
   // Resolve the active state here: a Tooltip (Radix Slot) would stringify NavLink's
   // function-style className.
-  const active = useMatch({ path: to, end: true }) !== null;
+  const active = useMatch({ path: to, end }) !== null;
   const link = (
-    <NavLink to={to} end className={navItemClass(active)}>
+    <NavLink to={to} end={end} className={navItemClass(active)}>
       <Icon className="size-[18px] shrink-0 text-fg-muted" />
       <span className="flex-1">{label}</span>
     </NavLink>

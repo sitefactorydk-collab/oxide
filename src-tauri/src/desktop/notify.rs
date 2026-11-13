@@ -1,7 +1,7 @@
 //! System notifications: a reply finished, failed or needs a tool approval while Oxide
 //! isn't in front.
 
-use oxide_core::{ChatStreamEvent, StreamEvent};
+use oxide_core::{ChatStreamEvent, RunStatus, ScheduledTask, StreamEvent, TaskRun};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt as _;
 
@@ -11,6 +11,13 @@ use crate::state::AppState;
 /// Called for every reply event; notifies for the ones that matter when the main window
 /// isn't in front and notifications are on.
 pub fn on_stream_event(app: &AppHandle, event: &ChatStreamEvent) {
+    // A scheduled run's chat: the scheduler sends its own notifications (`on_task_run`).
+    if app
+        .try_state::<AppState>()
+        .is_some_and(|s| s.chat.is_unattended(&event.conversation_id))
+    {
+        return;
+    }
     let body = match &event.event {
         StreamEvent::Done { message: Some(m) } => oxide_core::desktop::reply_preview(&m.content),
         StreamEvent::Failed { .. } => "The reply stopped with an error.".to_owned(),
@@ -52,6 +59,41 @@ pub fn on_stream_event(app: &AppHandle, event: &ChatStreamEvent) {
         };
         show(&app, title.as_deref().unwrap_or("Oxide"), &body);
     });
+}
+
+/// A scheduled run needs the user, finished or failed. Notifies while Oxide isn't in front
+/// (in front, the window shows it); missed, skipped and stopped runs only go in the history.
+pub fn on_task_run(app: &AppHandle, task: &ScheduledTask, run: &TaskRun) {
+    let body = match run.status {
+        RunStatus::WaitingApproval => {
+            "A scheduled run is waiting for your approval to use a tool.".to_owned()
+        }
+        RunStatus::Done => match run.output.as_deref().map(str::trim) {
+            Some(o) if !o.is_empty() => {
+                oxide_core::desktop::reply_preview(&[oxide_core::ContentBlock::text(
+                    o.trim_start_matches('…'),
+                )])
+            }
+            _ => "The scheduled run finished.".to_owned(),
+        },
+        RunStatus::Failed => format!(
+            "The scheduled run failed: {}",
+            run.error.as_deref().unwrap_or("unknown error")
+        ),
+        _ => return,
+    };
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    if !state.prefs().notifications {
+        return;
+    }
+    if main_in_front(app) {
+        tracing::debug!("no notification for a scheduled run: Oxide is in front");
+        return;
+    }
+    tracing::debug!(task = %task.id, status = run.status.as_str(), "notifying about a run");
+    show(app, &task.name, &body);
 }
 
 /// Once per run, the first time the close button hides Oxide: say where it went.

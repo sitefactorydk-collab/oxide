@@ -32,6 +32,9 @@ pub enum DesktopAction {
     NewChat { text: Option<String> },
     /// Open Settings, at `section` when given.
     OpenSettings { section: Option<String> },
+    /// Open Scheduled tasks, at this task when given.
+    #[serde(rename_all = "camelCase")]
+    OpenScheduled { task_id: Option<String> },
 }
 
 /// Parses an `oxide://` link. Anything else (another scheme, an unknown path, a malformed
@@ -64,6 +67,13 @@ pub fn parse_deep_link(url: &str) -> Option<DesktopAction> {
                 .map(|t| t.chars().take(MAX_DEEP_LINK_TEXT).collect::<String>())
                 .filter(|t| !t.trim().is_empty());
             Some(DesktopAction::NewChat { text })
+        }
+        [first] if first.eq_ignore_ascii_case("scheduled") => {
+            Some(DesktopAction::OpenScheduled { task_id: None })
+        }
+        [first, id] if first.eq_ignore_ascii_case("scheduled") => {
+            let id = percent_decode(id)?;
+            valid_id(&id).then_some(DesktopAction::OpenScheduled { task_id: Some(id) })
         }
         [first] if first.eq_ignore_ascii_case("settings") => {
             Some(DesktopAction::OpenSettings { section: None })
@@ -279,6 +289,21 @@ mod tests {
         assert_eq!(parse_deep_link("oxid://chat/1"), None);
         assert_eq!(parse_deep_link("oxide://unknown/thing"), None);
         assert_eq!(parse_deep_link(""), None);
+    }
+
+    #[test]
+    fn scheduled_links() {
+        assert_eq!(
+            parse_deep_link("oxide://scheduled"),
+            Some(DesktopAction::OpenScheduled { task_id: None })
+        );
+        assert_eq!(
+            parse_deep_link("oxide://Scheduled/abc-1"),
+            Some(DesktopAction::OpenScheduled {
+                task_id: Some("abc-1".into())
+            })
+        );
+        assert_eq!(parse_deep_link("oxide://scheduled/a%20b"), None);
     }
 
     #[test]

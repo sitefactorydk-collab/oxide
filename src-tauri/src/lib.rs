@@ -11,6 +11,7 @@ mod error;
 mod events;
 mod mcp_bridge;
 mod state;
+mod zone;
 
 use std::sync::Arc;
 
@@ -30,7 +31,7 @@ const BINDINGS_HEADER: &str =
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         artifacts, attachments, browser, chats, chrome, desktop, extensions, mcp, memory, models,
-        projects, providers, python, sandbox, settings, system, tools, workspace,
+        projects, providers, python, sandbox, schedule, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -44,6 +45,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::BrowserChanged,
             events::BrowserLive,
             events::ChromeChanged,
+            events::ScheduleChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -167,6 +169,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
             chrome::chrome_cancel_pairing,
             chrome::chrome_forget,
             chrome::chrome_open_extension_folder,
+            // Scheduled tasks
+            schedule::list_scheduled_tasks,
+            schedule::get_scheduled_task,
+            schedule::create_scheduled_task,
+            schedule::update_scheduled_task,
+            schedule::set_scheduled_task_enabled,
+            schedule::delete_scheduled_task,
+            schedule::run_scheduled_task,
+            schedule::scheduled_task_runs,
+            schedule::preview_schedule,
+            schedule::task_run_for_chat,
             // System
             system::open_external,
             // Desktop integration
@@ -339,6 +352,7 @@ pub fn run() -> anyhow::Result<()> {
                 Arc::new(events::TauriSandboxSink::new(app.handle().clone())),
                 Arc::new(events::TauriBrowserSink::new(app.handle().clone())),
                 Arc::new(events::TauriChromeSink::new(app.handle().clone())),
+                Arc::new(events::TauriScheduleSink::new(app.handle().clone())),
                 move |models, secrets| state::McpParts {
                     sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
                     agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),
@@ -349,6 +363,7 @@ pub fn run() -> anyhow::Result<()> {
             let extensions = state.extensions.clone();
             let sandboxes = state.sandboxes.clone();
             let browser = state.browser.clone();
+            let scheduler = state.scheduler.clone();
             let settings = tauri::async_runtime::block_on(state.store.app_settings())
                 .unwrap_or_else(|e| {
                     tracing::warn!("settings: {e}");
@@ -367,6 +382,9 @@ pub fn run() -> anyhow::Result<()> {
             tauri::async_runtime::spawn(async move { sandboxes.start_reaper() });
             // Chats' browsers close after a while without use.
             tauri::async_runtime::spawn(async move { browser.start_reaper() });
+            // Scheduled tasks run from now on (also while Oxide is in the tray); runs missed
+            // while it was closed are handled first, as each task says.
+            tauri::async_runtime::spawn(async move { scheduler.start() });
 
             let handle = app.handle().clone();
             desktop::apply_settings(&handle, &settings.desktop);

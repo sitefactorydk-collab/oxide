@@ -5,6 +5,8 @@ import { ChatsPage } from "@/features/chats/ChatsPage";
 import { HomePage } from "@/features/home/HomePage";
 import { ProjectPage } from "@/features/projects/ProjectPage";
 import { ProjectsPage } from "@/features/projects/ProjectsPage";
+import { ScheduledPage } from "@/features/scheduled/ScheduledPage";
+import { TaskPage } from "@/features/scheduled/TaskPage";
 
 /**
  * Page routes. `/settings/*` is not here: settings is a modal over whichever page was open,
@@ -20,6 +22,8 @@ export function PageRoutes({ location }: { location: string | Partial<Location> 
       { path: "/projects", element: <ProjectsPage /> },
       { path: "/project/:id", element: <ProjectPage /> },
       { path: "/artifacts", element: <ArtifactsPage /> },
+      { path: "/scheduled", element: <ScheduledPage /> },
+      { path: "/scheduled/:id", element: <TaskPage /> },
       { path: "*", element: <NotFound /> },
     ],
     location,

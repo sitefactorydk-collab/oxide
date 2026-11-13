@@ -35,7 +35,7 @@ use oxide_llm::{
 };
 use oxide_store::{NewReply, NewToolUsage, Store, new_id, now_ms};
 use serde_json::Value;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::AgentError;
 use crate::artifacts::run_artifact;
@@ -111,6 +111,14 @@ struct PendingApproval {
     answer: oneshot::Sender<ApprovalDecision>,
 }
 
+/// A chat a scheduled task runs in while nobody watches (Phase 15).
+#[derive(Debug, Clone)]
+struct Unattended {
+    task_name: String,
+    /// Tool calls run without asking (saving a skill still asks).
+    auto_approve: bool,
+}
+
 /// The window's clock (time zone), for the system prompt.
 #[derive(Debug, Clone, Default)]
 struct ClientClock {
@@ -131,6 +139,10 @@ pub struct ChatService {
     context_memo: Mutex<HashMap<String, ContextMemo>>,
     /// Context windows named by "context full" answers, by model id.
     learned_windows: Mutex<HashMap<String, u32>>,
+    /// Chats scheduled tasks are running in, by chat id.
+    unattended: Mutex<HashMap<String, Unattended>>,
+    /// Approvals, approved calls starting and replies ending, for the scheduler.
+    signals: broadcast::Sender<ChatStreamEvent>,
 }
 
 /// A chat's last request: its prompt overhead (system prompt, tools), how the provider's own
@@ -244,6 +256,8 @@ struct Setup {
     server_clearing: bool,
     /// Characters one tool result may have (scaled to the context window).
     result_cap: usize,
+    /// A scheduled task runs without asking (see [`ChatService::set_unattended`]).
+    auto_approve: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -267,6 +281,8 @@ impl ChatService {
             clock: Mutex::new(ClientClock::default()),
             context_memo: Mutex::new(HashMap::new()),
             learned_windows: Mutex::new(HashMap::new()),
+            unattended: Mutex::new(HashMap::new()),
+            signals: broadcast::channel(256).0,
         })
     }
 
@@ -286,6 +302,35 @@ impl ChatService {
                 .map(|t| t.trim().chars().take(64).collect())
                 .filter(|t: &String| !t.is_empty()),
         };
+    }
+
+    /// Marks a chat as a scheduled task's: its replies say so in the system prompt, keep the
+    /// task's name as the title, and with `auto_approve` run tool calls without asking (saving
+    /// a skill still asks). Lasts until [`ChatService::clear_unattended`].
+    pub fn set_unattended(&self, conversation_id: &str, task_name: &str, auto_approve: bool) {
+        lock(&self.unattended).insert(
+            conversation_id.to_owned(),
+            Unattended {
+                task_name: task_name.to_owned(),
+                auto_approve,
+            },
+        );
+    }
+
+    /// The scheduled run in this chat is over: it's an ordinary chat again.
+    pub fn clear_unattended(&self, conversation_id: &str) {
+        lock(&self.unattended).remove(conversation_id);
+    }
+
+    /// Whether a scheduled task is running in this chat.
+    pub fn is_unattended(&self, conversation_id: &str) -> bool {
+        lock(&self.unattended).contains_key(conversation_id)
+    }
+
+    /// Approval requests, approved calls starting (`ToolRunning`) and replies ending (`Done`,
+    /// `Failed`) of every chat. Subscribe before starting a reply to see all of them.
+    pub fn subscribe(&self) -> broadcast::Receiver<ChatStreamEvent> {
+        self.signals.subscribe()
     }
 
     /// Whether a reply is being written in `conversation_id`.
@@ -509,10 +554,25 @@ impl ChatService {
     }
 
     fn emit(&self, conversation_id: &str, event: StreamEvent) {
-        self.sink.stream_event(ChatStreamEvent {
+        let event = ChatStreamEvent {
             conversation_id: conversation_id.to_owned(),
             event,
-        });
+        };
+        let signal = self.signals.receiver_count() > 0
+            && matches!(
+                event.event,
+                StreamEvent::ToolApproval { .. }
+                    | StreamEvent::ToolRunning { .. }
+                    | StreamEvent::Done { .. }
+                    | StreamEvent::Failed { .. }
+            );
+        if signal {
+            // The window hears it first (its notification still sees the chat as a run's).
+            self.sink.stream_event(event.clone());
+            let _ = self.signals.send(event);
+        } else {
+            self.sink.stream_event(event);
+        }
     }
 
     async fn generate(
@@ -644,6 +704,8 @@ impl ChatService {
                 let first_exchange = saved.is_some()
                     && stop_reason != StopReason::Stopped
                     && thread.iter().filter(|m| m.role == Role::User).count() == 1;
+                // A scheduled run's chat keeps the task's name (asked before the run ends).
+                let scheduled = self.is_unattended(&cid);
                 self.finish(
                     &cid,
                     StreamEvent::Done {
@@ -651,6 +713,7 @@ impl ChatService {
                     },
                 );
                 if first_exchange
+                    && !scheduled
                     && let (Some(first), Some(reply)) = (thread.first(), saved.as_ref())
                 {
                     self.auto_title(&cid, first, reply).await;
@@ -873,6 +936,7 @@ impl ChatService {
         };
         let skills = crate::skills::skills_prompt(&tool_set.skills);
         let clock = lock(&self.clock).clone();
+        let unattended = lock(&self.unattended).get(&conversation.id).cloned();
         let system = system_prompt(&PromptContext {
             user_name: &settings.profile.name,
             now_ms: now_ms(),
@@ -915,6 +979,7 @@ impl ChatService {
                 .iter()
                 .any(|e| e.kind == ToolKind::Builtin(Builtin::SaveSkill)),
             context_notes: settings.context.compaction && !tool_set.is_empty(),
+            scheduled_task: unattended.as_ref().map(|u| u.task_name.as_str()),
         });
         let server_clearing = config.kind == ProviderKind::Anthropic
             && settings.context.compaction
@@ -939,6 +1004,7 @@ impl ChatService {
             info,
             server_clearing,
             result_cap: crate::tools::MAX_RESULT_CHARS,
+            auto_approve: unattended.as_ref().is_some_and(|u| u.auto_approve),
         })
     }
 
@@ -1884,6 +1950,10 @@ impl ChatService {
         // Saving a skill always asks, whatever was allowed before.
         if entry.kind == ToolKind::Builtin(Builtin::SaveSkill) {
             return true;
+        }
+        // A scheduled task the user set to run without asking.
+        if setup.auto_approve {
+            return false;
         }
         if setup.grants.contains(&Self::grant_key(entry, input)) {
             return false;

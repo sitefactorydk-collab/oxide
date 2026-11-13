@@ -29,6 +29,7 @@ pub mod knowledge;
 pub mod memory;
 mod registry;
 pub mod sampling;
+pub mod scheduler;
 pub mod skills;
 pub mod tasks;
 mod title;
@@ -42,6 +43,7 @@ pub use context::{
 pub use error::AgentError;
 pub use registry::{Connector, ModelRegistry};
 pub use sampling::run_sampling;
+pub use scheduler::{Scheduler, SchedulerSink};
 pub use skills::Skills;
 pub use title::{clean_title, pick_title_model};
 pub use tools::{McpTools, Tools, WebTools};

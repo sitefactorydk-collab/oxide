@@ -21,6 +21,7 @@ pub mod project;
 pub mod provider;
 pub mod python;
 pub mod sandbox;
+pub mod schedule;
 pub mod settings;
 pub mod tools;
 pub mod workspace;
@@ -71,6 +72,11 @@ pub use python::{
 pub use sandbox::{
     ChatSandbox, DockerState, DockerStatus, SandboxChange, SandboxCommand, SandboxFile,
     SandboxImage, SandboxListing, SandboxSettings, SandboxState, SandboxStorage,
+};
+pub use schedule::{
+    ApprovalMode, CronSpec, FixedZone, LocalZone, MAX_RUN_OUTPUT_CHARS, MAX_RUNS_KEPT, MAX_TASKS,
+    MISSED_AFTER_MS, MissedRunPolicy, RunStatus, RunTrigger, ScheduleChange, ScheduledTask,
+    TaskInput, TaskRun, TaskSchedule,
 };
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,

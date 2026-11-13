@@ -225,6 +225,8 @@ pub struct PromptContext<'a> {
     pub save_skill: bool,
     /// Old tool results may be cleared and long chats summarized (Settings → Models).
     pub context_notes: bool,
+    /// The chat is a run of this scheduled task: nobody is watching.
+    pub scheduled_task: Option<&'a str>,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -502,6 +504,16 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              from memory; look things up again instead.",
         );
     }
+    if let Some(task) = ctx.scheduled_task.map(str::trim).filter(|t| !t.is_empty()) {
+        s.push_str(&format!(
+            "\n\nThis is a scheduled run of the user's task “{task}”: the message below is the \
+             task's saved prompt, sent by Oxide at the scheduled time. The user isn't watching \
+             and can't answer questions now, so don't ask any: make sensible choices, do the \
+             whole task, and end with a clear report of the result (what you found or did, and \
+             anything that needs the user's attention). The user reads it later in the task's \
+             history."
+        ));
+    }
     if let Some(mem) = ctx.memory.map(str::trim).filter(|p| !p.is_empty()) {
         s.push_str(&format!(
             "\n\n<memory>\n{mem}\n</memory>\nThis is what Oxide remembers about the user from \
@@ -649,6 +661,18 @@ mod tests {
             usage: None,
             feedback: None,
         }
+    }
+
+    #[test]
+    fn scheduled_runs_are_told_nobody_is_watching() {
+        let chat = system_prompt(&PromptContext::default());
+        assert!(!chat.contains("scheduled run"));
+        let run = system_prompt(&PromptContext {
+            scheduled_task: Some("Morning brief"),
+            ..Default::default()
+        });
+        assert!(run.contains("scheduled run of the user's task “Morning brief”"));
+        assert!(run.contains("don't ask any"));
     }
 
     #[test]

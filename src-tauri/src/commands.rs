@@ -15,6 +15,7 @@ pub mod projects;
 pub mod providers;
 pub mod python;
 pub mod sandbox;
+pub mod schedule;
 pub mod settings;
 pub mod system;
 pub mod tools;

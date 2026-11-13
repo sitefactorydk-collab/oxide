@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_agent::{
-    AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Skills, Tools,
+    AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Scheduler, SchedulerSink,
+    Skills, Tools,
 };
 use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
@@ -35,6 +36,8 @@ pub struct AppState {
     pub browser: BrowserAgents,
     /// The Chrome extension's bridge (a WebSocket on 127.0.0.1 while Settings → Chrome is on).
     pub chrome: Bridge,
+    /// Scheduled tasks: runs them in new chats while Oxide is open or in the tray.
+    pub scheduler: Arc<Scheduler>,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -87,7 +90,8 @@ pub struct McpParts {
 impl AppState {
     /// Opens the database in `data_dir` (creating it) and uses the OS keychain for secrets,
     /// with entries grouped under `service` (the app identifier). Reply events go to `sink`.
-    // One sink per subsystem (chat, Python, sandbox, browser, Chrome) plus the MCP parts.
+    // One sink per subsystem (chat, Python, sandbox, browser, Chrome, scheduler) plus the MCP
+    // parts.
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         dirs: &AppDirs,
@@ -97,6 +101,7 @@ impl AppState {
         sandbox_sink: Arc<dyn SandboxSink>,
         browser_sink: Arc<dyn BrowserSink>,
         chrome_sink: Arc<dyn BridgeSink>,
+        schedule_sink: Arc<dyn SchedulerSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -151,6 +156,12 @@ impl AppState {
         .with_browser(browser.clone())
         .with_chrome(chrome.clone());
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
+        let scheduler = Scheduler::new(
+            store.clone(),
+            chat.clone(),
+            schedule_sink,
+            Arc::new(crate::zone::SystemZone),
+        );
         Ok(Self {
             store,
             secrets,
@@ -164,6 +175,7 @@ impl AppState {
             sandboxes,
             browser,
             chrome,
+            scheduler,
         })
     }
 }

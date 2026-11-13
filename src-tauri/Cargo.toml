@@ -46,6 +46,8 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 futures-util.workspace = true
 base64.workspace = true
+# The computer's time zone for scheduled tasks (Phase 15); already in the graph through Tauri.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # The artifact frame's files come from the Vite dev server in debug builds.
 reqwest.workspace = true
 

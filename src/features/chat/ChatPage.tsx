@@ -23,6 +23,7 @@ import {
 } from "@/features/chats/queries";
 import { Composer } from "@/features/composer/Composer";
 import { CompactionDivider } from "@/features/context/CompactionDivider";
+import { ScheduledRunBanner } from "@/features/scheduled/ScheduledRunBanner";
 import { useCompactions } from "@/features/context/queries";
 import { useGenerateOptions } from "@/features/composer/options";
 import { usePendingApprovals } from "@/features/tools/queries";
@@ -231,6 +232,7 @@ function ChatView({ id }: { id: string }) {
             aria-live="off"
             className="mx-auto flex w-full max-w-thread flex-col gap-6 px-6 pb-10 pt-8"
           >
+            <ScheduledRunBanner conversationId={id} />
             {messagesQuery.error && (
               <p role="alert" className="text-danger">
                 Couldn’t load messages: {errorMessage(messagesQuery.error)}

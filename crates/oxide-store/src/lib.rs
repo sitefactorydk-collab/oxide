@@ -14,6 +14,7 @@ mod messages;
 mod probes;
 mod projects;
 mod providers;
+mod schedule;
 mod search;
 pub mod secrets;
 mod settings;

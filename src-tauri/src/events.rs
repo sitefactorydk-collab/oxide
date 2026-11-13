@@ -59,6 +59,10 @@ pub struct BrowserLive(pub BrowserFrame);
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct ChromeChanged(pub oxide_core::ChromeStatus);
 
+/// A scheduled task or one of its runs changed (`events.scheduleChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct ScheduleChanged(pub oxide_core::ScheduleChange);
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
@@ -155,6 +159,36 @@ impl oxide_bridge::BridgeSink for TauriChromeSink {
             tracing::info!(conversation = %session, "stopped from Chrome");
             state.chat.stop(session);
         }
+    }
+}
+
+/// Forwards the scheduler's changes to every window and notifies about runs that need the
+/// user or ended.
+pub struct TauriScheduleSink {
+    app: AppHandle,
+}
+
+impl TauriScheduleSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_agent::SchedulerSink for TauriScheduleSink {
+    fn changed(&self, change: oxide_core::ScheduleChange) {
+        if let Err(e) = ScheduleChanged(change).emit(&self.app) {
+            tracing::warn!("couldn't send a schedule update: {e}");
+        }
+    }
+
+    fn chat_started(&self, conversation: Conversation) {
+        if let Err(e) = ConversationUpdated(ConversationChanged { conversation }).emit(&self.app) {
+            tracing::warn!("couldn't send a conversation update: {e}");
+        }
+    }
+
+    fn run_event(&self, task: &oxide_core::ScheduledTask, run: &oxide_core::TaskRun) {
+        crate::desktop::notify::on_task_run(&self.app, task, run);
     }
 }
 

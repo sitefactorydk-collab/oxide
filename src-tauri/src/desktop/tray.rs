@@ -10,15 +10,20 @@ use super::{dispatch, quick, quit, show_main, toggle_main};
 const SHOW: &str = "tray-show";
 const NEW_CHAT: &str = "tray-new-chat";
 const QUICK: &str = "tray-quick-entry";
+const SCHEDULED: &str = "tray-scheduled";
 const QUIT: &str = "tray-quit";
 
 pub fn build(app: &AppHandle) -> tauri::Result<TrayIcon> {
     let show = MenuItem::with_id(app, SHOW, "Show Oxide", true, None::<&str>)?;
     let new_chat = MenuItem::with_id(app, NEW_CHAT, "New chat", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, QUICK, "Quick entry", true, None::<&str>)?;
+    let scheduled = MenuItem::with_id(app, SCHEDULED, "Scheduled tasks", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, QUIT, "Quit Oxide", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &new_chat, &quick, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &new_chat, &quick, &scheduled, &separator, &quit],
+    )?;
 
     let mut builder = TrayIconBuilder::with_id("oxide")
         .tooltip("Oxide")
@@ -47,6 +52,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         SHOW => show_main(app),
         NEW_CHAT => dispatch(app, DesktopAction::NewChat { text: None }),
         QUICK => quick::show(app),
+        SCHEDULED => dispatch(app, DesktopAction::OpenScheduled { task_id: None }),
         QUIT => quit(app),
         _ => {}
     }
