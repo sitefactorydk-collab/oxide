@@ -221,6 +221,8 @@ pub struct PromptContext<'a> {
     pub browser: bool,
     /// The user's Chrome through Oxide's extension (a paired Chrome is connected).
     pub chrome: bool,
+    /// The `save_skill` tool is on.
+    pub save_skill: bool,
     /// Old tool results may be cleared and long chats summarized (Settings → Models).
     pub context_notes: bool,
 }
@@ -452,6 +454,18 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              load_skill with its name before you start and follow what it says (it may point \
              to more files to read). Don't load skills that don't apply."
         ));
+    }
+    if ctx.save_skill {
+        s.push_str(
+            "\n\nYou can save skills with save_skill: reusable instructions the user's later \
+             chats can load. When the user asks to turn something into a skill (\"turn what we \
+             just did into a skill\"), write down the workflow that worked: when to use it, the \
+             steps and tools in order, what to check, and pitfalls you hit, generalized beyond \
+             this one case. If a task you just did looks like something the user will repeat, \
+             you may offer to make it a skill, but save only when the user asks or agrees. To \
+             change a skill, load it first and save it under its folder (`skill`) instead of \
+             making a second one. The user sees the whole skill and decides whether it's saved.",
+        );
     }
     if let Some(name) = ctx.project_name.map(str::trim).filter(|n| !n.is_empty()) {
         s.push_str(&format!(

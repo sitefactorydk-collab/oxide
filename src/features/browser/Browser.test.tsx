@@ -114,6 +114,7 @@ describe("browser calls in a reply", () => {
         inputJson: input,
         readOnly: false,
         destructive: false,
+        skill: null,
         requestedAt: Date.now(),
       });
     });

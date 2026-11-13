@@ -32,6 +32,7 @@ function request(messageId: string, toolUseId = "t1"): ToolApprovalRequest {
     inputJson: '{\n  "path": "C:/notes.txt"\n}',
     readOnly: false,
     destructive: true,
+    skill: null,
     requestedAt: Date.now(),
   };
 }

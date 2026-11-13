@@ -46,8 +46,8 @@ pub use conversation::{Conversation, SearchHit, StartConversation};
 pub use desktop::DesktopAction;
 pub use extension::{
     Extension, ExtensionField, ExtensionFieldType, ExtensionInfo, ExtensionItem, ExtensionPreview,
-    ExtensionServerType, ExtensionStatus, ExtensionValue, LOAD_SKILL, Skill, SkillDetail,
-    SkillInput,
+    ExtensionServerType, ExtensionStatus, ExtensionValue, LOAD_SKILL, SAVE_SKILL, Skill,
+    SkillDetail, SkillFileChange, SkillInput, SkillSavePreview,
 };
 pub use mcp::{
     ChatTools, ImportCandidate, ImportPreview, ImportStatus, McpAnswer, McpAsk, McpCapabilities,

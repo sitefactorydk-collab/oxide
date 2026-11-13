@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands, events } from "@/bindings";
 import { artifactKeys } from "@/features/artifacts/queries";
+import { extensionKeys } from "@/features/extensions/queries";
 import { artifactCallInfo, artifactRefOf } from "@/features/artifacts/partial";
 import { contextKeys } from "@/features/context/queries";
 import { useArtifactPanel } from "@/features/artifacts/store";
@@ -60,6 +61,13 @@ export function useChatEvents(): void {
         }
         if (e.type === "toolResult") {
           void qc.invalidateQueries({ queryKey: toolKeys.usage(cid) });
+          // A skill a model saved shows in Settings → Skills (and the next reply gets it).
+          const block = useStreams
+            .getState()
+            .live[cid]?.blocks.find((b) => b.kind === "tool" && b.call.id === e.id);
+          if (block?.kind === "tool" && block.call.name === "save_skill" && !e.isError) {
+            void qc.invalidateQueries({ queryKey: extensionKeys.skills });
+          }
           const ref = artifactRefOf(e.content);
           if (ref) {
             void qc.invalidateQueries({ queryKey: artifactKeys.all });

@@ -10,10 +10,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oxide_core::extension::{MAX_SKILL_DESCRIPTION, MAX_SKILL_NAME, skill_slug};
-use oxide_core::{LOAD_SKILL, Skill, SkillDetail, SkillInput};
+use oxide_core::{
+    LOAD_SKILL, SAVE_SKILL, Skill, SkillDetail, SkillFileChange, SkillInput, SkillSavePreview,
+};
 use oxide_mcp::archive::{self, ZipLimits};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::tools::{Builtin, ToolEntry, ToolKind};
 
@@ -28,6 +30,16 @@ const MAX_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_LOAD_CHARS: usize = 100_000;
 /// Files listed for the model, at most.
 const MAX_LISTED: usize = 200;
+/// Most extra files one `save_skill` call may write.
+pub const MAX_SAVE_FILES: usize = 20;
+/// Largest extra file `save_skill` writes.
+pub const MAX_SAVE_FILE_BYTES: usize = 256 * 1024;
+/// Largest `SKILL.md` `save_skill` writes.
+pub const MAX_SAVE_SKILL_MD: usize = 200_000;
+/// Skills listed in `save_skill`'s description, at most.
+const MAX_SAVE_LISTED: usize = 100;
+/// Characters of a file's content shown on the approval card.
+const MAX_PREVIEW_CHARS: usize = 20_000;
 
 /// Front matter fields Oxide uses.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -238,6 +250,9 @@ pub fn skill_md(name: &str, description: &str, license: Option<&str>, body: &str
 #[serde(default)]
 struct State {
     disabled: Vec<String>,
+    /// Where each skill came from (folder name → `settings`, `chat`, `folder`, `zip`).
+    /// Skills made before Phase 14c have no entry.
+    origins: BTreeMap<String, String>,
 }
 
 /// Errors are written for users.
@@ -436,7 +451,16 @@ impl Skills {
         Ok((slug, description))
     }
 
-    /// Writes a new skill.
+    /// Notes where a skill came from (for the approval card of a later change).
+    fn set_origin(&self, folder: &str, origin: &str) {
+        let mut state = self.state();
+        state.origins.insert(folder.to_owned(), origin.to_owned());
+        if let Err(e) = self.save_state(&state) {
+            tracing::warn!("couldn't note where a skill came from: {e}");
+        }
+    }
+
+    /// Writes a new skill (from Settings).
     pub fn create(&self, input: &SkillInput) -> SkillResult<Skill> {
         let (slug, description) = Self::check_input(input)?;
         let dir = self.root.join(&slug);
@@ -449,6 +473,7 @@ impl Skills {
             skill_md(&slug, &description, None, &input.body),
         )
         .map_err(|e| format!("couldn't write {SKILL_FILE}: {e}"))?;
+        self.set_origin(&slug, "settings");
         Ok(self.read_skill(&slug, &self.state().disabled))
     }
 
@@ -480,8 +505,9 @@ impl Skills {
         let dir = self.folder_of(folder)?;
         std::fs::remove_dir_all(&dir).map_err(|e| format!("couldn't remove the skill: {e}"))?;
         let mut state = self.state();
-        if state.disabled.iter().any(|d| d == folder) {
+        if state.disabled.iter().any(|d| d == folder) || state.origins.contains_key(folder) {
             state.disabled.retain(|d| d != folder);
+            state.origins.remove(folder);
             self.save_state(&state)?;
         }
         Ok(())
@@ -510,6 +536,12 @@ impl Skills {
 
     /// Copies a skill folder (or a folder holding one) into the skills folder.
     pub fn add_folder(&self, src: &Path) -> SkillResult<Skill> {
+        let skill = self.copy_in(src)?;
+        self.set_origin(&skill.folder, "folder");
+        Ok(skill)
+    }
+
+    fn copy_in(&self, src: &Path) -> SkillResult<Skill> {
         let dir = Self::skill_dir_in(src)?;
         let files = walk(&dir);
         if files.len() > MAX_FILES {
@@ -575,8 +607,11 @@ impl Skills {
             },
         )
         .map_err(|e| e.to_string())
-        .and_then(|_| self.add_folder(&staging));
+        .and_then(|_| self.copy_in(&staging));
         let _ = std::fs::remove_dir_all(&staging);
+        if let Ok(skill) = &result {
+            self.set_origin(&skill.folder, "zip");
+        }
         result
     }
 
@@ -665,6 +700,577 @@ impl Skills {
                 ))
             }
         }
+    }
+
+    /// Any skill (on, off or broken) by name or folder (case doesn't matter).
+    fn find_any(&self, name: &str) -> Option<Skill> {
+        let want = name.trim().to_lowercase();
+        let skills = self.list();
+        skills
+            .iter()
+            .find(|s| s.folder.to_lowercase() == want)
+            .or_else(|| skills.iter().find(|s| s.name.to_lowercase() == want))
+            .or_else(|| {
+                let slug = skill_slug(&want);
+                skills
+                    .iter()
+                    .find(|s| !slug.is_empty() && skill_slug(&s.name) == slug)
+            })
+            .cloned()
+    }
+
+    /// Checks a `save_skill` call and works out exactly what it would write. Nothing is
+    /// written; [`Skills::apply_save`] writes the plan once the user allows it.
+    pub fn plan_save(&self, input: &Value) -> SkillResult<SavePlan> {
+        let text = |k: &str| {
+            input
+                .get(k)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .filter(|v| !v.trim().is_empty())
+        };
+        let target = text("skill");
+        let existing = match &target {
+            Some(t) => Some(self.find_any(t).ok_or_else(|| {
+                let names: Vec<String> = self.list().into_iter().map(|s| s.folder).collect();
+                if names.is_empty() {
+                    format!(
+                        "There's no skill called \"{t}\" (there are no skills yet). Leave out \
+                         `skill` to create a new one."
+                    )
+                } else {
+                    format!(
+                        "There's no skill called \"{t}\". Existing skills: {}. Leave out \
+                         `skill` to create a new one.",
+                        names.join(", ")
+                    )
+                }
+            })?),
+            None => None,
+        };
+        let (old_text, old_front, old_body) = match &existing {
+            Some(s) => {
+                let t = std::fs::read_to_string(self.root.join(&s.folder).join(SKILL_FILE))
+                    .unwrap_or_default();
+                let (f, b) = parse_skill_md(&t);
+                (Some(t), f, b)
+            }
+            None => (None, FrontMatter::default(), String::new()),
+        };
+        let name = text("name").or_else(|| existing.as_ref().map(|s| s.name.clone()));
+        let description = text("description").or_else(|| old_front.description.clone());
+        let body = text("instructions")
+            .or_else(|| text("body"))
+            .or_else(|| existing.as_ref().map(|_| old_body.clone()));
+        let missing: Vec<&str> = [
+            ("name", name.is_none()),
+            ("description", description.is_none()),
+            ("instructions", body.is_none()),
+        ]
+        .iter()
+        .filter(|(_, m)| *m)
+        .map(|(k, _)| *k)
+        .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "save_skill needs {} for a new skill.",
+                missing.join(", ")
+            ));
+        }
+        let skill_input = SkillInput {
+            name: name.unwrap_or_default(),
+            description: description.unwrap_or_default(),
+            body: body.unwrap_or_default(),
+        };
+        let (slug, description) = Self::check_input(&skill_input)?;
+        // Names stay unique: no other skill may have this one.
+        let others: Vec<Skill> = self
+            .list()
+            .into_iter()
+            .filter(|s| existing.as_ref().is_none_or(|e| e.folder != s.folder))
+            .collect();
+        if let Some(other) = others
+            .iter()
+            .find(|s| s.folder == slug || skill_slug(&s.name) == slug)
+        {
+            return Err(if existing.is_some() {
+                format!(
+                    "Another skill is already called \"{}\". Pick another name.",
+                    other.name
+                )
+            } else {
+                format!(
+                    "There's already a skill called \"{}\" (folder {}). To change it, call \
+                     save_skill again with \"skill\": \"{}\" (and load_skill it first to see \
+                     what it says); to make a separate skill, pick another name.",
+                    other.name, other.folder, other.folder
+                )
+            });
+        }
+        let folder = existing
+            .as_ref()
+            .map(|s| s.folder.clone())
+            .unwrap_or_else(|| slug.clone());
+        let dir = self.root.join(&folder);
+        if existing.is_none() && dir.exists() {
+            return Err(format!(
+                "The skills folder already has a folder called \"{folder}\". Pick another name."
+            ));
+        }
+        let skill_md_text = skill_md(
+            &slug,
+            &description,
+            old_front.license.as_deref(),
+            &skill_input.body,
+        );
+        if skill_md_text.len() > MAX_SAVE_SKILL_MD {
+            return Err(format!(
+                "{SKILL_FILE} would be {} characters; keep it under {MAX_SAVE_SKILL_MD} and put \
+                 long reference material in extra files.",
+                skill_md_text.len()
+            ));
+        }
+        let files = Self::plan_files(input.get("files"), &dir)?;
+        let current: u64 = walk(&dir).iter().map(|(_, n)| n).sum();
+        let added: u64 = files.iter().map(|f| f.content.len() as u64).sum();
+        if current + added + skill_md_text.len() as u64 > MAX_BYTES {
+            return Err("the skill's files would be larger than 50 MB".into());
+        }
+        if walk(&dir).len() + files.len() > MAX_FILES {
+            return Err(format!("the skill would have more than {MAX_FILES} files"));
+        }
+
+        let mut notes = Vec::new();
+        if let Some(s) = &existing {
+            let state = self.state();
+            match state.origins.get(&s.folder).map(String::as_str) {
+                Some("folder") => notes.push(
+                    "You added this skill from a folder. Saving changes Oxide's copy in the \
+                     skills folder; the folder you added it from stays as it is."
+                        .to_owned(),
+                ),
+                Some("zip") => notes.push(
+                    "You added this skill from a .zip or .skill file. Saving changes Oxide's \
+                     copy in the skills folder; the file you added it from stays as it is."
+                        .to_owned(),
+                ),
+                Some(_) => {}
+                None if s.license.is_some() || s.files > 0 => notes.push(format!(
+                    "This skill may have been added from a folder or zip{}. Saving changes \
+                     Oxide's copy in the skills folder.",
+                    s.license
+                        .as_deref()
+                        .map(|l| format!(" (its license: {l})"))
+                        .unwrap_or_default()
+                )),
+                None => {}
+            }
+            if !s.enabled {
+                notes.push(
+                    "This skill is switched off in Settings → Skills; it stays off.".to_owned(),
+                );
+            }
+            if s.name != slug {
+                notes.push(format!(
+                    "The skill is renamed from \"{}\" to \"{slug}\".",
+                    s.name
+                ));
+            }
+        }
+        let diff = old_text
+            .as_deref()
+            .and_then(|old| unified_diff(old, &skill_md_text, SKILL_FILE));
+        let preview = SkillSavePreview {
+            name: slug.clone(),
+            folder: folder.clone(),
+            is_new: existing.is_none(),
+            skill_md: skill_md_text.clone(),
+            diff,
+            files: files
+                .iter()
+                .map(|f| SkillFileChange {
+                    path: f.path.clone(),
+                    bytes: u32::try_from(f.content.len()).unwrap_or(u32::MAX),
+                    is_new: f.old.is_none(),
+                    content: truncate(&f.content, MAX_PREVIEW_CHARS),
+                    diff: f
+                        .old
+                        .as_deref()
+                        .and_then(|old| unified_diff(old, &f.content, &f.path)),
+                })
+                .collect(),
+            notes,
+        };
+        Ok(SavePlan {
+            preview,
+            folder,
+            is_new: existing.is_none(),
+            skill_md: skill_md_text,
+            files: files.into_iter().map(|f| (f.path, f.content)).collect(),
+        })
+    }
+
+    /// The extra files of a `save_skill` call, checked: inside the skill's folder, text, not
+    /// too many or too large.
+    fn plan_files(files: Option<&Value>, dir: &Path) -> SkillResult<Vec<PlannedFile>> {
+        let list = match files {
+            None | Some(Value::Null) => return Ok(Vec::new()),
+            Some(Value::Array(a)) => a,
+            Some(_) => {
+                return Err(
+                    "`files` must be a list of {\"path\": …, \"content\": …} objects.".into(),
+                );
+            }
+        };
+        if list.len() > MAX_SAVE_FILES {
+            return Err(format!(
+                "save_skill writes at most {MAX_SAVE_FILES} files at a time."
+            ));
+        }
+        let mut out: Vec<PlannedFile> = Vec::new();
+        for f in list {
+            let path = f
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .ok_or("each file needs a \"path\" (relative to the skill's folder)")?;
+            let content = f
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("the file \"{path}\" needs a \"content\" string"))?;
+            let rel = check_skill_path(path)?;
+            let shown = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if shown.eq_ignore_ascii_case(SKILL_FILE) {
+                return Err(format!(
+                    "{SKILL_FILE} is written from `name`, `description` and `instructions`; \
+                     don't pass it as a file."
+                ));
+            }
+            if content.len() > MAX_SAVE_FILE_BYTES {
+                return Err(format!(
+                    "\"{shown}\" is {} KB; files a skill saves can be at most {} KB.",
+                    content.len() / 1024,
+                    MAX_SAVE_FILE_BYTES / 1024
+                ));
+            }
+            if out.iter().any(|o| o.path.eq_ignore_ascii_case(&shown)) {
+                return Err(format!("\"{shown}\" is listed twice."));
+            }
+            // Nothing on the way may be a link (it could lead out of the skill's folder) or
+            // a file where a folder is needed.
+            let mut at = dir.to_path_buf();
+            let parts: Vec<_> = rel.components().collect();
+            let mut old = None;
+            for (i, c) in parts.iter().enumerate() {
+                at.push(c);
+                let last = i + 1 == parts.len();
+                match std::fs::symlink_metadata(&at) {
+                    Err(_) => break,
+                    Ok(m) if m.file_type().is_symlink() => {
+                        return Err(format!(
+                            "\"{shown}\" goes through a link; it can't be written."
+                        ));
+                    }
+                    Ok(m) if last && !m.is_file() => {
+                        return Err(format!("\"{shown}\" is a folder in the skill."));
+                    }
+                    Ok(m) if !last && !m.is_dir() => {
+                        return Err(format!("\"{shown}\" is inside a file, not a folder."));
+                    }
+                    Ok(_) if last => {
+                        old = Some(std::fs::read_to_string(&at).map_err(|_| {
+                            format!(
+                                "\"{shown}\" exists and isn't a text file; it can't be replaced."
+                            )
+                        })?);
+                    }
+                    Ok(_) => {}
+                }
+            }
+            out.push(PlannedFile {
+                path: shown,
+                content: content.to_owned(),
+                old,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Writes what [`Skills::plan_save`] worked out (after the user allowed it).
+    pub fn apply_save(&self, plan: &SavePlan) -> SkillResult<Skill> {
+        let dir = self.root.join(&plan.folder);
+        if plan.is_new {
+            if dir.exists() {
+                return Err(format!(
+                    "a skill called \"{}\" appeared in the meantime; nothing was saved",
+                    plan.folder
+                ));
+            }
+        } else if !dir.is_dir() {
+            return Err(format!(
+                "the skill \"{}\" was removed in the meantime; nothing was saved",
+                plan.folder
+            ));
+        }
+        let write = || -> SkillResult<()> {
+            std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create the skill: {e}"))?;
+            for (path, content) in &plan.files {
+                let rel = check_skill_path(path)?;
+                let to = dir.join(&rel);
+                if let Some(p) = to.parent() {
+                    std::fs::create_dir_all(p)
+                        .map_err(|e| format!("couldn't create the folder for {path}: {e}"))?;
+                }
+                // Checked again: a link could have appeared since the card was shown.
+                let mut at = dir.clone();
+                for c in rel.components() {
+                    at.push(c);
+                    if std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+                        return Err(format!(
+                            "\"{path}\" goes through a link; it can't be written"
+                        ));
+                    }
+                }
+                std::fs::write(&to, content).map_err(|e| format!("couldn't write {path}: {e}"))?;
+            }
+            std::fs::write(dir.join(SKILL_FILE), &plan.skill_md)
+                .map_err(|e| format!("couldn't write {SKILL_FILE}: {e}"))
+        };
+        if let Err(e) = write() {
+            if plan.is_new {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            return Err(e);
+        }
+        if plan.is_new {
+            self.set_origin(&plan.folder, "chat");
+        }
+        Ok(self.read_skill(&plan.folder, &self.state().disabled))
+    }
+}
+
+/// What a `save_skill` call writes, worked out before the user is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavePlan {
+    /// What the approval card shows.
+    pub preview: SkillSavePreview,
+    folder: String,
+    is_new: bool,
+    skill_md: String,
+    /// Extra files: relative path and content.
+    files: Vec<(String, String)>,
+}
+
+impl SavePlan {
+    pub fn is_new(&self) -> bool {
+        self.is_new
+    }
+}
+
+struct PlannedFile {
+    path: String,
+    content: String,
+    /// The current content, when the file exists.
+    old: Option<String>,
+}
+
+/// A path inside a skill's folder: relative, no `..`, no hidden parts.
+fn check_skill_path(path: &str) -> SkillResult<PathBuf> {
+    let p = path.replace('\\', "/");
+    if p.starts_with('/') || p.contains(':') {
+        return Err(format!(
+            "\"{path}\" must be a path inside the skill's folder, like reference.md or \
+             scripts/tool.py"
+        ));
+    }
+    let rel = archive::safe_path(&p)
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("\"{path}\" isn't a path inside the skill's folder"))?;
+    if rel
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err(format!(
+            "\"{path}\": hidden files and folders can't be saved in a skill"
+        ));
+    }
+    if rel.components().count() > 8 {
+        return Err(format!("\"{path}\" is nested too deeply"));
+    }
+    Ok(rel)
+}
+
+/// A unified diff of two texts (3 lines of context), or `None` when they're the same.
+pub fn unified_diff(old: &str, new: &str, name: &str) -> Option<String> {
+    if old == new {
+        return None;
+    }
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    // (tag, old index, new index): ' ' same, '-' removed, '+' added.
+    let mut ops: Vec<(char, usize, usize)> = Vec::new();
+    if a.len().saturating_mul(b.len()) > 4_000_000 {
+        ops.extend((0..a.len()).map(|i| ('-', i, 0)));
+        ops.extend((0..b.len()).map(|j| ('+', a.len(), j)));
+    } else {
+        // Longest common subsequence, from the end.
+        let (n, m) = (a.len(), b.len());
+        let mut l = vec![0u32; (n + 1) * (m + 1)];
+        let at = |i: usize, j: usize| i * (m + 1) + j;
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                l[at(i, j)] = if a[i] == b[j] {
+                    l[at(i + 1, j + 1)] + 1
+                } else {
+                    l[at(i + 1, j)].max(l[at(i, j + 1)])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < n || j < m {
+            if i < n && j < m && a[i] == b[j] {
+                ops.push((' ', i, j));
+                i += 1;
+                j += 1;
+            } else if i < n && (j == m || l[at(i + 1, j)] >= l[at(i, j + 1)]) {
+                ops.push(('-', i, j));
+                i += 1;
+            } else {
+                ops.push(('+', i, j));
+                j += 1;
+            }
+        }
+    }
+    const CONTEXT: usize = 3;
+    let changed: Vec<usize> = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.0 != ' ')
+        .map(|(k, _)| k)
+        .collect();
+    if changed.is_empty() {
+        // Only line endings differ.
+        return Some(format!(
+            "--- {name}\n+++ {name}\n(only line endings change)\n"
+        ));
+    }
+    let mut out = format!("--- {name}\n+++ {name}\n");
+    let mut k = 0;
+    while k < changed.len() {
+        let start = changed[k].saturating_sub(CONTEXT);
+        let mut end = (changed[k] + CONTEXT + 1).min(ops.len());
+        while k + 1 < changed.len() && changed[k + 1] <= end + CONTEXT {
+            k += 1;
+            end = (changed[k] + CONTEXT + 1).min(ops.len());
+        }
+        k += 1;
+        let hunk = &ops[start..end];
+        let old_start = hunk
+            .iter()
+            .find(|o| o.0 != '+')
+            .map(|o| o.1)
+            .unwrap_or(hunk[0].1);
+        let new_start = hunk
+            .iter()
+            .find(|o| o.0 != '-')
+            .map(|o| o.2)
+            .unwrap_or(hunk[0].2);
+        let old_len = hunk.iter().filter(|o| o.0 != '+').count();
+        let new_len = hunk.iter().filter(|o| o.0 != '-').count();
+        out.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            if old_len == 0 {
+                old_start
+            } else {
+                old_start + 1
+            },
+            old_len,
+            if new_len == 0 {
+                new_start
+            } else {
+                new_start + 1
+            },
+            new_len
+        ));
+        for o in hunk {
+            let line = if o.0 == '+' { b[o.2] } else { a[o.1] };
+            out.push(o.0);
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
+/// The `save_skill` tool as offered to models, listing the skills there are.
+pub fn save_skill_entry(existing: &[Skill]) -> ToolEntry {
+    let mut description = String::from(
+        "Create a new skill for the user, or change one of their skills. A skill is reusable \
+         instructions for a kind of task (a SKILL.md with a name, a description that says when \
+         to use it, and instructions), plus optional text files in its folder. The user always \
+         sees the whole skill (and, for a change, what changes) and decides whether it's saved. \
+         Only call this when the user asked for a skill or agreed to one. To change a skill, \
+         pass its folder as `skill` (load_skill it first) and only the fields that change; \
+         never make a second skill for the same thing.",
+    );
+    if existing.is_empty() {
+        description.push_str("\n\nThe user has no skills yet.");
+    } else {
+        description.push_str("\n\nThe user's skills (folder: description):");
+        for s in existing.iter().take(MAX_SAVE_LISTED) {
+            let d: String = s.description.chars().take(160).collect();
+            description.push_str(&format!(
+                "\n- {}{}: {}",
+                s.folder,
+                if s.enabled { "" } else { " (switched off)" },
+                d
+            ));
+        }
+        if existing.len() > MAX_SAVE_LISTED {
+            description.push_str(&format!(
+                "\n- … and {} more",
+                existing.len() - MAX_SAVE_LISTED
+            ));
+        }
+    }
+    ToolEntry {
+        api_name: SAVE_SKILL.into(),
+        kind: ToolKind::Builtin(Builtin::SaveSkill),
+        title: Some("Save skill".into()),
+        description,
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "skill": { "type": "string",
+                           "description": "To change an existing skill: its folder (as listed). Leave out to create a new skill." },
+                "name": { "type": "string",
+                          "description": "Short name: lowercase words joined by hyphens, e.g. weekly-report. Required for a new skill." },
+                "description": { "type": "string",
+                                 "description": "What the skill does and when to use it, in one or two sentences (models decide from this). Required for a new skill." },
+                "instructions": { "type": "string",
+                                  "description": "The instructions (Markdown, the body of SKILL.md without front matter): the steps, what to watch out for, examples. Required for a new skill; for a change, the whole new text." },
+                "files": {
+                    "type": "array",
+                    "description": "Optional extra text files in the skill's folder, e.g. reference.md or scripts/tool.py. A file with the same path is replaced.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "Relative to the skill's folder." },
+                            "content": { "type": "string" }
+                        },
+                        "required": ["path", "content"]
+                    }
+                }
+            }
+        }),
+        read_only: false,
+        destructive: false,
     }
 }
 
@@ -927,6 +1533,223 @@ mod tests {
             2,
             "hidden staging folders aren't skills"
         );
+    }
+
+    fn plan(skills: &Skills, v: Value) -> SkillResult<SavePlan> {
+        skills.plan_save(&v)
+    }
+
+    #[test]
+    fn save_creates_with_files_inside_the_folder_only() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let skills = Skills::new(dir.path().join("skills"));
+        let p = plan(
+            &skills,
+            json!({
+                "name": "PDF Tools", "description": "Use for PDFs", "instructions": "Do it.",
+                "files": [{ "path": "scripts\\fill.py", "content": "print(1)" }]
+            }),
+        )
+        .expect("plans");
+        assert!(p.is_new());
+        assert_eq!(p.preview.folder, "pdf-tools");
+        assert_eq!(p.preview.files[0].path, "scripts/fill.py");
+        assert!(
+            !dir.path().join("skills").exists(),
+            "planning writes nothing"
+        );
+        let s = skills.apply_save(&p).expect("saves");
+        assert_eq!(s.name, "pdf-tools");
+        assert_eq!(s.files, 1);
+        assert!(
+            dir.path()
+                .join("skills/pdf-tools/scripts/fill.py")
+                .is_file()
+        );
+        assert_eq!(
+            skills.state().origins.get("pdf-tools").map(String::as_str),
+            Some("chat")
+        );
+
+        for (path, why) in [
+            ("../escape.md", "inside"),
+            ("/etc/passwd", "inside"),
+            ("C:\\Windows\\x.txt", "inside"),
+            ("a/../../x.md", "inside"),
+            (".env", "hidden"),
+            ("notes/.secret", "hidden"),
+            ("SKILL.md", "SKILL.md"),
+            ("skill.md", "SKILL.md"),
+        ] {
+            let err = plan(
+                &skills,
+                json!({ "skill": "pdf-tools", "files": [{ "path": path, "content": "x" }] }),
+            )
+            .expect_err(path);
+            assert!(err.contains(why), "{path}: {err}");
+        }
+        let big = "x".repeat(MAX_SAVE_FILE_BYTES + 1);
+        let err = plan(
+            &skills,
+            json!({ "skill": "pdf-tools", "files": [{ "path": "big.md", "content": big }] }),
+        )
+        .expect_err("too big");
+        assert!(err.contains("at most"), "{err}");
+        let many: Vec<Value> = (0..=MAX_SAVE_FILES)
+            .map(|i| json!({ "path": format!("f{i}.md"), "content": "x" }))
+            .collect();
+        assert!(plan(&skills, json!({ "skill": "pdf-tools", "files": many })).is_err());
+        let twice = json!({ "skill": "pdf-tools", "files": [
+            { "path": "a.md", "content": "1" }, { "path": "A.md", "content": "2" }] });
+        assert!(plan(&skills, twice).expect_err("twice").contains("twice"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_refuses_links_out_of_the_folder() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let outside = tempfile::tempdir().expect("outside");
+        let skills = Skills::new(dir.path().to_path_buf());
+        skills
+            .create(&SkillInput {
+                name: "s".into(),
+                description: "d".into(),
+                body: "b".into(),
+            })
+            .expect("creates");
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("s/out")).expect("link");
+        let err = plan(
+            &skills,
+            json!({ "skill": "s", "files": [{ "path": "out/x.md", "content": "x" }] }),
+        )
+        .expect_err("link");
+        assert!(err.contains("link"), "{err}");
+        assert!(!outside.path().join("x.md").exists());
+    }
+
+    #[test]
+    fn save_edits_keep_what_is_not_passed_and_names_stay_unique() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let skills = Skills::new(dir.path().to_path_buf());
+        for n in ["alpha", "beta"] {
+            skills
+                .create(&SkillInput {
+                    name: n.into(),
+                    description: format!("Use for {n}"),
+                    body: format!("Line one of {n}.\nLine two."),
+                })
+                .expect("creates");
+        }
+        // A new skill with a taken name points to the existing one.
+        let err = plan(
+            &skills,
+            json!({ "name": "Alpha", "description": "x", "instructions": "y" }),
+        )
+        .expect_err("taken");
+        assert!(err.contains("\"skill\": \"alpha\""), "{err}");
+        // Renaming onto another skill's name is refused.
+        let err = plan(&skills, json!({ "skill": "alpha", "name": "beta" })).expect_err("rename");
+        assert!(err.contains("Another skill"), "{err}");
+        // Unknown skill: the existing ones are named.
+        let err = plan(&skills, json!({ "skill": "gamma", "name": "x" })).expect_err("unknown");
+        assert!(err.contains("alpha, beta"), "{err}");
+        // A new skill needs everything.
+        let err = plan(&skills, json!({ "name": "gamma" })).expect_err("missing");
+        assert!(err.contains("description, instructions"), "{err}");
+
+        // Only the description changes; the instructions stay.
+        let p = plan(
+            &skills,
+            json!({ "skill": "Alpha", "description": "Use for A things" }),
+        )
+        .expect("plans");
+        assert!(!p.is_new());
+        let diff = p.preview.diff.clone().expect("diff");
+        assert!(diff.contains("-description: Use for alpha"), "{diff}");
+        assert!(diff.contains("+description: Use for A things"), "{diff}");
+        assert!(
+            diff.starts_with("--- SKILL.md\n+++ SKILL.md\n@@ -"),
+            "{diff}"
+        );
+        skills.apply_save(&p).expect("saves");
+        let d = skills.detail("alpha").expect("detail");
+        assert_eq!(d.skill.description, "Use for A things");
+        assert!(d.body.contains("Line one of alpha."));
+        assert_eq!(skills.list().len(), 2);
+
+        // A changed extra file shows its own diff.
+        let p = plan(
+            &skills,
+            json!({ "skill": "alpha", "files": [{ "path": "ref.md", "content": "one\n" }] }),
+        )
+        .expect("plans");
+        assert!(p.preview.diff.is_none(), "SKILL.md unchanged");
+        skills.apply_save(&p).expect("saves");
+        let p = plan(
+            &skills,
+            json!({ "skill": "alpha", "files": [{ "path": "ref.md", "content": "two\n" }] }),
+        )
+        .expect("plans");
+        let f = &p.preview.files[0];
+        assert!(!f.is_new);
+        assert_eq!(
+            f.diff.as_deref(),
+            Some("--- ref.md\n+++ ref.md\n@@ -1,1 +1,1 @@\n-one\n+two\n")
+        );
+    }
+
+    #[test]
+    fn the_card_says_when_a_skill_came_from_a_folder_or_is_off() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = tempfile::tempdir().expect("src");
+        std::fs::create_dir_all(src.path().join("brand")).expect("dir");
+        std::fs::write(
+            src.path().join("brand/SKILL.md"),
+            "---\nname: brand\ndescription: Our voice\nlicense: MIT\n---\nBe warm.\n",
+        )
+        .expect("writes");
+        let skills = Skills::new(dir.path().to_path_buf());
+        skills.add_folder(&src.path().join("brand")).expect("adds");
+        skills.set_enabled("brand", false).expect("off");
+        let p = plan(
+            &skills,
+            json!({ "skill": "brand", "instructions": "Be warm and short." }),
+        )
+        .expect("plans");
+        let notes = p.preview.notes.join(" ");
+        assert!(notes.contains("added this skill from a folder"), "{notes}");
+        assert!(notes.contains("switched off"), "{notes}");
+        assert!(
+            p.preview.skill_md.contains("license: MIT"),
+            "the license stays"
+        );
+        // Removing forgets where it came from.
+        skills.remove("brand").expect("removes");
+        assert!(skills.state().origins.is_empty());
+    }
+
+    #[test]
+    fn diffs() {
+        assert_eq!(unified_diff("a\nb\n", "a\nb\n", "x"), None);
+        let d = unified_diff(
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+            "1\n2\n3\n4\nfive\n6\n7\n8\n9\n10\n",
+            "f",
+        )
+        .expect("diff");
+        assert_eq!(
+            d,
+            "--- f\n+++ f\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n"
+        );
+        let d = unified_diff("", "new\n", "f").expect("diff");
+        assert_eq!(d, "--- f\n+++ f\n@@ -0,0 +1,1 @@\n+new\n");
+        // Two changes far apart make two hunks.
+        let old: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let new = old
+            .replace("line 2\n", "line two\n")
+            .replace("line 29\n", "line twenty-nine\n");
+        let d = unified_diff(&old, &new, "f").expect("diff");
+        assert_eq!(d.matches("@@ -").count(), 2, "{d}");
     }
 
     /// The sample in `docs/samples` (what the Phase 10 exit check adds).

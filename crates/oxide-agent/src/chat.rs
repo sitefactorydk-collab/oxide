@@ -370,6 +370,15 @@ impl ChatService {
         let Some(p) = map.remove(tool_use_id) else {
             return false;
         };
+        // A skill shapes later chats: each save is allowed on its own.
+        let decision = if p.request.server.is_none()
+            && p.request.tool == oxide_core::SAVE_SKILL
+            && decision == ApprovalDecision::AllowChat
+        {
+            ApprovalDecision::AllowOnce
+        } else {
+            decision
+        };
         if decision == ApprovalDecision::AllowChat {
             // "Allow always" also answers the same tool's other waiting cards in this chat.
             let same: Vec<String> = map
@@ -901,6 +910,10 @@ impl ChatService {
             sandbox: sandbox_prompt,
             browser: browser_on,
             chrome: chrome_on,
+            save_skill: tool_set
+                .entries
+                .iter()
+                .any(|e| e.kind == ToolKind::Builtin(Builtin::SaveSkill)),
             context_notes: settings.context.compaction && !tool_set.is_empty(),
         });
         let server_clearing = config.kind == ProviderKind::Anthropic
@@ -1816,6 +1829,44 @@ impl ChatService {
         }
     }
 
+    /// Writes a skill the user allowed (`save_skill`).
+    async fn run_save_skill(&self, plan: &crate::skills::SavePlan) -> ToolOutput {
+        let Some(dir) = self.tools.skills().cloned() else {
+            return ToolOutput::error("Skills aren't available.");
+        };
+        let plan = plan.clone();
+        let is_new = plan.is_new();
+        let files = plan.preview.files.len();
+        let res = tokio::task::spawn_blocking(move || dir.apply_save(&plan))
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+        match res {
+            Ok(skill) => {
+                let extra = match files {
+                    0 => String::new(),
+                    1 => " and 1 file".to_owned(),
+                    n => format!(" and {n} files"),
+                };
+                let state = if skill.enabled {
+                    "New replies are offered it, and load_skill can read it now."
+                } else {
+                    "It's switched off in Settings → Skills, so models aren't offered it."
+                };
+                ToolOutput {
+                    content: vec![ContentBlock::text(format!(
+                        "{} the skill \"{}\" (SKILL.md{extra}, in the skills folder under                          {}/). {state} The user can view, edit, switch off or delete it in                          Settings → Skills.",
+                        if is_new { "Created" } else { "Updated" },
+                        skill.name,
+                        skill.folder
+                    ))],
+                    is_error: false,
+                    duration_ms: 0,
+                }
+            }
+            Err(e) => ToolOutput::error(format!("The skill wasn't saved: {e}")),
+        }
+    }
+
     /// Key of "Allow always for this chat" for one call. Shell commands are allowed one
     /// command at a time, not the whole tool.
     fn grant_key(entry: &ToolEntry, input: &Value) -> String {
@@ -1830,6 +1881,10 @@ impl ChatService {
     }
 
     fn needs_approval(entry: &ToolEntry, input: &Value, setup: &Setup) -> bool {
+        // Saving a skill always asks, whatever was allowed before.
+        if entry.kind == ToolKind::Builtin(Builtin::SaveSkill) {
+            return true;
+        }
         if setup.grants.contains(&Self::grant_key(entry, input)) {
             return false;
         }
@@ -1840,6 +1895,7 @@ impl ChatService {
             ToolKind::Builtin(Builtin::Artifact | Builtin::TaskList) => false,
             // Skills are Oxide's own files, only read.
             ToolKind::Builtin(Builtin::LoadSkill) => false,
+            ToolKind::Builtin(Builtin::SaveSkill) => true,
             // The user granted the folder: looking is fine, changing asks.
             ToolKind::Builtin(Builtin::File(op)) => !op.read_only(),
             // Python code runs as the user, unsandboxed: each run asks until "Allow always".
@@ -1868,6 +1924,7 @@ impl ChatService {
     }
 
     /// Asks the user about one call. `None`: the reply was stopped while waiting.
+    #[allow(clippy::too_many_arguments)]
     async fn ask(
         &self,
         cid: &str,
@@ -1875,6 +1932,7 @@ impl ChatService {
         call: &OpenCall,
         entry: &ToolEntry,
         input: &Value,
+        skill: Option<&crate::skills::SavePlan>,
         cancelled: &mut watch::Receiver<bool>,
     ) -> Option<ApprovalDecision> {
         let request = ToolApprovalRequest {
@@ -1888,6 +1946,7 @@ impl ChatService {
             input_json: serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string()),
             read_only: entry.read_only,
             destructive: entry.destructive,
+            skill: skill.map(|p| p.preview.clone()),
             requested_at: now_ms(),
         };
         let (tx, rx) = oneshot::channel();
@@ -1927,6 +1986,8 @@ impl ChatService {
             entry: ToolEntry,
             input: Value,
             ask: bool,
+            /// `save_skill`: what it would write (shown on the card, written on Allow).
+            skill: Option<crate::skills::SavePlan>,
         }
         let mut ready: Vec<Ready> = Vec::new();
         for call in calls {
@@ -1967,11 +2028,35 @@ impl ChatService {
             };
             self.emit_call(cid, &call, &entry);
             let ask = Self::needs_approval(&entry, &input, setup);
+            let mut skill = None;
+            if entry.kind == ToolKind::Builtin(Builtin::SaveSkill) {
+                // Worked out before asking, so the card shows exactly what is written; a save
+                // that can't work fails at once, without a card.
+                let planned = match self.tools.skills().cloned() {
+                    None => Err("Skills aren't available.".to_owned()),
+                    Some(dir) => {
+                        let input = input.clone();
+                        tokio::task::spawn_blocking(move || dir.plan_save(&input))
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    }
+                };
+                match planned {
+                    Ok(p) => skill = Some(p),
+                    Err(e) => {
+                        let out = ToolOutput::error(e);
+                        self.finish_call(cid, reply_id, &call, Some(&entry), &input, out, reply)
+                            .await;
+                        continue;
+                    }
+                }
+            }
             ready.push(Ready {
                 call,
                 entry,
                 input,
                 ask,
+                skill,
             });
         }
 
@@ -2021,10 +2106,18 @@ impl ChatService {
                     None => None,
                 };
                 let key = Self::grant_key(&r.entry, &r.input);
-                let granted = lock(grants).contains(&key);
+                let granted = r.skill.is_none() && lock(grants).contains(&key);
                 if r.ask && !granted {
                     match self
-                        .ask(cid, reply_id, &r.call, &r.entry, &r.input, &mut cancel)
+                        .ask(
+                            cid,
+                            reply_id,
+                            &r.call,
+                            &r.entry,
+                            &r.input,
+                            r.skill.as_ref(),
+                            &mut cancel,
+                        )
                         .await
                     {
                         None => return,
@@ -2035,13 +2128,13 @@ impl ChatService {
                             lock(done).push((i, out));
                             return;
                         }
-                        Some(ApprovalDecision::AllowChat) => {
+                        Some(ApprovalDecision::AllowChat) if r.skill.is_none() => {
                             if let Err(e) = self.store.grant_chat_tool(cid, &key).await {
                                 tracing::warn!("couldn't save the approval: {e}");
                             }
                             lock(grants).insert(key);
                         }
-                        Some(ApprovalDecision::AllowOnce) => {}
+                        Some(ApprovalDecision::AllowOnce | ApprovalDecision::AllowChat) => {}
                     }
                 }
                 let _turn = if r.entry.read_only {
@@ -2105,6 +2198,12 @@ impl ChatService {
                 } else if let ToolKind::SandboxFile { tool } = &r.entry.kind {
                     let started = Instant::now();
                     let mut out = self.run_sandbox_file(cid, tool, &r.input).await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let Some(plan) = &r.skill {
+                    let started = Instant::now();
+                    let mut out = self.run_save_skill(plan).await;
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
@@ -5776,6 +5875,273 @@ class Agent:
             .await;
         assert!(set.find("load_skill").is_none());
         assert!(set.skills.is_empty());
+    }
+
+    fn done_count(r: &Recorder) -> usize {
+        r.events()
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Done { .. } | StreamEvent::Failed { .. }))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_model_saves_a_skill_after_approval_and_the_next_reply_uses_it() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let skills = crate::skills::Skills::new(dir.path().to_path_buf());
+        let save = serde_json::json!({
+            "name": "Weekly Report",
+            "description": "Use when the user asks for their weekly status report",
+            "instructions": "1. Read notes.md.\n2. Write three bullet points.",
+            "files": [{ "path": "templates/report.md", "content": "# Week\n- …\n" }]
+        })
+        .to_string();
+        let mut first = vec![text("Saving it as a skill.")];
+        first.extend(call("s1", "save_skill", &save));
+        let f = fixture_full(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("Saved.")], StopReason::EndTurn),
+                title_step(),
+                turn(vec![text("Here's the report.")], StopReason::EndTurn),
+            ],
+            None,
+            Some(skills.clone()),
+        )
+        .await;
+        // "Allow always" from earlier doesn't count for skills.
+        f.store
+            .grant_chat_tool(&f.chat.id, "builtin/save_skill")
+            .await
+            .expect("grants");
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        let req = wait_approval(&f, "s1").await;
+        let first_req = &f.fake.requests()[0];
+        let entry = first_req
+            .tools
+            .iter()
+            .find(|t| t.name == "save_skill")
+            .expect("offered with no skills yet");
+        assert!(
+            entry.description.contains("no skills yet"),
+            "{}",
+            entry.description
+        );
+        assert!(
+            first_req
+                .system
+                .as_deref()
+                .is_some_and(|s| s.contains("save only when the user asks or agrees"))
+        );
+        let preview = req.skill.expect("the card shows the skill");
+        assert!(preview.is_new);
+        assert_eq!(preview.folder, "weekly-report");
+        assert!(
+            preview
+                .skill_md
+                .starts_with("---\nname: weekly-report\ndescription: Use when")
+        );
+        assert!(preview.skill_md.contains("2. Write three bullet points."));
+        assert_eq!(preview.files.len(), 1);
+        assert_eq!(preview.files[0].path, "templates/report.md");
+        assert!(preview.files[0].is_new);
+        assert!(preview.diff.is_none());
+        assert!(
+            !dir.path().join("weekly-report").exists(),
+            "nothing is written before the user allows it"
+        );
+        // "Allow always" counts as once here.
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "s1", ApprovalDecision::AllowChat)
+        );
+        f.sink.wait_for(|r| done_count(r) == 1).await;
+
+        let saved_md =
+            std::fs::read_to_string(dir.path().join("weekly-report/SKILL.md")).expect("written");
+        assert_eq!(saved_md, preview.skill_md, "exactly what the card showed");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("weekly-report/templates/report.md"))
+                .expect("file"),
+            "# Week\n- …\n"
+        );
+        let second = format!("{:?}", f.fake.requests()[1].messages);
+        assert!(second.contains("Created the skill"), "{second}");
+        let used = f.store.tool_usage(&f.chat.id).await.expect("log");
+        assert_eq!(used[0].kind, ToolUsageKind::Skill);
+        assert_eq!(used[0].label.as_deref(), Some("Created weekly-report"));
+        let grants = f.store.chat_tool_grants(&f.chat.id).await.expect("grants");
+        assert_eq!(
+            grants,
+            vec!["builtin/save_skill".to_owned()],
+            "no new grant"
+        );
+
+        // The next reply is offered the new skill.
+        let reply_id = saved(&f).id;
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply_id),
+                vec![ContentBlock::text("Make this week's report")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        f.sink.wait_for(|r| done_count(r) == 2).await;
+        let reqs = f.fake.requests();
+        let next = reqs.last().expect("request");
+        assert!(next.tools.iter().any(|t| t.name == "load_skill"));
+        assert!(
+            next.system.as_deref().is_some_and(|s| s.contains(
+                "- weekly-report: Use when the user asks for their weekly status report"
+            )),
+            "{:?}",
+            next.system
+        );
+        let entry = next
+            .tools
+            .iter()
+            .find(|t| t.name == "save_skill")
+            .expect("save_skill");
+        assert!(entry.description.contains("- weekly-report: Use when"));
+    }
+
+    #[tokio::test]
+    async fn changing_a_skill_shows_a_diff_and_never_makes_a_second_one() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let skills = crate::skills::Skills::new(dir.path().to_path_buf());
+        skills
+            .create(&oxide_core::SkillInput {
+                name: "haiku".into(),
+                description: "Use when the user asks for a haiku".into(),
+                body: "Always write three lines.\nEnd with a season word.".into(),
+            })
+            .expect("creates");
+        let edit = serde_json::json!({
+            "skill": "haiku",
+            "instructions": "Always write three lines.\nEnd with a season word.\nNo rhymes."
+        })
+        .to_string();
+        let duplicate = serde_json::json!({
+            "name": "Haiku",
+            "description": "Haiku again",
+            "instructions": "Three lines."
+        })
+        .to_string();
+        let mut first = call("e1", "save_skill", &edit);
+        first.extend(call("e2", "save_skill", &duplicate));
+        let f = fixture_full(
+            vec![
+                turn(first, StopReason::ToolUse),
+                turn(vec![text("Okay, not saved.")], StopReason::EndTurn),
+                title_step(),
+                turn(call("e3", "save_skill", &edit), StopReason::ToolUse),
+                turn(vec![text("Updated.")], StopReason::EndTurn),
+            ],
+            None,
+            Some(skills.clone()),
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        let req = wait_approval(&f, "e1").await;
+        let preview = req.skill.expect("preview");
+        assert!(!preview.is_new);
+        assert_eq!(preview.folder, "haiku");
+        let diff = preview.diff.expect("a diff");
+        assert!(diff.contains("+No rhymes."), "{diff}");
+        assert!(diff.contains(" End with a season word."), "{diff}");
+        assert!(!diff.contains("-Always"), "{diff}");
+        // The duplicate failed at once, without a card.
+        f.sink
+            .wait_for(|r| {
+                r.events().iter().any(|e| {
+                    matches!(e, StreamEvent::ToolResult { id, is_error: true, .. } if id == "e2")
+                })
+            })
+            .await;
+        assert!(
+            !f.service
+                .pending_approvals()
+                .iter()
+                .any(|r| r.tool_use_id == "e2")
+        );
+        // Denied: nothing changes.
+        f.service
+            .answer_approval(&f.chat.id, "e1", ApprovalDecision::Deny);
+        f.sink.wait_for(|r| done_count(r) == 1).await;
+        let second = format!("{:?}", f.fake.requests()[1].messages);
+        assert!(second.contains("already a skill called"), "{second}");
+        assert!(second.contains("\\\"skill\\\": \\\"haiku\\\""), "{second}");
+        let body = skills.detail("haiku").expect("detail").body;
+        assert!(!body.contains("No rhymes"), "{body}");
+
+        // Allowed later: the same skill changes; there's still one.
+        let reply_id = saved(&f).id;
+        f.service
+            .send(
+                &f.chat.id,
+                Some(&reply_id),
+                vec![ContentBlock::text("Yes, add that")],
+                GenerateOptions::default(),
+            )
+            .await
+            .expect("sends");
+        wait_approval(&f, "e3").await;
+        f.service
+            .answer_approval(&f.chat.id, "e3", ApprovalDecision::AllowOnce);
+        f.sink.wait_for(|r| done_count(r) == 2).await;
+        let all = skills.list();
+        assert_eq!(all.len(), 1);
+        assert!(
+            skills
+                .detail("haiku")
+                .expect("detail")
+                .body
+                .contains("No rhymes.")
+        );
+        let used = f.store.tool_usage(&f.chat.id).await.expect("log");
+        assert!(
+            used.iter()
+                .any(|u| u.label.as_deref() == Some("Updated haiku"))
+        );
+    }
+
+    #[tokio::test]
+    async fn save_skill_can_be_switched_off_per_chat() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let f = fixture_full(
+            vec![turn(vec![text("Hi")], StopReason::EndTurn)],
+            None,
+            Some(crate::skills::Skills::new(dir.path().to_path_buf())),
+        )
+        .await;
+        let tools = f.service.tools();
+        let on = tools
+            .tool_set(
+                &oxide_core::ChatTools::default(),
+                &oxide_core::AppSettings::default(),
+                ProviderKind::LmStudio,
+            )
+            .await;
+        assert!(on.find("save_skill").is_some());
+        assert!(on.find("load_skill").is_none(), "no skills to load yet");
+        let off = tools
+            .tool_set(
+                &oxide_core::ChatTools {
+                    disabled_builtins: vec!["save_skill".into()],
+                    ..Default::default()
+                },
+                &oxide_core::AppSettings::default(),
+                ProviderKind::LmStudio,
+            )
+            .await;
+        assert!(off.find("save_skill").is_none());
     }
 
     #[tokio::test]

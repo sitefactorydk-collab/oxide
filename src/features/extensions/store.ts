@@ -25,3 +25,16 @@ export function isExtensionFile(path: string): boolean {
 export function resetExtensionDrop(): void {
   useExtensionDrop.setState({ pending: null });
 }
+
+/** A skill to open in Settings → Skills (a chat's "Open in Settings" after `save_skill`). */
+interface SkillFocusState {
+  folder: string | null;
+  focus: (folder: string) => void;
+  clear: () => void;
+}
+
+export const useSkillFocus = create<SkillFocusState>()((set) => ({
+  folder: null,
+  focus: (folder) => set({ folder }),
+  clear: () => set({ folder: null }),
+}));

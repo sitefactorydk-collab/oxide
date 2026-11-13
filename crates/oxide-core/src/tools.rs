@@ -33,6 +33,9 @@ pub struct ToolApprovalRequest {
     pub read_only: bool,
     /// The server says the tool may destroy data.
     pub destructive: bool,
+    /// For `save_skill`: what would be written (the card shows it; it never offers "Allow
+    /// always").
+    pub skill: Option<crate::SkillSavePreview>,
     pub requested_at: Timestamp,
 }
 

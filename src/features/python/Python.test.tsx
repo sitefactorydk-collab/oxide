@@ -155,6 +155,7 @@ describe("run_python in a reply", () => {
         inputJson: INPUT,
         readOnly: false,
         destructive: true,
+        skill: null,
         requestedAt: Date.now(),
       });
     });

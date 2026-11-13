@@ -3176,9 +3176,58 @@ body: string;
  */
 fileList: string[] }
 /**
+ * One extra file a `save_skill` call writes inside the skill's folder.
+ */
+export type SkillFileChange = { 
+/**
+ * Relative to the skill's folder, `/`-separated.
+ */
+path: string; bytes: number; isNew: boolean; 
+/**
+ * The new content (cut for very long files).
+ */
+content: string; 
+/**
+ * For a changed file: a unified diff against the current one.
+ */
+diff: string | null }
+/**
  * A skill written in Settings.
  */
 export type SkillInput = { name: string; description: string; body: string }
+/**
+ * What a `save_skill` call would write, shown on its approval card.
+ */
+export type SkillSavePreview = { 
+/**
+ * The skill's name as it will be saved.
+ */
+name: string; 
+/**
+ * Its folder inside the skills folder.
+ */
+folder: string; 
+/**
+ * A new skill (else a change to an existing one).
+ */
+isNew: boolean; 
+/**
+ * The whole `SKILL.md` as it will be written.
+ */
+skillMd: string; 
+/**
+ * For a change: what changes in `SKILL.md`, as a unified diff (`None` when unchanged).
+ */
+diff: string | null; 
+/**
+ * Other files the save writes.
+ */
+files: SkillFileChange[]; 
+/**
+ * Something the user should know first (the skill was added from a folder or zip, it's
+ * switched off, …).
+ */
+notes: string[] }
 /**
  * Creates a chat together with its first user message.
  */
@@ -3363,7 +3412,12 @@ readOnly: boolean;
 /**
  * The server says the tool may destroy data.
  */
-destructive: boolean; requestedAt: number }
+destructive: boolean; 
+/**
+ * For `save_skill`: what would be written (the card shows it; it never offers "Allow
+ * always").
+ */
+skill: SkillSavePreview | null; requestedAt: number }
 /**
  * Tool approvals and the tool loop (Settings → Permissions).
  */

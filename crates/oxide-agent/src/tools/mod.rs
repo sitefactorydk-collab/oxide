@@ -19,13 +19,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::future::BoxFuture;
-use oxide_core::LOAD_SKILL;
 use oxide_core::artifact::ARTIFACT_TOOL;
 use oxide_core::tools::{PROJECT_SEARCH, PROVIDER_SERVER, WEB_FETCH, WEB_SEARCH};
 use oxide_core::{
     AppSettings, AttachmentSource, ChatTools, ContentBlock, McpContent, McpStatus, McpTool,
     McpToolResult, MediaSource, ProviderKind, ToolUsageKind,
 };
+use oxide_core::{LOAD_SKILL, SAVE_SKILL};
 use oxide_llm::ToolSpec;
 use oxide_store::SecretStore;
 use serde_json::{Map, Value, json};
@@ -87,6 +87,9 @@ pub enum Builtin {
     Artifact,
     /// Read a skill's instructions or files.
     LoadSkill,
+    /// Create or change a skill (always asks; run by the chat service, which shows the user
+    /// what would be written first).
+    SaveSkill,
     /// A file tool in the chat's granted folders (run by the chat service).
     File(files::FileOp),
     /// The chat's task list (run by the chat service).
@@ -111,6 +114,7 @@ impl Builtin {
             Builtin::ProjectSearch => PROJECT_SEARCH,
             Builtin::Artifact => ARTIFACT_TOOL,
             Builtin::LoadSkill => LOAD_SKILL,
+            Builtin::SaveSkill => SAVE_SKILL,
             Builtin::File(op) => op.name(),
             Builtin::TaskList => oxide_core::workspace::TASK_LIST,
             Builtin::RunCommand => oxide_core::workspace::RUN_COMMAND,
@@ -198,7 +202,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::WebFetch) => ToolUsageKind::WebFetch,
             ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
             ToolKind::Builtin(Builtin::Artifact) => ToolUsageKind::Artifact,
-            ToolKind::Builtin(Builtin::LoadSkill) => ToolUsageKind::Skill,
+            ToolKind::Builtin(Builtin::LoadSkill | Builtin::SaveSkill) => ToolUsageKind::Skill,
             ToolKind::Builtin(Builtin::File(_)) => ToolUsageKind::File,
             ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
             ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
@@ -416,14 +420,23 @@ impl Tools {
             set.entries.push(crate::artifacts::artifact_entry());
             taken.insert(ARTIFACT_TOOL.into());
         }
-        if chat.allows_builtin(LOAD_SKILL)
-            && let Some(skills) = &self.skills
+        if let Some(skills) = &self.skills
+            && (chat.allows_builtin(LOAD_SKILL) || chat.allows_builtin(SAVE_SKILL))
         {
             let dir = skills.clone();
-            let usable = tokio::task::spawn_blocking(move || dir.usable())
+            let all = tokio::task::spawn_blocking(move || dir.list())
                 .await
                 .unwrap_or_default();
-            if !usable.is_empty() {
+            let usable: Vec<_> = all
+                .iter()
+                .filter(|s| s.enabled && s.problem.is_none())
+                .cloned()
+                .collect();
+            if chat.allows_builtin(SAVE_SKILL) {
+                set.entries.push(crate::skills::save_skill_entry(&all));
+                taken.insert(SAVE_SKILL.into());
+            }
+            if chat.allows_builtin(LOAD_SKILL) && !usable.is_empty() {
                 set.skills = usable
                     .into_iter()
                     .map(|s| (s.name, s.description))
@@ -489,6 +502,7 @@ impl Tools {
             ToolKind::Builtin(Builtin::LoadSkill) => self.load_skill(input).await,
             ToolKind::Builtin(
                 Builtin::File(_)
+                | Builtin::SaveSkill
                 | Builtin::TaskList
                 | Builtin::RunCommand
                 | Builtin::RunPython
@@ -741,6 +755,7 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::ProjectSearch => return crate::knowledge::project_search_entry(),
         Builtin::Artifact => return crate::artifacts::artifact_entry(),
         Builtin::LoadSkill => return crate::skills::load_skill_entry(),
+        Builtin::SaveSkill => return crate::skills::save_skill_entry(&[]),
         Builtin::File(op) => return files::file_entry(op, false),
         Builtin::TaskList => return crate::tasks::task_list_entry(),
         Builtin::RunCommand => return shell::shell_entry(&shell::Shell::detect()),
@@ -914,6 +929,10 @@ pub fn usage_label(entry_tool: &str, input: &Value) -> Option<String> {
             Some(p) => format!("{n} · {p}"),
             None => n,
         }),
+        SAVE_SKILL => match s("skill") {
+            Some(k) => Some(format!("Updated {k}")),
+            None => s("name").map(|n| format!("Created {}", oxide_core::extension::skill_slug(&n))),
+        },
         _ => [
             "path", "file", "filename", "url", "uri", "query", "q", "name", "title", "command",
             "repoName",

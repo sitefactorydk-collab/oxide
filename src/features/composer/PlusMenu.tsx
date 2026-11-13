@@ -12,6 +12,7 @@ import {
   Plus,
   Settings2,
   Shapes,
+  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -186,6 +187,19 @@ export function PlusMenu({
           >
             <Shapes />
             Artifacts
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={switches.saveSkillsOn}
+            onCheckedChange={(v) => switches.toggleSaveSkills(v === true)}
+            onSelect={(e) => e.preventDefault()}
+          >
+            <Sparkles />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span>Save skills</span>
+              <span className="text-xs leading-4 text-fg-subtle">
+                Models may create and change skills; each save asks you first
+              </span>
+            </span>
           </MenuCheckboxItem>
           {sandboxEnabled && (
             <MenuCheckboxItem

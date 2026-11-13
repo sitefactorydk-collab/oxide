@@ -1,5 +1,5 @@
 import { FileArchive, FolderOpen, FolderPlus, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { commands, type Skill, type SkillInput } from "@/bindings";
 import { ConfirmDialog, Modal } from "@/features/projects/ProjectDialogs";
 import { Button, inputClass, Switch, textareaClass } from "@/features/mcp/ui";
@@ -15,6 +15,8 @@ import {
   useSkills,
   useUpdateSkill,
 } from "./queries";
+import { useSkillFocus } from "./store";
+import { skillSlug } from "@/features/tools/toolView";
 
 const MAX_DESCRIPTION = 1024;
 
@@ -23,6 +25,19 @@ export function SkillsSection() {
   const { data: skills, isPending } = useSkills();
   const add = useAddSkill();
   const [creating, setCreating] = useState(false);
+  // A skill a chat just saved ("Open … in Settings → Skills").
+  const focusWanted = useSkillFocus((s) => s.folder);
+  const clearFocus = useSkillFocus((s) => s.clear);
+  useEffect(() => clearFocus, [clearFocus]);
+  const focused =
+    focusWanted === null
+      ? null
+      : (skills.find(
+          (s) =>
+            s.folder === focusWanted ||
+            s.name.toLowerCase() === focusWanted.toLowerCase() ||
+            skillSlug(s.name) === skillSlug(focusWanted),
+        ) ?? null);
 
   const addFrom = async (kind: "folder" | "skillArchive") => {
     try {
@@ -78,6 +93,7 @@ export function SkillsSection() {
       )}
 
       {creating && <SkillDialog folder={null} onClose={() => setCreating(false)} />}
+      {focused && <SkillDialog folder={focused.folder} onClose={clearFocus} />}
     </div>
   );
 }

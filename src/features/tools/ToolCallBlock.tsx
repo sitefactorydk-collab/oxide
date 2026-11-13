@@ -22,6 +22,9 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
 import { ArtifactCard } from "@/features/artifacts/ArtifactCard";
+import { SkillSaveDetails } from "@/features/extensions/SkillSavePreview";
+import { useSkillFocus } from "@/features/extensions/store";
+import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { useBrowserFrame } from "@/features/browser/queries";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
 import { useStreams, type ToolCallView } from "@/features/chat/streams";
@@ -37,6 +40,7 @@ import {
   prettyJson,
   pythonCode,
   sandboxCommand,
+  savedSkillFolder,
   toolKind,
 } from "./toolView";
 
@@ -203,6 +207,9 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
     });
   };
   const Icon = request.destructive ? ShieldAlert : ShieldCheck;
+  // A skill shapes later chats: every save is asked about on its own.
+  const skill = request.server === null && request.tool === "save_skill" ? request.skill : null;
+  const once = request.server === null && request.tool === "save_skill";
   return (
     <div
       role="group"
@@ -218,17 +225,24 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
           )}
         />
         <div className="min-w-0 text-md">
-          <p className="text-fg">
-            Allow Oxide to use <strong className="font-semibold">{name}</strong>
-            {request.server ? (
-              <>
-                {" "}
-                from <strong className="font-semibold">{request.server}</strong>
-              </>
-            ) : null}
-            ?
-          </p>
-          {request.description && (
+          {skill ? (
+            <p className="text-fg">
+              {skill.isNew ? "Save a new skill " : "Change the skill "}
+              <strong className="font-mono font-semibold">{skill.name}</strong>?
+            </p>
+          ) : (
+            <p className="text-fg">
+              Allow Oxide to use <strong className="font-semibold">{name}</strong>
+              {request.server ? (
+                <>
+                  {" "}
+                  from <strong className="font-semibold">{request.server}</strong>
+                </>
+              ) : null}
+              ?
+            </p>
+          )}
+          {request.description && !once && (
             <p className="mt-0.5 line-clamp-3 text-sm text-fg-subtle">{request.description}</p>
           )}
           {request.destructive && (
@@ -272,7 +286,9 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
             : "This copies from the chat's sandbox into a folder you shared. Nothing there is overwritten."}
         </p>
       )}
-      {request.server === null && request.tool === "sandbox_exec" ? (
+      {skill ? (
+        <SkillSaveDetails preview={skill} />
+      ) : request.server === null && request.tool === "sandbox_exec" ? (
         <pre
           aria-label="Command"
           className="max-h-72 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg"
@@ -310,16 +326,18 @@ export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
         >
           Deny
         </button>
-        <button
-          type="button"
-          disabled={answer.isPending}
-          onClick={() => send("allowChat")}
-          className="h-8 rounded-lg border border-line-strong px-3 text-sm text-fg hover:bg-hover disabled:opacity-50"
-        >
-          {request.server === null && request.tool === "run_command"
-            ? "Always allow this command"
-            : "Allow always for this chat"}
-        </button>
+        {!once && (
+          <button
+            type="button"
+            disabled={answer.isPending}
+            onClick={() => send("allowChat")}
+            className="h-8 rounded-lg border border-line-strong px-3 text-sm text-fg hover:bg-hover disabled:opacity-50"
+          >
+            {request.server === null && request.tool === "run_command"
+              ? "Always allow this command"
+              : "Allow always for this chat"}
+          </button>
+        )}
         <button
           type="button"
           autoFocus
@@ -348,6 +366,28 @@ export function ToolCallBlock({ call }: { call: ToolCallView }) {
     return <ArtifactCard call={call} />;
   }
   return <ToolLine call={call} />;
+}
+
+/** "Open in Settings": shows a skill a chat just saved in Settings → Skills. */
+function SavedSkillLink({ folder }: { folder: string }) {
+  const openSettings = useOpenSettings();
+  const focus = useSkillFocus((s) => s.focus);
+  if (folder === "") return null;
+  return (
+    <div className="border-t border-line px-3 py-1.5">
+      <button
+        type="button"
+        onClick={() => {
+          focus(folder);
+          openSettings("skills");
+        }}
+        className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
+      >
+        <Sparkles aria-hidden className="size-3.5" />
+        Open {folder} in Settings → Skills
+      </button>
+    </div>
+  );
 }
 
 /** One line that opens to show the arguments and the result. */
@@ -412,6 +452,10 @@ function ToolLine({ call }: { call: ToolCallView }) {
         <PythonOutputs content={call.result} />
       )}
       {!open && toolKind(call) === "browser" && <BrowserView call={call} />}
+      {call.server === null &&
+        call.tool === "save_skill" &&
+        call.status === "done" &&
+        !call.isError && <SavedSkillLink folder={savedSkillFolder(call.inputJson)} />}
       {waiting && call.approval && <ApprovalCard request={call.approval} />}
     </div>
   );

@@ -6,8 +6,9 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Last completed:** Phase 12b — Docker sandbox workspace (committed 2026-11-12 as `phase 12b: Docker sandbox workspace`; exit check passed on Windows on 2026-11-12)
 - **Phase 13** — Browser agent (Browser-Use): done (`1af53b2`, fix `86f147d`; all exit checks passed by hand on 2026-11-12). Follow-up (Google search instead of guessed addresses) committed as `09c1ca2` (2026-11-12 13:53, all checks and the real-browser test green; the hidden test browser's real Google search was refused with a robot check and reported plainly, as designed); then click fixes `23e3fd5` and Google's AI Overview + longer extension-folder retries `4412e21` (2026-11-12 15:16, all green)
 - **Phase 13b** — Context management & chat compaction: done (`d58672b`, fixes `fccd2c7`, `2c31e21`; exit checks passed by hand on 2026-11-12)
-- **Phase 14** — Chrome extension & WebSocket bridge: committed `176a672` (2026-11-12 22:10, every check green); the real-extension test passed on Windows in Edge 157 (22:22); all manual exit checks passed by hand (22:57). Follow-up `67b59b6`: no permission prompts once paired (checked by the user after reloading the extension)
-- **Next phase:** Phase 14c — Models create and edit skills (added 2026-11-12), then Phase 15 — Scheduled tasks
+- **Phase 14** — Chrome extension & WebSocket bridge: committed `176a672` (2026-11-12 22:10, every check green); the real-extension test passed on Windows in Edge 157 (22:22); all manual exit checks passed by hand (22:57). Follow-up `67b59b6`: no permission prompts once paired (checked by the user after reloading the extension); web-research testing fixes `aa5a4f2` (Google results readable) and `051884a` (task list closes at a reply's end), both checked by the user on 2026-11-13
+- **Phase 14c** — Models create and edit skills: written and checked on the agent side (2026-11-13); waiting for `scripts\win\phase14c.cmd` on Windows and the manual exit checks
+- **Next phase:** Phase 15 — Scheduled tasks (after Phase 14c's Windows run and exit checks)
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -34,6 +35,50 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Docker in the cloud container** (Phase 12b): `dockerd` runs there (start it with `nohup dockerd &`), but Docker Hub isn't reachable. Make a stand-in command image with `tar -c --one-file-system … / | docker import - oxide-test:local` and build a stand-in file server image from it; then run the ignored real-Docker tests with `OXIDE_SANDBOX_IMAGE` / `OXIDE_SANDBOX_FILES_IMAGE`. The harness `~/oxide-linux` has `oxide-sandbox` as a member.
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 14c — Models create and edit skills — 2026-11-13
+Status: written and checked on the agent side (Rust fmt, clippy `-D warnings` and every workspace test on Linux; tsc, eslint and prettier on the device VM). **Waiting for the Windows run:** double-click `scripts\win\phase14c.cmd` (regenerates the bindings, `check.ps1`, `vite build`, commits with `logs\commit-msg-phase14c.txt` only if all pass, then starts the app). Then the exit checks below by hand.
+
+Exit criteria (by hand, on Windows):
+- [ ] **Turn it into a skill.** In a chat with a tools model, do something small (e.g. “write a haiku about Copenhagen in November, then a one-line English gloss under it”), then “turn what we just did into a skill”. Expect an approval card **“Save a new skill <name>?”** with the whole SKILL.md open, any extra files, and only **Deny** / **Allow once** (no “Allow always”). Nothing is in the skills folder before you click. After **Allow once**: the line reads **Created skill <name>**, with **Open <name> in Settings → Skills** (opens that skill's editor); Settings → Skills lists it; “Used in this session” shows it under Skills.
+- [ ] **A new chat uses it.** New chat: “haiku about the harbour, please” → the model calls `load_skill` with the new skill and follows it.
+- [ ] **A later change edits the same skill.** “Change that skill: always add a title line” (in either chat) → a card **“Change the skill <name>?”** with a red/green diff of SKILL.md (and the whole new SKILL.md folded below); Allow once → **Updated skill <name>**; Settings → Skills still has one skill of that name, with the change.
+- [ ] Optional: “+” menu → **Save skills** off → the model no longer has `save_skill` in that chat. A skill added from a folder or zip shows “You added this skill from a folder…” on its change card.
+
+Done:
+- **`oxide-core`:** `SAVE_SKILL` (`save_skill`); `SkillSavePreview { name, folder, isNew, skillMd, diff, files: [SkillFileChange { path, bytes, isNew, content, diff }], notes }`; `ToolApprovalRequest.skill: Option<SkillSavePreview>`.
+- **`oxide-agent` (`skills.rs`):**
+  - `Skills::plan_save(input)` works out exactly what a call writes, without writing: `skill` (an existing skill's folder or name; omitted = new), `name`, `description`, `instructions` (or `body`), `files: [{path, content}]`. A change keeps what isn't passed (description, instructions, license); a new skill needs all three. Checks as in Settings (name slug, description ≤ 1,024, instructions), names unique (a new skill with a taken name is refused with “call save_skill again with "skill": "<folder>"”; renaming onto another skill too), SKILL.md ≤ 200,000 characters, ≤ 20 files per call, ≤ 256 KB each, the skill ≤ 50 MB / 2,000 files. Paths: relative only, `\` → `/`, no `..`, no drive letters, no hidden parts, ≤ 8 levels, not SKILL.md, no duplicates; nothing on the way may be a link (checked again when writing), a folder where a file goes or a non-text file to replace.
+  - Notes for the card: added from a folder / a zip (now recorded: `origins` in `.oxide-skills.json` — `settings`, `chat`, `folder`, `zip`; older skills with a license or extra files get “may have been added from a folder or zip”), switched off (stays off), renamed.
+  - `unified_diff` (LCS, 3 lines of context, `@@ -a,b +c,d @@` hunks; very large files fall back to all-removed/all-added) for SKILL.md and replaced files.
+  - `Skills::apply_save(plan)` writes the plan (a new skill whose folder appeared meanwhile, or a changed one that was removed, is refused; a failed new skill is cleaned up).
+  - `save_skill_entry(skills)`: the tool, its description listing the user's skills (folder, “switched off”, description; up to 100) or “no skills yet”.
+- **`oxide-agent` (tools, chat loop, prompt):** `Builtin::SaveSkill` (usage kind Skill; label “Created <slug>” / “Updated <skill>”). Offered whenever the skills folder exists and the chat hasn't switched `save_skill` off (also with no skills yet); `load_skill` stays as before. In a step, a `save_skill` call is planned first: a plan that fails returns its error at once, without a card. It **always asks**, whatever was granted before; “Allow always” is answered as Allow once and saved nowhere (also in `answer_approval`); the card carries the preview; Allow writes exactly the previewed SKILL.md and files. The result says what was saved and that new replies are offered it. System prompt (when the tool is on): how to write a skill from what just worked, offer when work looks repeatable but save only when asked or agreed, load and edit instead of duplicating.
+- **Frontend:** `features/extensions/SkillSavePreview.tsx` (notes, the SKILL.md diff with added/removed lines coloured, the whole SKILL.md — open for a new skill, folded for a change — and each extra file with its content or diff); the approval card for `save_skill` says “Save a new skill <name>?” / “Change the skill <name>?” and has no “Allow always”; tool lines “Creating / Created skill”, “Updating / Updated skill” with **Open <folder> in Settings → Skills** (`useSkillFocus` opens that skill's editor); the skills list refreshes after a save; “+” menu **Save skills** switch (`disabledBuiltins: ["save_skill"]`). Vitest `features/extensions/SaveSkill.test.tsx`.
+- **Tests (Rust):** `a_model_saves_a_skill_after_approval_and_the_next_reply_uses_it` (an earlier grant doesn't skip the card, nothing written before Allow, “Allow always” saves no grant, the file is exactly the preview, the next reply's prompt and tools list it), `changing_a_skill_shows_a_diff_and_never_makes_a_second_one` (diff, a duplicate refused without a card, deny changes nothing, allow changes the same skill), `save_skill_can_be_switched_off_per_chat`; unit tests for confinement (`..`, absolute, drive letters, hidden, SKILL.md, size, count, duplicates), links out of the folder, keeping unpassed fields, unique names, notes and origins, diffs.
+
+Deviations from PLAN.md (and why):
+- **No separate `list_skills` tool:** `save_skill`'s own description lists the user's skills (folders, on/off, descriptions), and the system prompt already lists the usable ones for `load_skill`.
+- **The “link to it” opens the skill's editor in Settings → Skills** (there's no per-skill page).
+- **The card's approval is per save**: “Allow always” isn't shown, and an `allowChat` answer that arrives anyway counts as once.
+- Where an older skill came from isn't known (origins are recorded from now on); the card guesses from a license or extra files and says “may have been”.
+
+Known issues / TODO carried forward:
+- A switched-off skill can be changed by `save_skill`, but `load_skill` can't read it first (the model passes the whole new text).
+- Scripts saved in a skill are reference only (Oxide doesn't run skill scripts; `load_skill` says so).
+- `src/bindings/index.ts` was edited by hand for the new types; `phase14c.ps1` regenerates it.
+
+Notes for Phase 15:
+- A scheduled run that tries `save_skill` always waits for approval (it never runs unattended).
+
+Verified (agent side): fmt ✅ clippy ✅ cargo tests ✅ (Linux: core 75, agent 151 + 2 ignored, all crates green) tsc ✅ eslint ✅ prettier ✅. Windows (`phase14c.cmd`: Vitest, vite build, src-tauri) and tauri dev: pending.
+
+## Phase 14 follow-ups (web research testing) — 2026-11-13
+The user made a `web-research` skill in Oxide (Chrome, then Browser, then Web search; Google first, DuckDuckGo fallback; 2–3 sources for quick questions; open results by clicking their [n], never guessed addresses; Sources list; new tabs only, closed when done) and tested it with “whats the latest news about the Nvidia scandal?” on `swift-iq2_xs`. Fixes:
+- **Page readers saw nothing inside `display: contents`** (aa5a4f2): `checkVisibility()` is false for such elements, and Google wraps all its results in one, so `chrome__read_page` (extension/src/content.ts) and the Browser reader (python/oxide_browser_agent/pagetext.py) read Google results pages as empty. Such elements now let their children decide. Checked on live Google: 0 → 8 result titles.
+- **Task list closes when a reply ends normally** (051884a): small models skip the last `task_list` call, leaving “In this chat” stuck. When a reply that used `task_list` ends with EndTurn, `finish_task_list` marks every step done; Stop or failure leaves it as is. Verified by the user.
+- Skill wording (not code) fixed: using `web_fetch` while Chrome was available, going too deep (14 steps), and guessing article addresses. Test 4: one search, two clicked sources, tab closed.
+- Possible later: show link addresses in `chrome__read_page`; hide `web_search`/`web_fetch`/`browser__*` when a paired Chrome is connected; make the `web_fetch` failure hint and the browser prompt point to Chrome when it's on.
 
 ## Planning — Phase 14c added — 2026-11-12
 After Phase 14 the user asked whether Oxide's models can create or edit skills: they can't (only `load_skill`; skills are made by hand in Settings → Skills). **Phase 14c (Models create and edit skills)** was added to PLAN.md: a `save_skill` tool that always asks with the whole `SKILL.md` (and a diff for edits), files confined to the skill's folder, existing skills listed so models edit instead of duplicating. Exit: “turn what we just did into a skill” saves a skill a new chat uses, and a later change edits the same skill.

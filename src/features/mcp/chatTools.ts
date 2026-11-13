@@ -87,8 +87,20 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "chrome"])],
     });
 
+  /** `save_skill` ("Save skills" in the "+" menu): models may create and change skills. */
+  const saveSkillsOn = !tools.disabledBuiltins.includes("save_skill");
+  const toggleSaveSkills = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "save_skill")
+        : [...new Set([...tools.disabledBuiltins, "save_skill"])],
+    });
+
   return {
     tools,
+    saveSkillsOn,
+    toggleSaveSkills,
     chromeOn,
     toggleChrome,
     sandboxOn,

@@ -235,6 +235,43 @@ pub struct SkillInput {
 
 /// The built-in tool that gives a model a skill's instructions and files.
 pub const LOAD_SKILL: &str = "load_skill";
+/// The built-in tool that lets a model create or change a skill (always asks first).
+pub const SAVE_SKILL: &str = "save_skill";
+
+/// What a `save_skill` call would write, shown on its approval card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSavePreview {
+    /// The skill's name as it will be saved.
+    pub name: String,
+    /// Its folder inside the skills folder.
+    pub folder: String,
+    /// A new skill (else a change to an existing one).
+    pub is_new: bool,
+    /// The whole `SKILL.md` as it will be written.
+    pub skill_md: String,
+    /// For a change: what changes in `SKILL.md`, as a unified diff (`None` when unchanged).
+    pub diff: Option<String>,
+    /// Other files the save writes.
+    pub files: Vec<SkillFileChange>,
+    /// Something the user should know first (the skill was added from a folder or zip, it's
+    /// switched off, …).
+    pub notes: Vec<String>,
+}
+
+/// One extra file a `save_skill` call writes inside the skill's folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFileChange {
+    /// Relative to the skill's folder, `/`-separated.
+    pub path: String,
+    pub bytes: u32,
+    pub is_new: bool,
+    /// The new content (cut for very long files).
+    pub content: String,
+    /// For a changed file: a unified diff against the current one.
+    pub diff: Option<String>,
+}
 /// Longest skill name.
 pub const MAX_SKILL_NAME: usize = 64;
 /// Longest skill description.

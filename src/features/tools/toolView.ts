@@ -315,6 +315,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
         return "";
     }
   }
+  if (call.server === null && call.tool === "save_skill") return savedSkillFolder(call.inputJson);
   if (call.tool === "load_skill") {
     const name = str("name") ?? "";
     const path = str("path");
@@ -326,6 +327,32 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   }
   const first = Object.values(input).find((v) => typeof v === "string" && v.trim() !== "");
   return typeof first === "string" ? first : "";
+}
+
+/** A skill name as Oxide stores it (as `skill_slug` in Rust): lowercase letters, digits, hyphens. */
+export function skillSlug(name: string): string {
+  let out = "";
+  for (const c of name.trim()) {
+    if (/^[A-Za-z0-9]$/.test(c)) out += c.toLowerCase();
+    else if (out !== "" && !out.endsWith("-")) out += "-";
+  }
+  return out
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+}
+
+/** A `save_skill` call changes an existing skill (it names one in `skill`). */
+export function isSkillChange(inputJson: string): boolean {
+  const k = parse(inputJson).skill;
+  return typeof k === "string" && k.trim() !== "";
+}
+
+/** The folder a `save_skill` call writes: the skill it changes, or the new name's. */
+export function savedSkillFolder(inputJson: string): string {
+  const input = parse(inputJson);
+  if (typeof input.skill === "string" && input.skill.trim() !== "") return input.skill.trim();
+  return typeof input.name === "string" ? skillSlug(input.name) : "";
 }
 
 /** "Now: <step>" or "n of m done" for a task_list call. */
@@ -378,6 +405,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (call.tool === "project_search" && call.server === null) return "project";
   if (call.tool === "artifact" && call.server === null) return "artifact";
   if (call.tool === "load_skill" && call.server === null) return "skill";
+  if (call.tool === "save_skill" && call.server === null) return "skill";
   if (call.server === null && call.tool in FILE_TOOL_VERBS) return "file";
   if (call.server === null && call.tool === "task_list") return "tasks";
   if (call.server === null && call.tool === "run_command") return "shell";
@@ -410,6 +438,12 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
     case "artifact":
       return { action: busy ? "Writing artifact" : "Artifact", detail };
     case "skill":
+      if (call.tool === "save_skill") {
+        const change = isSkillChange(call.inputJson);
+        if (busy) return { action: change ? "Updating skill" : "Creating skill", detail };
+        if (call.status === "error") return { action: "Save skill", detail };
+        return { action: change ? "Updated skill" : "Created skill", detail };
+      }
       return { action: busy ? "Loading skill" : "Loaded skill", detail };
     case "file": {
       const [doing, did] = FILE_TOOL_VERBS[call.tool] ?? ["Using", "Used"];

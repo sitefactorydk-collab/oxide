@@ -213,6 +213,7 @@ function command(toolUseId: string, cmd: string, messageId = "m6"): ToolApproval
     inputJson: JSON.stringify({ command: cmd }, null, 2),
     readOnly: false,
     destructive: true,
+    skill: null,
     requestedAt: Date.now(),
   };
 }
