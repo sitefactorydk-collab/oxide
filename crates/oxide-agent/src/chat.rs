@@ -25,8 +25,8 @@ use oxide_core::workspace::{FILES_SWITCH, RUN_COMMAND, TASK_LIST, command_allowe
 use oxide_core::{
     AppSettings, ApprovalDecision, ChatStreamEvent, Compaction, CompactionTrigger, ContentBlock,
     ContextSettings, ContextUsage, Conversation, GenerateOptions, Message, ModelCapabilities,
-    ModelInfo, ProviderKind, Role, StopReason, StreamEvent, TaskList, ThinkingStyle,
-    ToolApprovalRequest, ToolUsageKind, Usage,
+    ModelInfo, ProviderKind, Role, StopReason, StreamEvent, TaskItem, TaskList, TaskStatus,
+    ThinkingStyle, ToolApprovalRequest, ToolUsageKind, Usage,
 };
 use oxide_llm::capabilities::anthropic_curated;
 use oxide_llm::{
@@ -575,6 +575,15 @@ impl ChatService {
         }
         let usage = reply.total_usage();
         let content = reply.take_content();
+        // A reply that ends on its own has finished its plan, even when the model forgot to
+        // tick off the last steps: close the list it kept in this reply.
+        if stop_reason == StopReason::EndTurn
+            && content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name == TASK_LIST))
+        {
+            self.finish_task_list(&cid).await;
+        }
         let keep = !content.is_empty()
             || matches!(
                 stop_reason,
@@ -643,6 +652,32 @@ impl ChatService {
                     self.learn_memory(&cid, user, reply).await;
                 }
             }
+        }
+    }
+
+    /// Marks every step of the chat's task list done (after a reply that ended normally).
+    async fn finish_task_list(&self, cid: &str) {
+        let list = match self.store.task_list(cid).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!("couldn't read the task list: {e}");
+                return;
+            }
+        };
+        if list.items.iter().all(|t| t.status == TaskStatus::Done) {
+            return;
+        }
+        let items: Vec<TaskItem> = list
+            .items
+            .into_iter()
+            .map(|t| TaskItem {
+                status: TaskStatus::Done,
+                ..t
+            })
+            .collect();
+        match self.store.set_task_list(cid, &items).await {
+            Ok(list) => self.sink.tasks_changed(list),
+            Err(e) => tracing::warn!("couldn't close the task list: {e}"),
         }
     }
 
@@ -4299,16 +4334,15 @@ pub(crate) mod tests {
         assert!(result_of(&m, "d1").1, "denied");
         assert!(work.join("Text").exists(), "not deleted");
 
+        // The model never ticked the steps off, but the reply ended normally: Oxide closed
+        // the list.
         let tasks = f.sink.tasks.lock().expect("lock").clone();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            f.store
-                .task_list(&f.chat.id)
-                .await
-                .expect("list")
-                .items
-                .len(),
-            2
+        assert_eq!(tasks.len(), 2);
+        let list = f.store.task_list(&f.chat.id).await.expect("list");
+        assert_eq!(list.items.len(), 2);
+        assert!(
+            list.items.iter().all(|t| t.status == TaskStatus::Done),
+            "{list:?}"
         );
         let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
         let kinds: Vec<(ToolUsageKind, Option<String>)> =
