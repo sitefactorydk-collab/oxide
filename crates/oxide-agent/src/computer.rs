@@ -123,6 +123,8 @@ pub struct ComputerUse {
     /// `SETTLE` and `HIDE_DELAY` (shorter in tests).
     settle: Duration,
     hide_delay: Duration,
+    /// The user's folders ("Documents" → path), told to models so they don't guess paths.
+    folders: Arc<Vec<(String, String)>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -138,7 +140,18 @@ impl ComputerUse {
             own_pid: std::process::id(),
             settle: SETTLE,
             hide_delay: HIDE_DELAY,
+            folders: Arc::default(),
         }
+    }
+
+    /// The user's folders by name (home, Desktop, Documents, Downloads), from the app.
+    pub fn with_folders(mut self, folders: Vec<(String, String)>) -> Self {
+        self.folders = Arc::new(folders);
+        self
+    }
+
+    pub fn folders(&self) -> Vec<(String, String)> {
+        self.folders.as_ref().clone()
     }
 
     /// Waits `settle` after an action and `hide_delay` for Oxide's window to go (tests).

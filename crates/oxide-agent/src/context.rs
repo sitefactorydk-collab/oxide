@@ -240,6 +240,8 @@ pub struct ComputerPrompt {
     pub height: u32,
     /// Oxide's window gets out of the way while the model acts.
     pub hide_oxide: bool,
+    /// The user's folders by name ("Documents" → its real path), so the model doesn't guess.
+    pub folders: Vec<(String, String)>,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -468,7 +470,19 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              password managers or sign-in prompts: Oxide refuses those, so ask the user to do \
              that part. Don't buy, send, post, delete or sign up for anything unless the user \
              asked for exactly that. The user can stop you at any time with \
-             {PANIC_SHORTCUT_LABEL}.",
+             {PANIC_SHORTCUT_LABEL}.{folders}",
+            folders = if c.folders.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " The user's folders (use these exact paths, don't guess user names): {}.",
+                    c.folders
+                        .iter()
+                        .map(|(name, path)| format!("{name} = {path}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
             w = c.width,
             h = c.height,
             hide = if c.hide_oxide {
@@ -763,10 +777,12 @@ mod tests {
                 width: 1366,
                 height: 768,
                 hide_oxide: true,
+                folders: vec![("Documents".into(), "C:\\Users\\info\\Documents".into())],
             }),
             ..Default::default()
         });
         assert!(p.contains("1366×768") && p.contains("Ctrl+Alt+Esc"), "{p}");
+        assert!(p.contains("Documents = C:\\Users\\info\\Documents"), "{p}");
         assert!(
             p.contains("Never type passwords") && p.contains("minimized"),
             "{p}"

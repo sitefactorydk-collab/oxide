@@ -1001,6 +1001,8 @@ pub fn parse_action(input: &Value) -> Result<ComputerAction, String> {
             Ok(ComputerAction::Type { text: t.to_owned() })
         }
         "key" => {
+            // Some models name the field after the action.
+            let text = text.or_else(|| input.get("key").and_then(Value::as_str));
             let t = text.ok_or("key needs \"text\": a key or combination, e.g. ctrl+s.")?;
             let repeat = input
                 .get("repeat")
@@ -1017,6 +1019,7 @@ pub fn parse_action(input: &Value) -> Result<ComputerAction, String> {
             })
         }
         "hold_key" => {
+            let text = text.or_else(|| input.get("key").and_then(Value::as_str));
             let t = text.ok_or("hold_key needs \"text\": the key or combination to hold.")?;
             Ok(ComputerAction::HoldKey {
                 keys: parse_combo(t)?,
@@ -1372,6 +1375,11 @@ mod tests {
             parse_action(&json!({"action": "key", "text": "ctrl+s", "repeat": 2})).expect("key");
         assert_eq!(a.label(), "Pressing ctrl+s ×2");
         assert!(parse_action(&json!({"action": "key", "text": "ctrl+s", "repeat": 101})).is_err());
+        // "key" instead of "text", as some models write it.
+        assert!(matches!(
+            parse_action(&json!({"action": "key", "key": "super+r"})),
+            Ok(ComputerAction::Key { ref text, .. }) if text == "super+r"
+        ));
         let a = parse_action(&json!({"action": "type", "text": "Hello\nworld"})).expect("type");
         assert_eq!(a.label(), "Typing “Hello world”");
         assert!(parse_action(&json!({"action": "type", "text": ""})).is_err());

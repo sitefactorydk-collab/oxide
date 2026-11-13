@@ -115,6 +115,21 @@ impl TauriComputerSink {
         *lock(&self.display) = display;
     }
 
+    /// The user's home, Desktop, Documents and Downloads folders (Windows' known folders,
+    /// OneDrive moves included), told to models so they don't guess paths.
+    pub fn known_folders(&self) -> Vec<(String, String)> {
+        let path = self.app.path();
+        [
+            ("Home", path.home_dir()),
+            ("Desktop", path.desktop_dir()),
+            ("Documents", path.document_dir()),
+            ("Downloads", path.download_dir()),
+        ]
+        .into_iter()
+        .filter_map(|(name, dir)| Some((name.to_owned(), dir.ok()?.display().to_string())))
+        .collect()
+    }
+
     /// The chats' activity, for a window that opens later.
     pub fn activity(&self) -> Vec<ComputerActivity> {
         lock(&self.chats).values().cloned().collect()

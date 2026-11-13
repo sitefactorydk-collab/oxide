@@ -169,6 +169,7 @@ impl AppState {
                 )),
                 computer_bar.clone(),
             )
+            .with_folders(computer_bar.known_folders())
         });
         let tools = match &computer {
             Some(c) => tools.with_computer(c.clone()),

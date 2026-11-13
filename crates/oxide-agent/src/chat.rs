@@ -944,6 +944,7 @@ impl ChatService {
                             width: frame.width,
                             height: frame.height,
                             hide_oxide: settings.computer.hide_oxide,
+                            folders: cu.folders(),
                         });
                         computer_display = Some(frame.display.label());
                     }
