@@ -107,8 +107,23 @@ impl ModelRegistry {
         if refresh {
             self.invalidate();
         }
-        let listings = join_all(configs.iter().map(|c| self.listing(c, refresh))).await;
+        let mut listings = join_all(configs.iter().map(|c| self.listing(c, refresh))).await;
+        let models = self.model_settings().await;
+        for l in &mut listings {
+            models.apply_to(&mut l.models);
+        }
         Ok(listings)
+    }
+
+    /// Settings → Models (the user's "Can see images" answers).
+    async fn model_settings(&self) -> oxide_core::ModelSettings {
+        match self.store.app_settings().await {
+            Ok(s) => s.models,
+            Err(e) => {
+                tracing::warn!("couldn't read the model settings: {e}");
+                oxide_core::ModelSettings::default()
+            }
+        }
     }
 
     /// One endpoint's models, from the cache when fresh.
@@ -203,14 +218,19 @@ impl ModelRegistry {
     pub async fn find(&self, model_id: &str) -> Option<ModelInfo> {
         let (provider_id, _) = split_model_id(model_id)?;
         let config = self.store.get_provider(provider_id).await.ok()?;
-        let listing = self.listing(&config, false).await;
+        let mut listing = self.listing(&config, false).await;
+        self.model_settings().await.apply_to(&mut listing.models);
         listing.models.into_iter().find(|m| m.id == model_id)
     }
 
     /// Models of one endpoint (cached), for picking a title model.
     pub async fn models_of(&self, provider_id: &str) -> Vec<ModelInfo> {
         match self.store.get_provider(provider_id).await {
-            Ok(config) => self.listing(&config, false).await.models,
+            Ok(config) => {
+                let mut models = self.listing(&config, false).await.models;
+                self.model_settings().await.apply_to(&mut models);
+                models
+            }
             Err(_) => Vec::new(),
         }
     }
@@ -330,5 +350,49 @@ mod tests {
         );
         assert!(reg.find("lmstudio/other").await.is_none());
         assert!(reg.find("nope/fake-model").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn models_marked_as_seeing_images_in_settings_see_images() {
+        let (store, secrets) = setup().await;
+        let reg = ModelRegistry::with_connector(
+            store.clone(),
+            secrets,
+            fake_connector(FakeProvider::new(vec![])),
+        );
+        assert!(
+            !reg.find("lmstudio/fake-model")
+                .await
+                .expect("found")
+                .capabilities
+                .images
+        );
+        let mut s = store.app_settings().await.expect("settings");
+        s.models.images = vec![oxide_core::ModelImagesOverride {
+            model: "lmstudio/fake-model".into(),
+            images: true,
+        }];
+        store.save_app_settings(s).await.expect("saved");
+        // Cached listings follow the setting at once.
+        assert!(
+            reg.find("lmstudio/fake-model")
+                .await
+                .expect("found")
+                .capabilities
+                .images
+        );
+        let listed = reg.list(false).await.expect("lists");
+        assert!(
+            listed
+                .iter()
+                .flat_map(|l| &l.models)
+                .any(|m| m.id == "lmstudio/fake-model" && m.capabilities.images)
+        );
+        assert!(
+            reg.models_of("lmstudio")
+                .await
+                .iter()
+                .all(|m| m.capabilities.images)
+        );
     }
 }

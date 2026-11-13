@@ -31,6 +31,10 @@ export function ComputerSection() {
         every app it uses. Oxide never types into password, one-time code or payment fields, never
         types card or bank account numbers, and never uses itself or a password manager.
       </p>
+      <p className="text-sm text-fg-subtle">
+        It works with models that can see images (Claude, and others marked “Images” in Settings →
+        Models: click “No images” on a model there if it can see them).
+      </p>
       <Toggle
         label="Let models use the computer"
         hint="Chats can ask to control the computer (switch it off per chat in the + menu). Scheduled runs ask too, even when set to run without asking."

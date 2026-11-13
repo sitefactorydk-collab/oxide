@@ -58,6 +58,7 @@ export function PlusMenu({
   limits,
   conversationId,
   onAttach,
+  modelSeesImages = true,
 }: {
   onPickFiles: () => void;
   /** Shares a folder with the chat (its file tools work there). */
@@ -67,6 +68,8 @@ export function PlusMenu({
   conversationId?: string;
   /** Adds attachments the backend prepares (prompts, resources). */
   onAttach: (name: string, run: () => Promise<Attachment[]>) => void;
+  /** The chat's model sees images (computer use needs that). */
+  modelSeesImages?: boolean;
 }) {
   const openSettings = useOpenSettings();
   const [promptToFill, setPromptToFill] = useState<McpPrompt | null>(null);
@@ -240,7 +243,14 @@ export function PlusMenu({
               onSelect={(e) => e.preventDefault()}
             >
               <MonitorSmartphone />
-              Use the computer
+              <span className="flex min-w-0 flex-col">
+                Use the computer
+                {!modelSeesImages && (
+                  <span className="text-xs text-fg-subtle">
+                    This model can&apos;t see images. Mark it in Settings → Models if it can.
+                  </span>
+                )}
+              </span>
             </MenuCheckboxItem>
           )}
           <MenuSub>

@@ -26,3 +26,7 @@ logs/
 
 # The 2026-11-12 chat export behind Phase 13b (4.5 MB of fetched web text); kept locally only
 docs/*context-fill.json
+
+# Exit-check leftovers of Phase 16 (a chat export and the file it wrote); kept locally only
+docs/Oxide File Write.json
+docs/oxide-test.txt

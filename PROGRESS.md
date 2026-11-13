@@ -8,7 +8,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 14** — Chrome extension & WebSocket bridge: committed `176a672` (2026-11-12 22:10, every check green); the real-extension test passed on Windows in Edge 157 (22:22); all manual exit checks passed by hand (22:57). Follow-up `67b59b6`: no permission prompts once paired (checked by the user after reloading the extension); web-research testing fixes `aa5a4f2` (Google results readable) and `051884a` (task list closes at a reply's end), both checked by the user on 2026-11-13
 - **Phase 14c** — Models create and edit skills: done (`b9d8faf`, 2026-11-13 08:42, every check green on Windows; all exit checks passed by hand at 08:54)
 - **Phase 15** — Scheduled tasks: done (`68ee955`, follow-up `d7c34cd`; every check green on Windows; all exit checks passed by hand on 2026-11-13 11:13)
-- **Current:** Phase 16 — Computer use: built (agent side green; `scripts\win\phase16.cmd` runs the Windows checks and commits); the manual exit check (Notepad + the panic shortcut) is still to do
+- **Current:** Phase 16 — Computer use: committed `898553d` (every check green on Windows); follow-up “Can see images” per model in `scripts\win\phase16-fix.cmd`; the manual exit check (Notepad + the panic shortcut) is still to do
 - **Next phase:** Phase 17 — Packaging, updates & CI
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -38,6 +38,12 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 16 — Computer use — 2026-11-13
+**Windows run 1 (13:47):** everything built on Windows the first time (bindings, cargo test, typecheck, lint, vite build green). Failed: clippy `chunks_exact_to_as_chunks` (Rust 1.99 on Windows), one Vitest test (the control bar read its first, empty activity after the test's event), and the real-computer test: on the user's 4K screen at 250 % the test process wasn't DPI aware, so the pointer read 1536×864 instead of 1920×1080. Fixed: `Desktop::new()` makes the process per-monitor DPI aware itself (`SetProcessDpiAwarenessContext`, harmless when Tauri already did), `as_chunks`, the test waits for the first read. Run 2 started 2026-11-13 ~14:05; the desktop link dropped before its logs could be read.
+
+**Windows run 2 (14:04):** all green (Vitest 241/241, the real-computer test passed with physical pixels on the 4K screen); committed `898553d phase 16: computer use`.
+
+**First exit try (14:16):** the chat ran on Strata `swift-iq2_xs`, which never got the computer tool: Strata's `/v1/models` doesn't say which models see images, so Oxide marked every Strata model as text-only (computer use needs a model that sees images) and the model fell back to the sandbox and a shared folder. The user's model does see images. Follow-up (`scripts\win\phase16-fix.cmd`, message `logs\commit-msg-phase16-fix.txt`): **Settings → Models has an “Images / No images” switch per model** (`ModelSettings.images: [ModelImagesOverride { model, images }]`, applied by `ModelRegistry` to listings, `find` and `models_of`, so chats, attachments and computer use follow it; × resets it); the “+” menu's **Use the computer** says when the chat's model can't see images; Settings → Computer use says which models work. Tests: `models_can_be_marked_as_seeing_images`, `models_marked_as_seeing_images_in_settings_see_images`, Vitest “marks a model as seeing images, and resets it”. (Anthropic had an API incident that afternoon, so Claude couldn't be used for the check meanwhile.)
+
 Status: partial — built and green on the agent side (Linux: core, llm, store, agent tests; tsc, eslint, prettier on the device). Windows checks, the real-computer test and the commit run in `scripts\win\phase16.cmd`; the exit check is by hand. Started in one session (paused at the usage limit with `PHASE16-WIP.md`, removed by the phase script) and finished in a second.
 
 Exit criteria (by hand, on Windows):

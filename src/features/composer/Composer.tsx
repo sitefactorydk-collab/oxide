@@ -189,6 +189,7 @@ export function Composer({
         limits={files.limits}
         conversationId={conversationId}
         onAttach={files.addPrepared}
+        modelSeesImages={model?.capabilities.images ?? true}
       />
       <ThinkingToggle model={model} />
       <EffortMenu model={model} />

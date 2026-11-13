@@ -127,7 +127,7 @@ function ProviderModelList({ list }: { list: ProviderModels }) {
                   {m.capabilities.tools ? "Tools" : "No tools"}
                 </Badge>
                 {m.capabilities.thinking !== "none" && <Badge on>Thinking</Badge>}
-                {m.capabilities.images && <Badge on>Images</Badge>}
+                <ImagesToggle model={m} />
                 {m.capabilities.pdfs && <Badge on>PDFs</Badge>}
               </div>
             </li>
@@ -135,6 +135,52 @@ function ProviderModelList({ list }: { list: ProviderModels }) {
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * "Images" / "No images" for a model; click to say whether it sees images (for servers
+ * that don't report it, like Strata). Computer use and image attachments follow it.
+ */
+function ImagesToggle({ model }: { model: ModelInfo }) {
+  const { data: settings } = useSettings();
+  const images = (settings ?? DEFAULT_SETTINGS).models.images;
+  const set = useSetModelSettings();
+  const override = images.find((o) => o.model === model.id);
+  const sees = override?.images ?? model.capabilities.images;
+  const rest = images.filter((o) => o.model !== model.id);
+  return (
+    <span className="flex items-center">
+      <button
+        type="button"
+        aria-pressed={sees}
+        aria-label={`${model.label} can see images`}
+        title={
+          sees
+            ? "Oxide sends images to this model. Click if it can't see images."
+            : "Oxide doesn't send images to this model. Click if it can see images."
+        }
+        onClick={() => set({ images: [...rest, { model: model.id, images: !sees }] })}
+        className={cn(
+          "rounded-md px-1.5 py-0.5 text-xs hover:opacity-80",
+          sees ? "bg-accent-soft text-accent" : "bg-sunken text-fg-subtle",
+        )}
+      >
+        {sees ? "Images" : "No images"}
+        {override && " (set)"}
+      </button>
+      {override && (
+        <button
+          type="button"
+          aria-label={`Reset whether ${model.label} can see images`}
+          title="Reset to what the server reports"
+          onClick={() => set({ images: rest })}
+          className="rounded-md px-1 text-xs text-fg-subtle hover:bg-hover hover:text-fg"
+        >
+          ×
+        </button>
+      )}
+    </span>
   );
 }
 

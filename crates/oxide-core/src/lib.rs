@@ -84,9 +84,9 @@ pub use schedule::{
     TaskInput, TaskRun, TaskSchedule,
 };
 pub use settings::{
-    AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings, ModelSettings,
-    ProfileSettings, ProjectSettings, ShellSettings, ThemePref, ToolSettings, WebSearchProvider,
-    WebSearchSettings,
+    AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings,
+    ModelImagesOverride, ModelSettings, ProfileSettings, ProjectSettings, ShellSettings, ThemePref,
+    ToolSettings, WebSearchProvider, WebSearchSettings,
 };
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,

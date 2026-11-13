@@ -98,6 +98,31 @@ describe("Settings → Computer use", () => {
   });
 });
 
+describe("Settings → Models: can a model see images", () => {
+  it("marks a model as seeing images, and resets it", async () => {
+    renderApp("/settings/models");
+    const list = await screen.findByRole("region", { name: "LM Studio models" });
+    const toggle = within(list).getByRole("button", { name: "qwen/qwen3-14b can see images" });
+    expect(toggle).toHaveTextContent("No images");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(fakeState().settings.models.images).toEqual([
+        { model: "lmstudio/qwen/qwen3-14b", images: true },
+      ]),
+    );
+    await waitFor(() =>
+      expect(
+        within(list).getByRole("button", { name: "qwen/qwen3-14b can see images" }),
+      ).toHaveTextContent("Images (set)"),
+    );
+    fireEvent.click(
+      within(list).getByRole("button", { name: "Reset whether qwen/qwen3-14b can see images" }),
+    );
+    await waitFor(() => expect(fakeState().settings.models.images).toEqual([]));
+  });
+});
+
 describe("Computer use in a reply", () => {
   async function startReply() {
     renderApp("/chat/c2", { backend: { replies: "hold", ...ON } });

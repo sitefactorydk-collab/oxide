@@ -176,7 +176,13 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     settings: {
       profile: { name: seed.settings?.name ?? "" },
       appearance: { theme: seed.settings?.theme ?? "system", chatFont: "serif" },
-      models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
+      models: {
+        showUnsupported: false,
+        autoTitle: true,
+        titleModel: null,
+        thinkingBudget: 8000,
+        images: [],
+      },
       tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
       webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
       projects: { knowledgeBudget: 40000 },
@@ -869,7 +875,16 @@ export const fakeCommands: typeof RealCommands = {
     setTimeout(() => emitStream(conversationId, { type: "done", message }), 0);
     return ok(true);
   },
-  listModels: () => ok(state.models),
+  listModels: () =>
+    ok(
+      state.models.map((l) => ({
+        ...l,
+        models: l.models.map((m) => {
+          const o = state.settings.models.images.find((i) => i.model === m.id);
+          return o ? { ...m, capabilities: { ...m.capabilities, images: o.images } } : m;
+        }),
+      })),
+    ),
   chatContext: (conversationId, leafId) => {
     const convo = state.conversations.find((c) => c.id === conversationId);
     if (!convo) return fail("notFound", "conversation not found");

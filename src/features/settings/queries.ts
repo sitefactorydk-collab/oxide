@@ -30,7 +30,13 @@ export const settingsKeys = { app: ["settings", "app"] as const };
 export const DEFAULT_SETTINGS: AppSettings = {
   profile: { name: "" },
   appearance: { theme: "system", chatFont: "serif" },
-  models: { showUnsupported: false, autoTitle: true, titleModel: null, thinkingBudget: 8000 },
+  models: {
+    showUnsupported: false,
+    autoTitle: true,
+    titleModel: null,
+    thinkingBudget: 8000,
+    images: [],
+  },
   tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
   webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
   projects: { knowledgeBudget: 40000 },
@@ -111,6 +117,8 @@ export function useUpdateSettings() {
         qc.invalidateQueries({ queryKey: desktopKeys.status }),
         // The meter's window and threshold come from Settings → Models.
         qc.invalidateQueries({ queryKey: contextKeys.all }),
+        // "Can see images" answers change what the model list says.
+        qc.invalidateQueries({ queryKey: ["models"] }),
       ]),
   });
   return (change: (s: AppSettings) => AppSettings) => {

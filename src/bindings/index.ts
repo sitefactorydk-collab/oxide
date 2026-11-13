@@ -3045,6 +3045,14 @@ effort: Effort[];
  */
 defaultEffort: Effort | null }
 /**
+ * "Can see images" for one model, set in Settings → Models.
+ */
+export type ModelImagesOverride = { 
+/**
+ * `<providerId>/<model>`.
+ */
+model: string; images: boolean }
+/**
  * A model the picker can offer.
  */
 export type ModelInfo = { 
@@ -3077,7 +3085,12 @@ titleModel: string | null;
 /**
  * Extended-thinking budget in tokens, for models that take one.
  */
-thinkingBudget: number }
+thinkingBudget: number; 
+/**
+ * Whether a model sees images, set by hand where the server doesn't say (Strata,
+ * OpenAI-compatible servers). Overrides what Oxide worked out.
+ */
+images: ModelImagesOverride[] }
 export type NewMemory = { projectId: string | null; text: string }
 export type NewProject = { name: string; description: string }
 /**

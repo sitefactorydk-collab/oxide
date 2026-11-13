@@ -62,6 +62,37 @@ pub struct ModelSettings {
     pub title_model: Option<String>,
     /// Extended-thinking budget in tokens, for models that take one.
     pub thinking_budget: u32,
+    /// Whether a model sees images, set by hand where the server doesn't say (Strata,
+    /// OpenAI-compatible servers). Overrides what Oxide worked out.
+    pub images: Vec<ModelImagesOverride>,
+}
+
+/// "Can see images" for one model, set in Settings → Models.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelImagesOverride {
+    /// `<providerId>/<model>`.
+    pub model: String,
+    pub images: bool,
+}
+
+impl ModelSettings {
+    /// The user's answer for a model, if they gave one.
+    pub fn images_for(&self, model_id: &str) -> Option<bool> {
+        self.images
+            .iter()
+            .find(|o| o.model == model_id)
+            .map(|o| o.images)
+    }
+
+    /// Applies the user's "Can see images" answers to listed models.
+    pub fn apply_to(&self, models: &mut [crate::model::ModelInfo]) {
+        for m in models {
+            if let Some(images) = self.images_for(&m.id) {
+                m.capabilities.images = images;
+            }
+        }
+    }
 }
 
 impl Default for ModelSettings {
@@ -71,6 +102,7 @@ impl Default for ModelSettings {
             auto_title: true,
             title_model: None,
             thinking_budget: DEFAULT_THINKING_BUDGET,
+            images: Vec::new(),
         }
     }
 }
@@ -264,6 +296,22 @@ impl AppSettings {
             .title_model
             .map(|m| m.trim().to_owned())
             .filter(|m| crate::model::split_model_id(m).is_some());
+        // Valid ids only; the last answer for a model wins.
+        let mut images: Vec<ModelImagesOverride> = Vec::new();
+        for o in std::mem::take(&mut self.models.images).into_iter().rev() {
+            let model = o.model.trim().to_owned();
+            if crate::model::split_model_id(&model).is_some()
+                && !images.iter().any(|i| i.model == model)
+            {
+                images.push(ModelImagesOverride {
+                    model,
+                    images: o.images,
+                });
+            }
+        }
+        images.reverse();
+        images.truncate(500);
+        self.models.images = images;
         self.tools.max_steps = self.tools.max_steps.clamp(1, MAX_MAX_STEPS);
         self.web_search.max_results = self.web_search.max_results.clamp(1, 10);
         self.projects.knowledge_budget = self
@@ -375,6 +423,48 @@ mod tests {
         let s = s.normalized();
         assert_eq!(s.models.thinking_budget, MIN_THINKING_BUDGET);
         assert_eq!(s.models.title_model, None);
+    }
+
+    #[test]
+    fn models_can_be_marked_as_seeing_images() {
+        let s: AppSettings = serde_json::from_str("{}").expect("parses");
+        assert!(s.models.images.is_empty());
+        let mut s = AppSettings::default();
+        s.models.images = vec![
+            ModelImagesOverride {
+                model: "strata/swift".into(),
+                images: false,
+            },
+            ModelImagesOverride {
+                model: " no-slash ".into(),
+                images: true,
+            },
+            ModelImagesOverride {
+                model: " strata/swift ".into(),
+                images: true,
+            },
+        ];
+        let s = s.normalized();
+        assert_eq!(
+            s.models.images,
+            vec![ModelImagesOverride {
+                model: "strata/swift".into(),
+                images: true
+            }]
+        );
+        assert_eq!(s.models.images_for("strata/swift"), Some(true));
+        assert_eq!(s.models.images_for("strata/other"), None);
+        let mut listed = vec![crate::model::ModelInfo {
+            id: "strata/swift".into(),
+            provider_id: "strata".into(),
+            model: "swift".into(),
+            label: "swift".into(),
+            capabilities: crate::model::ModelCapabilities::default(),
+            context_window: None,
+            max_output_tokens: None,
+        }];
+        s.models.apply_to(&mut listed);
+        assert!(listed[0].capabilities.images);
     }
 
     #[test]
