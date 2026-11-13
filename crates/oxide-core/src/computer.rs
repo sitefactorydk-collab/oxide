@@ -74,6 +74,230 @@ pub struct ComputerSettings {
     pub native_anthropic: bool,
     /// Apps every chat may use without asking.
     pub always_allowed_apps: Vec<ComputerApp>,
+    /// Per model: the grid on screenshots and the measured pointer calibration.
+    pub models: Vec<ComputerModelSettings>,
+}
+
+/// How one model sees the screen (Settings → Computer use → Models).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputerModelSettings {
+    /// `<providerId>/<model>`.
+    pub model: String,
+    /// Draw a labelled grid on its screenshots.
+    pub grid: bool,
+    /// Where it points versus where it means to (measured by Calibrate).
+    pub calibration: Option<PointerCalibration>,
+}
+
+/// One axis of a model's pointing: it reports `true × scale + offset` (screenshot pixels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AxisFit {
+    /// Scale × 10,000 (10,000 = exact).
+    pub scale: i32,
+    /// Offset in screenshot pixels.
+    pub offset: i32,
+}
+
+impl AxisFit {
+    pub const EXACT: AxisFit = AxisFit {
+        scale: 10_000,
+        offset: 0,
+    };
+
+    fn scale_f(self) -> f64 {
+        f64::from(self.scale) / 10_000.0
+    }
+
+    /// Where the model meant, from what it reported.
+    pub fn meant(self, reported: i32) -> i32 {
+        ((f64::from(reported) - f64::from(self.offset)) / self.scale_f()).round() as i32
+    }
+
+    /// What the model would report for a true position.
+    pub fn reported(self, meant: i32) -> i32 {
+        (f64::from(meant) * self.scale_f() + f64::from(self.offset)).round() as i32
+    }
+}
+
+/// A model's measured pointing, used to correct its coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PointerCalibration {
+    pub x: AxisFit,
+    pub y: AxisFit,
+    /// Markers found (of those shown).
+    pub markers: u32,
+    pub shown: u32,
+    /// Typical miss before correcting, and what's left after (screenshot pixels).
+    pub error_before: u32,
+    pub error_after: u32,
+    /// The screenshot size it was measured at.
+    pub width: u32,
+    pub height: u32,
+    /// Measured with the grid on.
+    pub grid: bool,
+    /// When (ms since the epoch).
+    pub at: i64,
+}
+
+/// A marker's true position and where the model said it was (screenshot pixels).
+pub type MarkerAnswer = ((i32, i32), (i32, i32));
+
+/// Fewest markers a calibration needs.
+pub const MIN_CALIBRATION_MARKERS: usize = 4;
+/// Corrections larger than this are refused as nonsense (screenshot pixels).
+const MAX_CALIBRATION_OFFSET: f64 = 300.0;
+
+impl PointerCalibration {
+    /// [`Self::fit_all`], then again without answers far off the fit (a dot taken for
+    /// another), when enough are left.
+    pub fn fit(
+        pairs: &[MarkerAnswer],
+        shown: u32,
+        size: (u32, u32),
+        grid: bool,
+        at: i64,
+    ) -> Result<Self, String> {
+        let first = Self::fit_all(pairs, shown, size, grid, at);
+        let base = match &first {
+            Ok(c) => c.clone(),
+            Err(_) if pairs.len() > MIN_CALIBRATION_MARKERS => {
+                // A single wild answer can spoil the fit: try it from the median offsets.
+                let mut dx: Vec<i32> = pairs.iter().map(|p| p.1.0 - p.0.0).collect();
+                let mut dy: Vec<i32> = pairs.iter().map(|p| p.1.1 - p.0.1).collect();
+                dx.sort_unstable();
+                dy.sort_unstable();
+                let mid = |v: &[i32]| v[v.len() / 2];
+                Self {
+                    x: AxisFit {
+                        scale: 10_000,
+                        offset: mid(&dx),
+                    },
+                    y: AxisFit {
+                        scale: 10_000,
+                        offset: mid(&dy),
+                    },
+                    markers: 0,
+                    shown,
+                    error_before: 0,
+                    error_after: 0,
+                    width: size.0,
+                    height: size.1,
+                    grid,
+                    at,
+                }
+            }
+            Err(_) => return first,
+        };
+        let miss = |p: &MarkerAnswer| {
+            let (mx, my) = base.meant(p.1);
+            f64::from(mx - p.0.0).hypot(f64::from(my - p.0.1))
+        };
+        let mut misses: Vec<f64> = pairs.iter().map(miss).collect();
+        misses.sort_by(f64::total_cmp);
+        let limit = (misses[misses.len() / 2] * 3.0).max(30.0);
+        let kept: Vec<_> = pairs.iter().copied().filter(|p| miss(p) <= limit).collect();
+        if kept.len() == pairs.len() || kept.len() < MIN_CALIBRATION_MARKERS {
+            return first;
+        }
+        Self::fit_all(&kept, shown, size, grid, at)
+    }
+
+    /// Least-squares fit of `reported = true × scale + offset` per axis, from
+    /// (true, reported) pairs.
+    pub fn fit_all(
+        pairs: &[MarkerAnswer],
+        shown: u32,
+        (width, height): (u32, u32),
+        grid: bool,
+        at: i64,
+    ) -> Result<Self, String> {
+        if pairs.len() < MIN_CALIBRATION_MARKERS {
+            return Err(format!(
+                "The model found only {} of {shown} markers; at least {MIN_CALIBRATION_MARKERS} \
+                 are needed.",
+                pairs.len()
+            ));
+        }
+        let axis = |pick: fn(&MarkerAnswer) -> (f64, f64)| -> Result<AxisFit, String> {
+            let pts: Vec<(f64, f64)> = pairs.iter().map(pick).collect();
+            let n = pts.len() as f64;
+            let mx = pts.iter().map(|p| p.0).sum::<f64>() / n;
+            let my = pts.iter().map(|p| p.1).sum::<f64>() / n;
+            let sxx = pts.iter().map(|p| (p.0 - mx).powi(2)).sum::<f64>();
+            let sxy = pts.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum::<f64>();
+            if sxx < 1.0 {
+                return Err("The markers were too close together to measure.".into());
+            }
+            let scale = sxy / sxx;
+            let offset = my - scale * mx;
+            if !(0.5..=2.0).contains(&scale) || offset.abs() > MAX_CALIBRATION_OFFSET {
+                return Err(format!(
+                    "The model's answers don't fit a steady correction (scale {scale:.2}, \
+                     offset {offset:.0} px): it may not have found the markers."
+                ));
+            }
+            Ok(AxisFit {
+                scale: (scale * 10_000.0).round() as i32,
+                offset: offset.round() as i32,
+            })
+        };
+        let x = axis(|p| (f64::from(p.0.0), f64::from(p.1.0)))?;
+        let y = axis(|p| (f64::from(p.0.1), f64::from(p.1.1)))?;
+        let miss = |f: &dyn Fn(&MarkerAnswer) -> (i32, i32)| -> u32 {
+            let total: f64 = pairs
+                .iter()
+                .map(|p| {
+                    let (rx, ry) = f(p);
+                    f64::from(rx - p.0.0).hypot(f64::from(ry - p.0.1))
+                })
+                .sum();
+            (total / pairs.len() as f64).round() as u32
+        };
+        let error_before = miss(&|p| p.1);
+        let error_after = miss(&|p| (x.meant(p.1.0), y.meant(p.1.1)));
+        Ok(Self {
+            x,
+            y,
+            markers: pairs.len() as u32,
+            shown,
+            error_before,
+            error_after,
+            width,
+            height,
+            grid,
+            at,
+        })
+    }
+
+    /// Where the model meant, from a reported screenshot point.
+    pub fn meant(&self, (x, y): (i32, i32)) -> (i32, i32) {
+        (self.x.meant(x), self.y.meant(y))
+    }
+
+    /// What the model would report for a true screenshot point.
+    pub fn reported(&self, (x, y): (i32, i32)) -> (i32, i32) {
+        (self.x.reported(x), self.y.reported(y))
+    }
+
+    /// Worth applying: it changes clicks by at least 2 px somewhere on the screen.
+    pub fn corrects(&self) -> bool {
+        let far = (self.width as i32, self.height as i32);
+        [(0, 0), far].iter().any(|&p| {
+            let m = self.meant(p);
+            (m.0 - p.0).abs() >= 2 || (m.1 - p.1).abs() >= 2
+        })
+    }
+}
+
+/// What applies to one model's screenshots and clicks.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ComputerTuning {
+    pub grid: bool,
+    /// Applied only when measured at the same screenshot size and grid setting.
+    pub calibration: Option<PointerCalibration>,
 }
 
 impl Default for ComputerSettings {
@@ -84,6 +308,7 @@ impl Default for ComputerSettings {
             hide_oxide: true,
             native_anthropic: true,
             always_allowed_apps: Vec::new(),
+            models: Vec::new(),
         }
     }
 }
@@ -108,7 +333,36 @@ impl ComputerSettings {
         }
         apps.truncate(200);
         self.always_allowed_apps = apps;
+        // Valid ids, one entry each (the last wins), nothing left that changes nothing.
+        let mut models: Vec<ComputerModelSettings> = Vec::new();
+        for m in std::mem::take(&mut self.models).into_iter().rev() {
+            let model = m.model.trim().to_owned();
+            if crate::model::split_model_id(&model).is_none()
+                || models.iter().any(|x| x.model == model)
+                || (!m.grid && m.calibration.is_none())
+            {
+                continue;
+            }
+            models.push(ComputerModelSettings { model, ..m });
+        }
+        models.reverse();
+        models.truncate(200);
+        self.models = models;
         self
+    }
+
+    /// The grid and calibration for a model's screenshots of this size.
+    pub fn tuning(&self, model_id: &str, (width, height): (u32, u32)) -> ComputerTuning {
+        let Some(m) = self.models.iter().find(|m| m.model == model_id) else {
+            return ComputerTuning::default();
+        };
+        ComputerTuning {
+            grid: m.grid,
+            calibration: m
+                .calibration
+                .clone()
+                .filter(|c| c.width == width && c.height == height && c.grid == m.grid),
+        }
     }
 
     /// Whether an app may be used in every chat.
@@ -1095,6 +1349,8 @@ pub struct Frame {
     pub display: ComputerDisplay,
     pub width: u32,
     pub height: u32,
+    /// The model's grid and pointer correction.
+    pub tuning: ComputerTuning,
 }
 
 impl Frame {
@@ -1104,6 +1360,28 @@ impl Frame {
             display,
             width,
             height,
+            tuning: ComputerTuning::default(),
+        }
+    }
+
+    /// With a model's grid and pointer correction.
+    pub fn with_tuning(mut self, tuning: ComputerTuning) -> Self {
+        self.tuning = tuning;
+        self
+    }
+
+    /// A point as the model gave it → where it meant (its calibration applied), kept on the
+    /// screenshot.
+    fn meant(&self, p: (i32, i32)) -> (i32, i32) {
+        match &self.tuning.calibration {
+            Some(c) => {
+                let (x, y) = c.meant(p);
+                (
+                    x.clamp(0, self.width as i32 - 1),
+                    y.clamp(0, self.height as i32 - 1),
+                )
+            }
+            None => p,
         }
     }
 
@@ -1119,6 +1397,7 @@ impl Frame {
                 self.height - 1
             ));
         }
+        let (x, y) = self.meant((x, y));
         let d = &self.display;
         let sx = (f64::from(x) + 0.5) * f64::from(d.width) / f64::from(self.width);
         let sy = (f64::from(y) + 0.5) * f64::from(d.height) / f64::from(self.height);
@@ -1135,14 +1414,25 @@ impl Frame {
         }
         let mx = f64::from(x - d.x) * f64::from(self.width) / f64::from(d.width);
         let my = f64::from(y - d.y) * f64::from(self.height) / f64::from(d.height);
-        Some((
+        let p = (
             (mx.floor() as i32).clamp(0, self.width as i32 - 1),
             (my.floor() as i32).clamp(0, self.height as i32 - 1),
-        ))
+        );
+        // In the model's own terms, so it can compare with where it pointed.
+        Some(match &self.tuning.calibration {
+            Some(c) => c.reported(p),
+            None => p,
+        })
     }
 
     /// A screenshot region → the screen's (x, y, width, height), relative to the screen.
     pub fn region_on_screen(&self, r: [i32; 4]) -> Result<(u32, u32, u32, u32), String> {
+        let r = if self.tuning.calibration.is_some() {
+            let (a, b) = (self.meant((r[0], r[1])), self.meant((r[2], r[3])));
+            [a.0, a.1, b.0, b.1]
+        } else {
+            r
+        };
         let x1 = r[2].min(self.width as i32);
         let y1 = r[3].min(self.height as i32);
         if r[0] >= x1 || r[1] >= y1 {
@@ -1256,6 +1546,87 @@ mod tests {
         // Portrait.
         let (w, h) = screenshot_size(1440, 2560);
         assert!(h <= MAX_SHOT_HEIGHT && w < h, "{w}×{h}");
+    }
+
+    #[test]
+    fn calibrations_fit_correct_and_apply_only_where_measured() {
+        // A model that points 55 px too high and 2 % too far right.
+        let truth = [
+            (100, 100),
+            (1200, 120),
+            (683, 384),
+            (150, 650),
+            (1250, 700),
+            (400, 500),
+        ];
+        let pairs: Vec<_> = truth
+            .iter()
+            .map(|&(x, y)| ((x, y), ((f64::from(x) * 1.02).round() as i32 + 3, y - 55)))
+            .collect();
+        let c = PointerCalibration::fit(&pairs, 6, (1366, 768), false, 1).expect("fits");
+        assert_eq!(c.y.offset, -55);
+        assert_eq!(c.y.scale, 10_000);
+        assert_eq!(c.x.scale, 10_200);
+        assert_eq!(c.markers, 6);
+        assert!(c.error_before >= 55 && c.error_after <= 1, "{c:?}");
+        assert_eq!(c.meant((493, 423)), (480, 478));
+        assert_eq!(c.reported((480, 478)), (493, 423));
+        assert!(c.corrects());
+
+        // One dot taken for another is left out.
+        let mut odd = pairs.clone();
+        odd[2].1 = (1300, 30);
+        let c2 = PointerCalibration::fit(&odd, 6, (1366, 768), false, 1).expect("fits");
+        assert_eq!((c2.y.offset, c2.markers), (-55, 5), "{c2:?}");
+
+        // Too few markers, or answers that don't fit, are refused.
+        assert!(PointerCalibration::fit(&pairs[..3], 6, (1366, 768), false, 1).is_err());
+        let wild: Vec<_> = truth.iter().map(|&(x, y)| ((x, y), (5, y * 3))).collect();
+        assert!(PointerCalibration::fit(&wild, 6, (1366, 768), false, 1).is_err());
+
+        // Settings keep it per model, for the size and grid it was measured with.
+        let s = ComputerSettings {
+            models: vec![
+                ComputerModelSettings {
+                    model: "strata/swift".into(),
+                    grid: false,
+                    calibration: Some(c.clone()),
+                },
+                ComputerModelSettings {
+                    model: "nonsense".into(),
+                    grid: true,
+                    calibration: None,
+                },
+                ComputerModelSettings {
+                    model: "lmstudio/x".into(),
+                    grid: false,
+                    calibration: None,
+                },
+            ],
+            ..ComputerSettings::default()
+        }
+        .normalized();
+        assert_eq!(s.models.len(), 1);
+        assert_eq!(
+            s.tuning("strata/swift", (1366, 768)).calibration,
+            Some(c.clone())
+        );
+        assert_eq!(s.tuning("strata/swift", (1280, 720)).calibration, None);
+        assert_eq!(
+            s.tuning("strata/other", (1366, 768)),
+            ComputerTuning::default()
+        );
+
+        // The frame applies it: the model's (493, 423) lands where it meant.
+        let plain = Frame::new(display(1366, 768));
+        let tuned =
+            Frame::new(display(1366, 768)).with_tuning(s.tuning("strata/swift", (1366, 768)));
+        assert_eq!(tuned.to_screen((493, 423)), plain.to_screen((480, 478)));
+        assert_eq!(tuned.to_model((480, 478)), Some((493, 423)));
+        assert_eq!(
+            tuned.region_on_screen([493, 423, 595, 525]),
+            plain.region_on_screen([480, 478, 580, 580])
+        );
     }
 
     #[test]

@@ -243,6 +243,20 @@ impl Desktop {
         }
     }
 
+    /// The control at a point: its name and kind ("Save", "button"), from UI Automation (at
+    /// most 1.5 s).
+    pub fn element_at(&self, x: i32, y: i32) -> Option<(String, String)> {
+        #[cfg(windows)]
+        {
+            win::element_at(x, y)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (x, y);
+            None
+        }
+    }
+
     /// Runs `f` on the input device, made on first use.
     #[cfg(windows)]
     fn with_input(
@@ -493,11 +507,32 @@ mod win {
 
     /// Asks UI Automation on its own thread (COM), giving up after [`UIA_TIMEOUT`].
     pub fn focused_field() -> Option<FieldInfo> {
+        on_uia_thread(read_focused)
+    }
+
+    /// The control at a point (name, localized kind).
+    pub fn element_at(x: i32, y: i32) -> Option<(String, String)> {
+        on_uia_thread(move || {
+            let uia = uiautomation::UIAutomation::new().ok()?;
+            let el = uia
+                .element_from_point(uiautomation::types::Point::new(x, y))
+                .ok()?;
+            Some((
+                el.get_name().unwrap_or_default(),
+                el.get_localized_control_type().unwrap_or_default(),
+            ))
+        })
+    }
+
+    /// Runs `f` on a new thread (UI Automation is COM), giving up after [`UIA_TIMEOUT`].
+    fn on_uia_thread<T: Send + 'static>(
+        f: impl FnOnce() -> Option<T> + Send + 'static,
+    ) -> Option<T> {
         let (tx, rx) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("oxide-uia".into())
             .spawn(move || {
-                let _ = tx.send(read_focused());
+                let _ = tx.send(f());
             });
         if spawned.is_err() {
             return None;
@@ -505,7 +540,7 @@ mod win {
         match rx.recv_timeout(UIA_TIMEOUT) {
             Ok(v) => v,
             Err(_) => {
-                tracing::warn!("UI Automation didn't say which control has focus in time");
+                tracing::warn!("UI Automation didn't answer in time");
                 None
             }
         }

@@ -85,6 +85,9 @@ impl ComputerControl for DesktopControl {
     fn focused_field(&self) -> Option<FieldInfo> {
         self.0.focused_field()
     }
+    fn element_at(&self, x: i32, y: i32) -> Option<(String, String)> {
+        self.0.element_at(x, y)
+    }
 }
 
 // ---- The bar, Oxide's window and the panic shortcut --------------------------------------------

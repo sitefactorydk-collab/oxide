@@ -150,6 +150,8 @@ export interface FakeSeed {
     browser: Partial<AppSettings["browser"]>;
     /** Changes to the Chrome settings (off by default). */
     chrome: Partial<AppSettings["chrome"]>;
+    /** Changes to the model settings. */
+    models: Partial<AppSettings["models"]>;
     /** Changes to the computer use settings (off by default). */
     computer: Partial<AppSettings["computer"]>;
     /** Changes to context management. */
@@ -182,6 +184,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         titleModel: null,
         thinkingBudget: 8000,
         images: [],
+        ...seed.settings?.models,
       },
       tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
       webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
@@ -229,6 +232,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         hideOxide: true,
         nativeAnthropic: true,
         alwaysAllowedApps: [],
+        models: [],
         ...seed.settings?.computer,
       },
       context: {
@@ -874,6 +878,39 @@ export const fakeCommands: typeof RealCommands = {
     const message = saveReply(r, "Partial", "stopped");
     setTimeout(() => emitStream(conversationId, { type: "done", message }), 0);
     return ok(true);
+  },
+  computerCalibrate: (model: string) => {
+    if (model.includes("qwen3-14b")) {
+      return Promise.resolve({
+        status: "error" as const,
+        error: {
+          kind: "invalid",
+          message: "The model found only 2 of 12 markers; at least 4 are needed.",
+        } as CommandError,
+      });
+    }
+    const calibration = {
+      x: { scale: 10000, offset: 2 },
+      y: { scale: 10000, offset: -55 },
+      markers: 12,
+      shown: 12,
+      errorBefore: 56,
+      errorAfter: 1,
+      width: 1366,
+      height: 768,
+      grid: false,
+      at: Date.now(),
+    };
+    const models = state.settings.computer.models.filter((m) => m.model !== model);
+    const old = state.settings.computer.models.find((m) => m.model === model);
+    state.settings = {
+      ...state.settings,
+      computer: {
+        ...state.settings.computer,
+        models: [...models, { model, grid: old?.grid ?? false, calibration }],
+      },
+    };
+    return ok(calibration);
   },
   listModels: () =>
     ok(

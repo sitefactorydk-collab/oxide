@@ -81,6 +81,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     hideOxide: true,
     nativeAnthropic: true,
     alwaysAllowedApps: [],
+    models: [],
   },
   context: {
     compaction: true,

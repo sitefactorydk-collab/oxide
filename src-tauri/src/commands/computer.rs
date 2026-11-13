@@ -57,6 +57,17 @@ pub async fn computer_activity(state: State<'_, AppState>) -> CmdResult<Vec<Comp
     Ok(state.computer_bar.activity())
 }
 
+/// Measures how a model points at things on screenshots and saves the correction (Settings
+/// → Computer use). Takes as long as two short replies of that model.
+#[tauri::command]
+#[specta::specta]
+pub async fn computer_calibrate(
+    state: State<'_, AppState>,
+    model: String,
+) -> CmdResult<oxide_core::PointerCalibration> {
+    Ok(state.chat.calibrate_pointer(&model).await?)
+}
+
 /// Stops every chat that controls the computer (the control bar's Stop); returns them.
 #[tauri::command]
 #[specta::specta]

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands, events, type ComputerActivity } from "@/bindings";
+import { settingsKeys } from "@/features/settings/queries";
 import { unwrap } from "@/lib/api";
 
 export const computerKeys = {
@@ -49,5 +50,14 @@ export function useStopComputer() {
   return useMutation({
     mutationFn: () => unwrap(commands.computerStopAll()),
     onSettled: () => qc.invalidateQueries({ queryKey: computerKeys.status }),
+  });
+}
+
+/** Measures how a model points (Settings → Computer use → Models); saves the correction. */
+export function useCalibrate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (model: string) => unwrap(commands.computerCalibrate(model)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.app }),
   });
 }

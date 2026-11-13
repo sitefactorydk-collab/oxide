@@ -3,6 +3,7 @@ import type { ComputerStatus } from "@/bindings";
 import { Toggle } from "@/features/models/ModelsSection";
 import { SmallButton } from "@/features/sandbox/SandboxSection";
 import { DEFAULT_SETTINGS, useSetComputerSettings, useSettings } from "@/features/settings/queries";
+import { ModelTuning } from "./ModelTuning";
 import { useComputerActivity, useComputerStatus, useStopComputer } from "./queries";
 
 /** Settings → Computer use: on or off, the screen models use, and the apps every chat may use. */
@@ -92,6 +93,7 @@ export function ComputerSection() {
           onChange={(nativeAnthropic) => set({ nativeAnthropic })}
         />
       </section>
+      <ModelTuning />
       <section aria-label="Apps" className="flex flex-col gap-3 border-t border-line pt-5">
         <h3 className="text-md font-semibold text-fg">Apps every chat may use</h3>
         <p className="text-sm text-fg-subtle">

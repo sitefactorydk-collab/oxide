@@ -186,6 +186,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             computer::computer_status,
             computer::computer_activity,
             computer::computer_stop_all,
+            computer::computer_calibrate,
             // System
             system::open_external,
             // Desktop integration

@@ -42,7 +42,8 @@ pub use chat::{
 pub use chrome::{ChromeSettings, ChromeStatus, PairedBrowser, PairingCode};
 pub use computer::{
     ComputerActivity, ComputerActivityState, ComputerApp, ComputerApproval, ComputerApprovalKind,
-    ComputerDisplay, ComputerSettings, ComputerStatus,
+    ComputerDisplay, ComputerModelSettings, ComputerSettings, ComputerStatus, ComputerTuning,
+    PointerCalibration,
 };
 pub use context::{
     Compaction, CompactionTrigger, ContextSettings, ContextUsage, ContextWindowOverride,

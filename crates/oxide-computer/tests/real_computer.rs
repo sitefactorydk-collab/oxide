@@ -49,4 +49,8 @@ fn screens_capture_pointer_and_apps() {
     assert!(front.pid > 0);
     assert!(front.exe.to_lowercase().ends_with(".exe"), "{}", front.exe);
     println!("focused control: {:?}", d.focused_field());
+    println!(
+        "control at the centre: {:?}",
+        d.element_at(target.0, target.1)
+    );
 }

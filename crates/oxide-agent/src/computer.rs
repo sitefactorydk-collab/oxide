@@ -20,6 +20,7 @@ use oxide_core::computer::{
 };
 use oxide_core::{ContentBlock, Role};
 use oxide_llm::ChatMessage;
+use serde_json::Value;
 
 /// Press, release or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +50,11 @@ pub trait ComputerControl: Send + Sync + 'static {
     fn foreground_app(&self) -> Option<AppIdentity>;
     /// The control that has keyboard focus.
     fn focused_field(&self) -> Option<FieldInfo>;
+    /// The control at a point: its name and kind ("oxide-test", "list item"), when the
+    /// system can say.
+    fn element_at(&self, _x: i32, _y: i32) -> Option<(String, String)> {
+        None
+    }
 }
 
 /// What the app does around computer use: the control bar, hiding Oxide's window, the panic
@@ -171,6 +177,17 @@ impl ComputerUse {
         self.control.displays()
     }
 
+    /// The screen a model uses, with its grid and pointer correction.
+    pub async fn frame_for(
+        &self,
+        settings: &ComputerSettings,
+        model_id: &str,
+    ) -> Result<Frame, String> {
+        let f = self.frame(settings).await?;
+        let tuning = settings.tuning(model_id, (f.width, f.height));
+        Ok(f.with_tuning(tuning))
+    }
+
     /// The screen a chat uses and the size of its screenshots.
     pub async fn frame(&self, settings: &ComputerSettings) -> Result<Frame, String> {
         let control = self.control.clone();
@@ -257,11 +274,24 @@ impl ComputerUse {
         allowed: &(dyn Fn(&ComputerApp) -> bool + Sync),
         once: Option<&ComputerApp>,
     ) -> Step {
+        self.act_as(cid, "", settings, action, allowed, once).await
+    }
+
+    /// [`Self::act`] for a model, with its grid and pointer correction.
+    pub async fn act_as(
+        &self,
+        cid: &str,
+        model_id: &str,
+        settings: &ComputerSettings,
+        action: &ComputerAction,
+        allowed: &(dyn Fn(&ComputerApp) -> bool + Sync),
+        once: Option<&ComputerApp>,
+    ) -> Step {
         let stop = self.stop_flag(cid);
         if stop.load(Ordering::SeqCst) {
             return Step::Done(ComputerResult::error(STOPPED));
         }
-        let frame = match self.frame(settings).await {
+        let frame = match self.frame_for(settings, model_id).await {
             Ok(f) => f,
             Err(e) => return Step::Done(ComputerResult::error(e)),
         };
@@ -277,14 +307,28 @@ impl ComputerUse {
             return Step::Done(self.screenshot(&frame, "Waited.").await);
         }
 
-        // Which app it reaches; the user decides about apps the chat hasn't used yet.
+        // Which app it reaches; the user decides about apps the chat hasn't used yet. For a
+        // click, also what it lands on, so the model can tell a miss.
         let mut target_app = None;
+        let mut clicked: Option<(String, String)> = None;
         if !action.only_looks() {
             let control = self.control.clone();
             let (frame2, action2) = (frame.clone(), action.clone());
-            let who = tokio::task::spawn_blocking(move || target(&*control, &frame2, &action2))
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()));
+            let who = tokio::task::spawn_blocking(move || {
+                let who = target(&*control, &frame2, &action2)?;
+                let on = click_point(&*control, &frame2, &action2)
+                    .and_then(|(x, y)| control.element_at(x, y));
+                Ok::<_, String>((who, on))
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            let who = match who {
+                Ok((who, on)) => {
+                    clicked = on;
+                    Ok(who)
+                }
+                Err(e) => Err(e),
+            };
             let who = match who {
                 Ok(w) => w,
                 Err(e) => return Step::Done(ComputerResult::error(e)),
@@ -344,9 +388,19 @@ impl ComputerUse {
                 if !self.sleep(cid, self.settle).await {
                     return Step::Done(ComputerResult::error(STOPPED));
                 }
-                let note = match &target_app {
-                    Some(app) => format!("Done ({}).", app.name),
-                    None => "Done.".to_owned(),
+                let note = match (&clicked, &target_app) {
+                    (Some((name, kind)), Some(app)) => {
+                        format!(
+                            "Done: clicked {} in {}.",
+                            element_label(name, kind),
+                            app.name
+                        )
+                    }
+                    (Some((name, kind)), None) => {
+                        format!("Done: clicked {}.", element_label(name, kind))
+                    }
+                    (None, Some(app)) => format!("Done ({}).", app.name),
+                    (None, None) => "Done.".to_owned(),
                 };
                 Step::Done(self.screenshot(&frame, &note).await)
             }
@@ -384,12 +438,15 @@ impl ComputerUse {
         let frame2 = frame.clone();
         let shot = tokio::task::spawn_blocking(move || {
             let img = control.capture(&frame2.display)?;
-            let img = image::imageops::resize(
+            let mut img = image::imageops::resize(
                 &img,
                 frame2.width,
                 frame2.height,
                 image::imageops::FilterType::Triangle,
             );
+            if frame2.tuning.grid {
+                draw_grid(&mut img);
+            }
             encode_jpeg(&img)
         })
         .await
@@ -464,6 +521,217 @@ impl ComputerUse {
 }
 
 const STOPPED: &str = "Stopped: the user stopped computer use.";
+
+/// Where a click lands on the screen (`None` for other actions).
+fn click_point(
+    control: &dyn ComputerControl,
+    frame: &Frame,
+    action: &ComputerAction,
+) -> Option<(i32, i32)> {
+    match action {
+        ComputerAction::Click { at: Some(p), .. } => frame.to_screen(*p).ok(),
+        ComputerAction::Click { at: None, .. } => control.cursor().ok(),
+        _ => None,
+    }
+}
+
+/// “oxide-test” (list item), or just the kind when it has no name.
+fn element_label(name: &str, kind: &str) -> String {
+    let name: String = name.trim().chars().take(60).collect();
+    let kind = kind.trim();
+    match (name.is_empty(), kind.is_empty()) {
+        (false, false) => format!("“{name}” ({kind})"),
+        (false, true) => format!("“{name}”"),
+        (true, false) => format!("a {kind} with no name"),
+        (true, true) => "something with no name".to_owned(),
+    }
+}
+
+// ---- The grid -----------------------------------------------------------------------------
+
+/// Grid spacing on screenshots (screenshot pixels).
+pub const GRID_STEP: u32 = 100;
+
+/// 3×5 digits, one row per byte (bit 2 = left).
+const DIGITS: [[u8; 5]; 10] = [
+    [7, 5, 5, 5, 7],
+    [2, 6, 2, 2, 7],
+    [7, 1, 7, 4, 7],
+    [7, 1, 7, 1, 7],
+    [5, 5, 7, 1, 1],
+    [7, 4, 7, 1, 7],
+    [7, 4, 7, 5, 7],
+    [7, 1, 1, 1, 1],
+    [7, 5, 7, 5, 7],
+    [7, 5, 7, 1, 7],
+];
+
+fn blend(img: &mut image::RgbaImage, x: u32, y: u32, c: [u8; 3], alpha: u16) {
+    if x >= img.width() || y >= img.height() {
+        return;
+    }
+    let p = img.get_pixel_mut(x, y);
+    for (v, c) in p.0.iter_mut().zip(c) {
+        *v = ((u16::from(*v) * (256 - alpha) + u16::from(c) * alpha) >> 8) as u8;
+    }
+}
+
+/// A number in 3×5 digits scaled ×2, on a white box, with its top-left at (x, y).
+fn draw_number(img: &mut image::RgbaImage, x: u32, y: u32, n: u32) {
+    let text = n.to_string();
+    let w = text.len() as u32 * 8 + 2;
+    for dy in 0..13 {
+        for dx in 0..w {
+            blend(img, x + dx, y + dy, [255, 255, 255], 220);
+        }
+    }
+    for (i, ch) in text.bytes().enumerate() {
+        let glyph = DIGITS[usize::from(ch - b'0')];
+        for (row, bits) in glyph.iter().enumerate() {
+            for col in 0..3u32 {
+                if bits & (4 >> col) != 0 {
+                    for (sx, sy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let px = x + 2 + i as u32 * 8 + col * 2 + sx;
+                        let py = y + 2 + row as u32 * 2 + sy;
+                        blend(img, px, py, [200, 0, 0], 256);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Faint red lines every [`GRID_STEP`] pixels, labelled with their coordinate along the top
+/// and left edges, so a model can read positions instead of estimating them.
+pub fn draw_grid(img: &mut image::RgbaImage) {
+    let (w, h) = img.dimensions();
+    for gx in (GRID_STEP..w).step_by(GRID_STEP as usize) {
+        for y in 0..h {
+            blend(img, gx, y, [230, 0, 0], 90);
+        }
+    }
+    for gy in (GRID_STEP..h).step_by(GRID_STEP as usize) {
+        for x in 0..w {
+            blend(img, x, gy, [230, 0, 0], 90);
+        }
+    }
+    for gx in (GRID_STEP..w).step_by(GRID_STEP as usize) {
+        draw_number(img, gx + 2, 2, gx);
+    }
+    for gy in (GRID_STEP..h).step_by(GRID_STEP as usize) {
+        draw_number(img, 2, gy + 2, gy);
+    }
+}
+
+// ---- Calibration -----------------------------------------------------------------------------
+
+/// The marker colours a calibration image uses, by the name models are asked for.
+pub const MARKERS: [(&str, [u8; 3]); 6] = [
+    ("red", [220, 30, 30]),
+    ("green", [20, 160, 50]),
+    ("blue", [30, 80, 220]),
+    ("orange", [245, 140, 0]),
+    ("purple", [140, 40, 180]),
+    ("black", [20, 20, 20]),
+];
+
+/// A calibration image the size of the model's screenshots: a plain desktop-like picture with
+/// six coloured dots. Returns the dots' centres, in [`MARKERS`] order. `round` moves the dots.
+pub fn calibration_image(
+    width: u32,
+    height: u32,
+    grid: bool,
+    round: u32,
+) -> (image::RgbaImage, Vec<(i32, i32)>) {
+    let mut img = image::RgbaImage::from_pixel(width, height, image::Rgba([236, 238, 242, 255]));
+    // A window and a taskbar, so it looks like a screen.
+    for y in (height * 12 / 100)..(height * 80 / 100) {
+        for x in (width * 15 / 100)..(width * 70 / 100) {
+            img.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+        }
+    }
+    for y in height.saturating_sub(40)..height {
+        for x in 0..width {
+            img.put_pixel(x, y, image::Rgba([215, 220, 228, 255]));
+        }
+    }
+    // Spread over a 3×2 layout, shifted each round; never under the taskbar.
+    let cells = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)];
+    let r = 12i32;
+    let mut centres = Vec::new();
+    for i in 0..cells.len() {
+        let (cx, cy) = cells[(i + round as usize * 3) % cells.len()];
+        // Somewhere in the middle half of its cell, different each round.
+        let jx = f64::from((round * 7 + i as u32 * 3) % 5) / 8.0;
+        let jy = f64::from((round * 5 + i as u32 * 2) % 5) / 8.0;
+        let fx = (f64::from(cx) + 0.25 + jx) / 3.0;
+        let fy = (f64::from(cy) + 0.25 + jy) / 2.0;
+        let x = (fx * f64::from(width)) as i32;
+        let y = (fy * f64::from(height.saturating_sub(60))) as i32 + 10;
+        let c = MARKERS[i].1;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy <= r * r {
+                    let (px, py) = (x + dx, y + dy);
+                    if px >= 0 && py >= 0 && (px as u32) < width && (py as u32) < height {
+                        img.put_pixel(px as u32, py as u32, image::Rgba([c[0], c[1], c[2], 255]));
+                    }
+                }
+            }
+        }
+        centres.push((x, y));
+    }
+    if grid {
+        draw_grid(&mut img);
+    }
+    (img, centres)
+}
+
+/// The prompt for a calibration image.
+pub fn calibration_prompt(width: u32, height: u32, grid: bool) -> String {
+    let names: Vec<&str> = MARKERS.iter().map(|m| m.0).collect();
+    format!(
+        "This test image is {width}×{height} pixels, the same size as your computer-use \
+         screenshots{grid}. It shows six round coloured dots: {}. For each dot, give the pixel \
+         coordinates of its centre exactly as you would to click it with the computer tool \
+         (x from the left edge, y from the top edge). Answer with JSON only, like \
+         {{\"red\": [x, y], \"green\": [x, y], ...}}.",
+        names.join(", "),
+        grid = if grid {
+            ", with the same grid (lines every 100 pixels, labelled)"
+        } else {
+            ""
+        },
+    )
+}
+
+/// The dots a model found, by name, from its answer (JSON somewhere in the text).
+pub fn parse_calibration_answer(text: &str) -> Vec<(String, (i32, i32))> {
+    let (Some(a), Some(b)) = (text.find('{'), text.rfind('}')) else {
+        return Vec::new();
+    };
+    if b <= a {
+        return Vec::new();
+    }
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text[a..=b]) else {
+        return Vec::new();
+    };
+    let num = |v: &Value| -> Option<i32> {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            .map(|f| f.round() as i32)
+    };
+    map.iter()
+        .filter_map(|(k, v)| {
+            let p = match v {
+                Value::Array(a) if a.len() == 2 => (num(&a[0])?, num(&a[1])?),
+                Value::Object(o) => (num(o.get("x")?)?, num(o.get("y")?)?),
+                _ => return None,
+            };
+            Some((k.trim().to_lowercase(), p))
+        })
+        .collect()
+}
 
 /// The text an action would type, for the safety checks.
 fn typed_text(action: &ComputerAction) -> Option<String> {
@@ -793,6 +1061,8 @@ pub mod testing {
         /// The app at every point and in front.
         pub app: Mutex<Option<AppIdentity>>,
         pub field: Mutex<Option<FieldInfo>>,
+        /// The control under every point (name, kind).
+        pub element: Mutex<Option<(String, String)>>,
         pub cursor: Mutex<(i32, i32)>,
         /// Each `text` call blocks this long (to test Stop).
         pub type_delay_ms: Mutex<u64>,
@@ -881,6 +1151,9 @@ pub mod testing {
         fn focused_field(&self) -> Option<FieldInfo> {
             lock(&self.field).clone()
         }
+        fn element_at(&self, _: i32, _: i32) -> Option<(String, String)> {
+            lock(&self.element).clone()
+        }
     }
 
     /// Records what the sink was told.
@@ -947,6 +1220,118 @@ mod tests {
         cu.end("c1").await;
         assert!(!cu.is_active("c1"));
         assert_eq!(lock(&sink.0).last().map(String::as_str), Some("ended c1"));
+    }
+
+    #[tokio::test]
+    async fn clicks_say_what_they_reached_and_models_get_their_grid_and_correction() {
+        use oxide_core::computer::{AxisFit, ComputerModelSettings, PointerCalibration};
+        let fake = Arc::new(FakeComputer::with_app("notepad.exe", "Notepad", 50));
+        *lock(&fake.element) = Some(("File name:".into(), "edit".into()));
+        let (cu, _) = cu(fake.clone());
+        let calibration = PointerCalibration {
+            x: AxisFit::EXACT,
+            y: AxisFit {
+                scale: 10_000,
+                offset: -55,
+            },
+            markers: 6,
+            shown: 6,
+            error_before: 55,
+            error_after: 1,
+            width: 1366,
+            height: 768,
+            grid: true,
+            at: 1,
+        };
+        let s = ComputerSettings {
+            models: vec![ComputerModelSettings {
+                model: "strata/swift".into(),
+                grid: true,
+                calibration: Some(calibration),
+            }],
+            ..ComputerSettings::default()
+        };
+        // The model aims 55 px too high: its (683, 329) means (683, 384).
+        let a = act_json(json!({"action": "left_click", "coordinate": [683, 329]}));
+        let Step::Done(r) = cu.act_as("c1", "strata/swift", &s, &a, &yes, None).await else {
+            panic!("needs no app")
+        };
+        assert_eq!(
+            r.text,
+            "Done: clicked “File name:” (edit) in Notepad. Screenshot (1366×768):"
+        );
+        assert_eq!(fake.log()[0], "move 1280,720");
+        // Its screenshots carry the grid: the line at x = 100 is red over the grey screen.
+        let img = image::load_from_memory(&r.image.expect("screenshot"))
+            .expect("jpeg")
+            .to_rgba8();
+        let line = img.get_pixel(100, 450);
+        let plain = img.get_pixel(150, 450);
+        assert!(
+            line[0] > line[1] + 20 && plain[0].abs_diff(plain[1]) < 10,
+            "{line:?} {plain:?}"
+        );
+        // The pointer is reported in the model's terms.
+        let pos = act_json(json!({"action": "cursor_position"}));
+        let Step::Done(r) = cu.act_as("c1", "strata/swift", &s, &pos, &yes, None).await else {
+            panic!("done")
+        };
+        assert!(r.text.contains("(683, 329)"), "{}", r.text);
+        // Another model: no grid, no correction, and the click names what it hit.
+        *lock(&fake.element) = Some((String::new(), "pane".into()));
+        let Step::Done(r) = cu
+            .act_as("c1", "anthropic/claude", &s, &a, &yes, None)
+            .await
+        else {
+            panic!("needs no app")
+        };
+        assert!(
+            r.text
+                .starts_with("Done: clicked a pane with no name in Notepad."),
+            "{}",
+            r.text
+        );
+        assert!(
+            fake.log().contains(&"move 1280,617".to_owned()),
+            "{:?}",
+            fake.log()
+        );
+        cu.end("c1").await;
+    }
+
+    #[test]
+    fn calibration_images_have_their_dots_where_they_say() {
+        for round in 0..2 {
+            let (img, centres) = calibration_image(1366, 768, round == 1, round);
+            assert_eq!(centres.len(), MARKERS.len());
+            for (i, &(x, y)) in centres.iter().enumerate() {
+                assert!(x > 20 && y > 20 && x < 1346 && y < 728, "{x},{y}");
+                let p = img.get_pixel(x as u32, y as u32);
+                let want = MARKERS[i].1;
+                assert!(
+                    (0..3).all(|c| p[c].abs_diff(want[c]) < 40),
+                    "dot {i} at {x},{y} is {p:?}"
+                );
+            }
+            // The dots are apart from each other.
+            for a in 0..centres.len() {
+                for b in a + 1..centres.len() {
+                    let d = f64::from(centres[a].0 - centres[b].0)
+                        .hypot(f64::from(centres[a].1 - centres[b].1));
+                    assert!(d > 80.0, "{centres:?}");
+                }
+            }
+        }
+        let mut found = parse_calibration_answer(
+            "Sure! ```json\n{\"Red\": [10, 20], \"green\": {\"x\": 30, \"y\": \"40\"}, \"blue\": [1]}\n```",
+        );
+        found.sort();
+        assert_eq!(
+            found,
+            vec![("green".to_owned(), (30, 40)), ("red".to_owned(), (10, 20))]
+        );
+        assert!(parse_calibration_answer("no idea").is_empty());
+        assert!(calibration_prompt(1366, 768, true).contains("grid"));
     }
 
     #[tokio::test]

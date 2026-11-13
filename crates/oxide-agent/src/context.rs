@@ -242,6 +242,8 @@ pub struct ComputerPrompt {
     pub hide_oxide: bool,
     /// The user's folders by name ("Documents" → its real path), so the model doesn't guess.
     pub folders: Vec<(String, String)>,
+    /// Screenshots carry a labelled grid.
+    pub grid: bool,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -474,7 +476,13 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              password managers or sign-in prompts: Oxide refuses those, so ask the user to do \
              that part. Don't buy, send, post, delete or sign up for anything unless the user \
              asked for exactly that. The user can stop you at any time with \
-             {PANIC_SHORTCUT_LABEL}.{folders}",
+             {PANIC_SHORTCUT_LABEL}.{grid}{folders}",
+            grid = if c.grid {
+                " Your screenshots have faint red grid lines every 100 pixels, labelled with \
+                 their x along the top and y along the left: read positions from them."
+            } else {
+                ""
+            },
             folders = if c.folders.is_empty() {
                 String::new()
             } else {
@@ -782,12 +790,14 @@ mod tests {
                 height: 768,
                 hide_oxide: true,
                 folders: vec![("Documents".into(), "C:\\Users\\info\\Documents".into())],
+                grid: true,
             }),
             ..Default::default()
         });
         assert!(p.contains("1366×768") && p.contains("Ctrl+Alt+Esc"), "{p}");
         assert!(p.contains("Documents = C:\\Users\\info\\Documents"), "{p}");
         assert!(p.contains("Win+R") && p.contains("web results"), "{p}");
+        assert!(p.contains("grid lines every 100 pixels"), "{p}");
         assert!(
             p.contains("Never type passwords") && p.contains("minimized"),
             "{p}"

@@ -98,6 +98,49 @@ describe("Settings → Computer use", () => {
   });
 });
 
+describe("Settings → Computer use → Models", () => {
+  it("calibrates a model, switches its grid and resets it, and shows failures", async () => {
+    renderApp("/settings/computer", {
+      backend: {
+        settings: {
+          ...ON.settings,
+          models: { images: [{ model: "lmstudio/qwen/qwen3-14b", images: true }] },
+        },
+      },
+    });
+    const models = await screen.findByRole("region", { name: "Models" });
+    const row = (await within(models).findByText("Claude Opus 5.5")).closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Calibrate" }));
+    expect(
+      await within(row).findByText(
+        "Points 55 px too far up, 2 px too far right: corrected (about 56 → 1 px off) · 12 of 12 dots found",
+      ),
+    ).toBeInTheDocument();
+    expect(fakeState().settings.computer.models).toEqual([
+      expect.objectContaining({ model: "anthropic/claude-opus-5-5", grid: false }),
+    ]);
+    expect(within(row).getByRole("button", { name: "Calibrate again" })).toBeInTheDocument();
+
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Grid on Claude Opus 5.5's screenshots" }),
+    );
+    await waitFor(() => expect(fakeState().settings.computer.models[0]?.grid).toBe(true));
+    expect(
+      within(row).getByText(/measured with the grid off: calibrate again/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Reset Claude Opus 5.5's calibration" }),
+    );
+    await waitFor(() => expect(fakeState().settings.computer.models[0]?.calibration).toBeNull());
+
+    // A model marked as seeing images is listed too; a failed calibration says why.
+    const qwen = within(models).getByText("qwen/qwen3-14b").closest("li") as HTMLElement;
+    fireEvent.click(within(qwen).getByRole("button", { name: "Calibrate" }));
+    expect(await within(qwen).findByRole("alert")).toHaveTextContent("found only 2 of 12 markers");
+  });
+});
+
 describe("Settings → Models: can a model see images", () => {
   it("marks a model as seeing images, and resets it", async () => {
     renderApp("/settings/models");

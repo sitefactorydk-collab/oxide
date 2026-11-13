@@ -1265,6 +1265,18 @@ async computerStopAll() : Promise<Result<string[], CommandError>> {
 }
 },
 /**
+ * Measures how a model points at things on screenshots and saves the correction (Settings
+ * → Computer use). Takes as long as two short replies of that model.
+ */
+async computerCalibrate(model: string) : Promise<Result<PointerCalibration, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_calibrate", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1755,6 +1767,18 @@ export type AttachmentSource =
  */
 { kind: "bytes"; name: string; data: string }
 /**
+ * One axis of a model's pointing: it reports `true × scale + offset` (screenshot pixels).
+ */
+export type AxisFit = { 
+/**
+ * Scale × 10,000 (10,000 = exact).
+ */
+scale: number; 
+/**
+ * Offset in screenshot pixels.
+ */
+offset: number }
+/**
  * The browser agent is being set up, or a chat's browser opened or closed
  * (`events.browserChanged`).
  */
@@ -2162,6 +2186,22 @@ id: string;
  */
 name: string; x: number; y: number; width: number; height: number; scaleFactor: number; primary: boolean }
 /**
+ * How one model sees the screen (Settings → Computer use → Models).
+ */
+export type ComputerModelSettings = { 
+/**
+ * `<providerId>/<model>`.
+ */
+model: string; 
+/**
+ * Draw a labelled grid on its screenshots.
+ */
+grid: boolean; 
+/**
+ * Where it points versus where it means to (measured by Calibrate).
+ */
+calibration: PointerCalibration | null }
+/**
  * Settings → Computer use. Off by default: while on, models in a chat may ask to control
  * the computer (each chat asks first, and each app it uses asks too).
  */
@@ -2182,7 +2222,11 @@ nativeAnthropic: boolean;
 /**
  * Apps every chat may use without asking.
  */
-alwaysAllowedApps: ComputerApp[] }
+alwaysAllowedApps: ComputerApp[]; 
+/**
+ * Per model: the grid on screenshots and the measured pointer calibration.
+ */
+models: ComputerModelSettings[] }
 /**
  * Settings → Computer use.
  */
@@ -3142,6 +3186,30 @@ export type PickKind =
  * Response of [`ping`]: proves the IPC round trip and the generated bindings work.
  */
 export type PingResponse = { message: string; appName: string; appVersion: string; coreVersion: string }
+/**
+ * A model's measured pointing, used to correct its coordinates.
+ */
+export type PointerCalibration = { x: AxisFit; y: AxisFit; 
+/**
+ * Markers found (of those shown).
+ */
+markers: number; shown: number; 
+/**
+ * Typical miss before correcting, and what's left after (screenshot pixels).
+ */
+errorBefore: number; errorAfter: number; 
+/**
+ * The screenshot size it was measured at.
+ */
+width: number; height: number; 
+/**
+ * Measured with the grid on.
+ */
+grid: boolean; 
+/**
+ * When (ms since the epoch).
+ */
+at: number }
 export type ProfileSettings = { 
 /**
  * What Oxide calls the user (greeting, avatar initials).

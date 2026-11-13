@@ -928,7 +928,7 @@ impl ChatService {
                 && chat_tools.allows_builtin(COMPUTER_SWITCH)
                 && let Some(cu) = self.tools.computer()
             {
-                match cu.frame(&settings.computer).await {
+                match cu.frame_for(&settings.computer, &conversation.model).await {
                     Ok(frame) => {
                         own.push(computer_tools::computer_entry(&frame));
                         if config.kind == ProviderKind::Anthropic
@@ -945,6 +945,7 @@ impl ChatService {
                             height: frame.height,
                             hide_oxide: settings.computer.hide_oxide,
                             folders: cu.folders(),
+                            grid: frame.tuning.grid,
                         });
                         computer_display = Some(frame.display.label());
                     }
@@ -2261,6 +2262,7 @@ impl ChatService {
         let computer_done = &computer_done;
         let computer_failed = &std::sync::atomic::AtomicBool::new(false);
         let computer_display = setup.computer_display.as_deref();
+        let model_id = setup.model_id.as_str();
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
@@ -2410,6 +2412,7 @@ impl ChatService {
                             settings,
                             grants,
                             computer_display,
+                            model_id,
                             &mut cancel,
                         )
                         .await;
@@ -2630,6 +2633,7 @@ impl ChatService {
         settings: &AppSettings,
         grants: &Mutex<HashSet<String>>,
         display: Option<&str>,
+        model_id: &str,
         cancel: &mut watch::Receiver<bool>,
     ) -> ToolOutput {
         let Some(cu) = self.tools.computer() else {
@@ -2642,7 +2646,14 @@ impl ChatService {
                     || lock(grants).contains(&format!("{COMPUTER_APP_GRANT}{}", app.id))
             };
             match cu
-                .act(cid, &settings.computer, action, &allowed, once.as_ref())
+                .act_as(
+                    cid,
+                    model_id,
+                    &settings.computer,
+                    action,
+                    &allowed,
+                    once.as_ref(),
+                )
                 .await
             {
                 crate::computer::Step::Done(r) => {
@@ -2951,6 +2962,100 @@ impl ChatService {
             tracing::info!(conversation = %cid, "memory: {added} new item(s)");
             self.sink.memory_changed(added);
         }
+    }
+
+    /// Measures how a model points at things on screenshots: shows it two test images the
+    /// size of its screenshots (with its grid, if on) and asks where six dots are. The fit is
+    /// saved in Settings → Computer use and corrects that model's clicks from then on.
+    pub async fn calibrate_pointer(
+        &self,
+        model_id: &str,
+    ) -> Result<oxide_core::PointerCalibration, AgentError> {
+        use crate::computer::{
+            MARKERS, calibration_image, calibration_prompt, encode_jpeg, parse_calibration_answer,
+        };
+        use base64::Engine as _;
+        let cu = self.tools.computer().ok_or_else(|| {
+            AgentError::Invalid("Computer use isn't available on this system.".into())
+        })?;
+        let (provider_id, model) =
+            split_model_id(model_id).ok_or_else(|| AgentError::Invalid("unknown model".into()))?;
+        let (config, provider) = self.registry.provider(provider_id).await?;
+        let caps = self
+            .registry
+            .find(model_id)
+            .await
+            .map(|m| m.capabilities)
+            .unwrap_or_default();
+        if !caps.images {
+            return Err(AgentError::Invalid(
+                "This model can't see images. If it can, mark it in Settings → Models.".into(),
+            ));
+        }
+        let settings = self.store.app_settings().await?;
+        let frame = cu
+            .frame(&settings.computer)
+            .await
+            .map_err(AgentError::Invalid)?;
+        let grid = settings
+            .computer
+            .models
+            .iter()
+            .any(|m| m.model == model_id && m.grid);
+        let (w, h) = (frame.width, frame.height);
+        let mut pairs = Vec::new();
+        let mut shown = 0u32;
+        for round in 0..2 {
+            let (img, centres) = calibration_image(w, h, grid, round);
+            let jpeg = encode_jpeg(&img).map_err(AgentError::Invalid)?;
+            let data = base64::engine::general_purpose::STANDARD.encode(jpeg);
+            let message = ChatMessage {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::Image {
+                        media_type: "image/jpeg".into(),
+                        source: oxide_core::message::MediaSource::Base64 { data },
+                    },
+                    ContentBlock::text(calibration_prompt(w, h, grid)),
+                ],
+            };
+            let mut request = ChatRequest::new(model, vec![message]);
+            request.max_tokens = Some(match config.kind {
+                ProviderKind::Anthropic => 1_024,
+                // Room for reasoning models' thinking.
+                _ => 4_096,
+            });
+            if (config.kind == ProviderKind::Anthropic
+                && caps.thinking == ThinkingStyle::Adaptive
+                && caps.thinking_off)
+                || caps.thinking == ThinkingStyle::Switch
+            {
+                request.thinking = Thinking::Off;
+            }
+            let answer = complete_text(provider.as_ref(), request).await?;
+            let found = parse_calibration_answer(&answer);
+            tracing::info!(model = %model_id, round, found = found.len(), "pointer calibration");
+            shown += MARKERS.len() as u32;
+            for (i, (name, _)) in MARKERS.iter().enumerate() {
+                if let Some((_, p)) = found.iter().find(|(n, _)| n == name) {
+                    pairs.push((centres[i], *p));
+                }
+            }
+        }
+        let calibration =
+            oxide_core::PointerCalibration::fit(&pairs, shown, (w, h), grid, now_ms())
+                .map_err(AgentError::Invalid)?;
+        let mut s = self.store.app_settings().await?;
+        match s.computer.models.iter_mut().find(|m| m.model == model_id) {
+            Some(m) => m.calibration = Some(calibration.clone()),
+            None => s.computer.models.push(oxide_core::ComputerModelSettings {
+                model: model_id.to_owned(),
+                grid,
+                calibration: Some(calibration.clone()),
+            }),
+        }
+        self.store.save_app_settings(s).await?;
+        Ok(calibration)
     }
 
     /// A short non-streaming job (titles, memory) on a small model: the configured one, or a
@@ -5299,6 +5404,83 @@ pub(crate) mod tests {
             bar,
             cu,
         )
+    }
+
+    #[tokio::test]
+    async fn calibrating_measures_how_a_model_points_and_saves_the_correction() {
+        use crate::computer::{MARKERS, calibration_image};
+        // The test screen's screenshots are 1366×768; this model answers 55 px too high
+        // and misplaces one dot on the second image.
+        let answer = |round: u32, wild: bool| {
+            let (_, centres) = calibration_image(1366, 768, false, round);
+            let mut obj = serde_json::Map::new();
+            for (i, (name, _)) in MARKERS.iter().enumerate() {
+                let (x, y) = centres[i];
+                let p = if wild && i == 3 {
+                    (1300, 20)
+                } else {
+                    (x + 2, y - 55)
+                };
+                obj.insert((*name).to_owned(), serde_json::json!([p.0, p.1]));
+            }
+            let answer = format!("Here you go: {}", Value::Object(obj));
+            turn(vec![text(&answer)], StopReason::EndTurn)
+        };
+        let (f, _screen, _bar, _cu) = fixture_computer(
+            vec![answer(0, false), answer(1, true)],
+            "anthropic/fake-model",
+        )
+        .await;
+        let c = f
+            .service
+            .calibrate_pointer("anthropic/fake-model")
+            .await
+            .expect("calibrates");
+        assert_eq!((c.x.offset, c.y.offset), (2, -55), "{c:?}");
+        assert_eq!((c.markers, c.shown), (11, 12));
+        assert!(c.error_before >= 55 && c.error_after <= 1, "{c:?}");
+        // The model saw an image and was asked for JSON.
+        let reqs = f.fake.requests();
+        assert_eq!(reqs.len(), 2);
+        assert!(
+            reqs[0].messages[0]
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Image { .. }))
+        );
+        let saved = f.store.app_settings().await.expect("settings");
+        assert_eq!(
+            saved
+                .computer
+                .tuning("anthropic/fake-model", (1366, 768))
+                .calibration,
+            Some(c)
+        );
+
+        // A model that can't find the dots gets a plain error, and nothing is saved.
+        let (f, _s, _b, _c) = fixture_computer(
+            vec![
+                turn(vec![text("I can't see any dots.")], StopReason::EndTurn),
+                turn(vec![text("Still none.")], StopReason::EndTurn),
+            ],
+            "anthropic/fake-model",
+        )
+        .await;
+        let e = f
+            .service
+            .calibrate_pointer("anthropic/fake-model")
+            .await
+            .expect_err("fails");
+        assert!(e.to_string().contains("found only 0 of 12"), "{e}");
+        assert!(
+            f.store
+                .app_settings()
+                .await
+                .expect("settings")
+                .computer
+                .models
+                .is_empty()
+        );
     }
 
     /// Waits for a waiting approval that matches.
