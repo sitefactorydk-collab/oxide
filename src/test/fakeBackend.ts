@@ -52,7 +52,12 @@ import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
 import { fakeSandboxCommands, resetFakeSandbox, setSandboxEmitter } from "./fakeSandbox";
-import { fakeScheduleCommands, resetFakeSchedule, setScheduleEmitter } from "./fakeSchedule";
+import {
+  fakeScheduleCommands,
+  forgetChatRuns,
+  resetFakeSchedule,
+  setScheduleEmitter,
+} from "./fakeSchedule";
 import {
   seedConversations,
   seedMessages,
@@ -804,6 +809,7 @@ export const fakeCommands: typeof RealCommands = {
     }
     state.conversations = state.conversations.filter((c) => c.id !== id);
     state.messages = state.messages.filter((m) => m.conversationId !== id);
+    forgetChatRuns(id);
     return ok(null);
   },
   listMessages: (conversationId) =>

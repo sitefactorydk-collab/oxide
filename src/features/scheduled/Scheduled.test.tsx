@@ -139,6 +139,33 @@ describe("Scheduled tasks", () => {
     await waitFor(() => expect(location.pathname).toBe("/scheduled/task1"));
   });
 
+  it("drops a run from the history when its chat is deleted", async () => {
+    renderApp("/scheduled");
+    await screen.findByText("No scheduled tasks yet");
+    act(() => {
+      seedTask(input());
+      fakeRun("task1", { status: "done", conversationId: "c1", output: "Sunny." });
+      fakeRun("task1", { status: "done", conversationId: "c2", output: "Rainy." });
+    });
+    fireEvent.click(await screen.findByRole("link", { name: /Morning brief/ }));
+    const runs = await screen.findByRole("list", { name: "Runs" });
+    expect(await within(runs).findByText("Sunny.")).toBeInTheDocument();
+    expect(within(runs).getByText("Rainy.")).toBeInTheDocument();
+
+    // Delete chat c1 from the sidebar's menu (keyboard: more reliable than pointers in jsdom).
+    const sidebar = screen.getByRole("complementary", { name: "Sidebar" });
+    const row = within(sidebar).getByRole("link", { name: "Tauri custom title bar on Windows" });
+    fireEvent.keyDown(
+      within(sidebar).getByRole("button", { name: /More options for Tauri custom title bar/ }),
+      { key: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() => expect(row).not.toBeInTheDocument());
+    await waitFor(() => expect(within(runs).queryByText("Sunny.")).not.toBeInTheDocument());
+    expect(within(runs).getByText("Rainy.")).toBeInTheDocument();
+    expect(fakeScheduleState().runs.map((r) => r.conversationId)).toEqual(["c2"]);
+  });
+
   it("pauses, resumes, edits and deletes a task", async () => {
     const { location } = renderApp("/scheduled");
     // The page (and its event listener) is ready before the task appears.

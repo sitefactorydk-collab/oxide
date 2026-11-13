@@ -191,14 +191,22 @@ impl Store {
     }
 
     /// Deletes a chat and (by cascade) its messages and their search index entries.
+    /// Deletes a chat with everything in it. A scheduled task's run that wrote the chat
+    /// leaves the task's history with it.
     pub async fn delete_conversation(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM task_runs WHERE conversation_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         let done = sqlx::query("DELETE FROM conversations WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         if done.rows_affected() == 0 {
             return Err(NOT_FOUND);
         }
+        tx.commit().await?;
         Ok(())
     }
 

@@ -36,7 +36,6 @@ const CHECK_EVERY: Duration = Duration::from_secs(15);
 
 const CLOSED_DURING_RUN: &str = "Oxide was closed while this run was going.";
 const STILL_RUNNING: &str = "The previous run was still going.";
-const CHAT_DELETED: &str = "The run's chat was deleted while it ran.";
 
 /// Hears about tasks and runs. The app crate forwards changes to the window and decides
 /// which runs deserve a notification.
@@ -559,18 +558,18 @@ impl Scheduler {
         message: Option<Message>,
         error: Option<String>,
     ) -> TaskRun {
-        let mut status = status;
-        let mut error = error;
         if let Some(cid) = &run.conversation_id {
             self.chat.clear_unattended(cid);
             lock(&self.active).remove(cid);
-            // The user deleted the chat while it ran (which stops the reply).
+            // The user deleted the chat while it ran (which stops the reply): the run left
+            // the history with it.
             if matches!(
-                self.store.get_conversation(cid).await,
+                self.store.get_task_run(&run.id).await,
                 Err(StoreError::NotFound { .. })
             ) {
-                status = RunStatus::Stopped;
-                error = Some(CHAT_DELETED.into());
+                tracing::info!(task = %task.id, "a scheduled run's chat was deleted while it ran");
+                self.changed(&task.id, None);
+                return run;
             }
         }
         run.status = status;
@@ -1034,7 +1033,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_runs_chat_stops_the_run_and_keeps_its_history() {
+    async fn deleting_a_runs_chat_stops_the_run_and_removes_it_from_the_history() {
         let f = fx(vec![write_call(), answer("never")]).await;
         let t = f.sched.create(daily("t")).await.expect("creates");
         let run = f.sched.run_now(&t.id).await.expect("starts");
@@ -1045,12 +1044,22 @@ mod tests {
         // What `delete_conversation` does.
         f.chat.forget(&cid);
         f.store.delete_conversation(&cid).await.expect("deletes");
-        ended(&f, 1).await;
-        let run = f.store.get_task_run(&run.id).await.expect("run stays");
-        assert_eq!(run.status, RunStatus::Stopped);
-        assert_eq!(run.error.as_deref(), Some(CHAT_DELETED));
-        assert_eq!(run.conversation_id, None);
-        assert!(!f.sched.is_run_chat(&cid));
+        // The run leaves the history with its chat, and the scheduler lets go of it.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while f.sched.is_run_chat(&cid) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the run ends");
+        assert!(matches!(
+            f.store.get_task_run(&run.id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+        assert!(f.store.task_runs(&t.id, 10).await.expect("runs").is_empty());
+        assert!(!f.chat.is_unattended(&cid));
+        // No "stopped" or "failed" notification for a run the user threw away.
+        assert_eq!(f.heard.statuses(), vec![RunStatus::WaitingApproval]);
     }
 
     #[tokio::test]

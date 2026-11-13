@@ -143,7 +143,12 @@ export function useDeleteConversation() {
     onError: (_e, _id, ctx) => {
       if (ctx?.previous) qc.setQueryData(chatKeys.list(), ctx.previous);
     },
-    onSuccess: (_r, id) => qc.removeQueries({ queryKey: chatKeys.messages(id) }),
+    onSuccess: async (_r, id) => {
+      qc.removeQueries({ queryKey: chatKeys.messages(id) });
+      // A scheduled run that wrote the chat leaves its task's history with it
+      // (`scheduleKeys.all`, not imported: the scheduled queries import this file).
+      await qc.invalidateQueries({ queryKey: ["scheduled"] });
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: [...chatKeys.all, "search"] }),
   });
 }

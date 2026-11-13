@@ -506,7 +506,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runs_keep_history_and_survive_their_chat() {
+    async fn runs_keep_history_and_go_with_their_chat() {
         let s = store().await;
         let t = s.create_task(&input("t"), None).await.expect("task");
         let (chat, _) = s
@@ -550,9 +550,23 @@ mod tests {
             Some(r.id.clone())
         );
 
+        // Deleting the run's chat takes the run out of the history; other runs stay.
+        let other = s
+            .add_task_run(&run(&t.id, RunStatus::Missed))
+            .await
+            .expect("adds");
         s.delete_conversation(&chat.id).await.expect("deletes chat");
-        let kept = s.get_task_run(&r.id).await.expect("run stays");
-        assert_eq!(kept.conversation_id, None);
+        assert!(matches!(
+            s.get_task_run(&r.id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+        assert!(s.get_task_run(&other.id).await.is_ok());
+        assert!(
+            s.task_run_for_chat(&chat.id)
+                .await
+                .expect("by chat")
+                .is_none()
+        );
 
         for _ in 0..5 {
             s.add_task_run(&run(&t.id, RunStatus::Missed))

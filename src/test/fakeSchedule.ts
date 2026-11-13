@@ -136,6 +136,11 @@ function addTask(input: TaskInput): ScheduledTask {
   return t;
 }
 
+/** A chat was deleted: the run that wrote it leaves the history (as in the store). */
+export function forgetChatRuns(conversationId: string): void {
+  sc.runs = sc.runs.filter((r) => r.conversationId !== conversationId);
+}
+
 /** A run of a task happened (or changed), as the scheduler would report it. */
 export function fakeRun(taskId: string, patch: Partial<TaskRun> = {}): TaskRun {
   seq += 1;
