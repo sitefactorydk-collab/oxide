@@ -27,6 +27,10 @@ PAGE_TEXT_JS = r"""
   for (const el of document.querySelectorAll("[" + ATTR + "]")) el.removeAttribute(ATTR);
 
   const visible = (el) => {
+    // `display: contents` has no box, so checkVisibility() calls it hidden even though its
+    // children show (Google wraps all its results in one). Let the children decide.
+    const cs = getComputedStyle(el);
+    if (cs.display === "contents") return cs.visibility !== "hidden";
     if (typeof el.checkVisibility === "function") {
       if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
     } else {

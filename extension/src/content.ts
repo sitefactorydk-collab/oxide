@@ -78,10 +78,13 @@
     const e = el as Element & {
       checkVisibility?: (o: { checkOpacity: boolean; checkVisibilityCSS: boolean }) => boolean;
     };
+    // `display: contents` has no box of its own, so checkVisibility() calls it hidden even
+    // though its children show (Google wraps all its results in one). Let the children decide.
+    const s = getComputedStyle(el);
+    if (s.display === "contents") return s.visibility !== "hidden";
     if (typeof e.checkVisibility === "function") {
       return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     }
-    const s = getComputedStyle(el);
     return s.display !== "none" && s.visibility !== "hidden";
   };
 
