@@ -7,8 +7,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 13** — Browser agent (Browser-Use): done (`1af53b2`, fix `86f147d`; all exit checks passed by hand on 2026-11-12). Follow-up (Google search instead of guessed addresses) committed as `09c1ca2` (2026-11-12 13:53, all checks and the real-browser test green; the hidden test browser's real Google search was refused with a robot check and reported plainly, as designed); then click fixes `23e3fd5` and Google's AI Overview + longer extension-folder retries `4412e21` (2026-11-12 15:16, all green)
 - **Phase 13b** — Context management & chat compaction: done (`d58672b`, fixes `fccd2c7`, `2c31e21`; exit checks passed by hand on 2026-11-12)
 - **Phase 14** — Chrome extension & WebSocket bridge: committed `176a672` (2026-11-12 22:10, every check green); the real-extension test passed on Windows in Edge 157 (22:22); all manual exit checks passed by hand (22:57). Follow-up `67b59b6`: no permission prompts once paired (checked by the user after reloading the extension); web-research testing fixes `aa5a4f2` (Google results readable) and `051884a` (task list closes at a reply's end), both checked by the user on 2026-11-13
-- **Phase 14c** — Models create and edit skills: written and checked on the agent side (2026-11-13); waiting for `scripts\win\phase14c.cmd` on Windows and the manual exit checks
-- **Next phase:** Phase 15 — Scheduled tasks (after Phase 14c's Windows run and exit checks)
+- **Phase 14c** — Models create and edit skills: done (`b9d8faf`, 2026-11-13 08:42, every check green on Windows; all exit checks passed by hand at 08:54)
+- **Next phase:** Phase 15 — Scheduled tasks
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -37,13 +37,13 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 14c — Models create and edit skills — 2026-11-13
-Status: written and checked on the agent side (Rust fmt, clippy `-D warnings` and every workspace test on Linux; tsc, eslint and prettier on the device VM). **Waiting for the Windows run:** double-click `scripts\win\phase14c.cmd` (regenerates the bindings, `check.ps1`, `vite build`, commits with `logs\commit-msg-phase14c.txt` only if all pass, then starts the app). Then the exit checks below by hand.
+Status: done. Committed `b9d8faf phase 14c: models create and edit skills` on the first run of `scripts\win\phase14c.cmd` (2026-11-13 08:42: bindings, fmt, prettier, clippy, cargo test, typecheck, lint, Vitest, vite build all green). All exit checks passed by hand on 2026-11-13 (08:54).
 
-Exit criteria (by hand, on Windows):
-- [ ] **Turn it into a skill.** In a chat with a tools model, do something small (e.g. “write a haiku about Copenhagen in November, then a one-line English gloss under it”), then “turn what we just did into a skill”. Expect an approval card **“Save a new skill <name>?”** with the whole SKILL.md open, any extra files, and only **Deny** / **Allow once** (no “Allow always”). Nothing is in the skills folder before you click. After **Allow once**: the line reads **Created skill <name>**, with **Open <name> in Settings → Skills** (opens that skill's editor); Settings → Skills lists it; “Used in this session” shows it under Skills.
-- [ ] **A new chat uses it.** New chat: “haiku about the harbour, please” → the model calls `load_skill` with the new skill and follows it.
-- [ ] **A later change edits the same skill.** “Change that skill: always add a title line” (in either chat) → a card **“Change the skill <name>?”** with a red/green diff of SKILL.md (and the whole new SKILL.md folded below); Allow once → **Updated skill <name>**; Settings → Skills still has one skill of that name, with the change.
-- [ ] Optional: “+” menu → **Save skills** off → the model no longer has `save_skill` in that chat. A skill added from a folder or zip shows “You added this skill from a folder…” on its change card.
+Exit criteria (by hand, on Windows; all checked by the user on 2026-11-13):
+- [x] **Turn it into a skill.** In a chat with a tools model, do something small (e.g. “write a haiku about Copenhagen in November, then a one-line English gloss under it”), then “turn what we just did into a skill”. Expect an approval card **“Save a new skill <name>?”** with the whole SKILL.md open, any extra files, and only **Deny** / **Allow once** (no “Allow always”). Nothing is in the skills folder before you click. After **Allow once**: the line reads **Created skill <name>**, with **Open <name> in Settings → Skills** (opens that skill's editor); Settings → Skills lists it; “Used in this session” shows it under Skills.
+- [x] **A new chat uses it.** New chat: “haiku about the harbour, please” → the model calls `load_skill` with the new skill and follows it.
+- [x] **A later change edits the same skill.** “Change that skill: always add a title line” (in either chat) → a card **“Change the skill <name>?”** with a red/green diff of SKILL.md (and the whole new SKILL.md folded below); Allow once → **Updated skill <name>**; Settings → Skills still has one skill of that name, with the change.
+- [x] Optional: “+” menu → **Save skills** off → the model no longer has `save_skill` in that chat. A skill added from a folder or zip shows “You added this skill from a folder…” on its change card.
 
 Done:
 - **`oxide-core`:** `SAVE_SKILL` (`save_skill`); `SkillSavePreview { name, folder, isNew, skillMd, diff, files: [SkillFileChange { path, bytes, isNew, content, diff }], notes }`; `ToolApprovalRequest.skill: Option<SkillSavePreview>`.
@@ -66,12 +66,11 @@ Deviations from PLAN.md (and why):
 Known issues / TODO carried forward:
 - A switched-off skill can be changed by `save_skill`, but `load_skill` can't read it first (the model passes the whole new text).
 - Scripts saved in a skill are reference only (Oxide doesn't run skill scripts; `load_skill` says so).
-- `src/bindings/index.ts` was edited by hand for the new types; `phase14c.ps1` regenerates it.
 
 Notes for Phase 15:
 - A scheduled run that tries `save_skill` always waits for approval (it never runs unattended).
 
-Verified (agent side): fmt ✅ clippy ✅ cargo tests ✅ (Linux: core 75, agent 151 + 2 ignored, all crates green) tsc ✅ eslint ✅ prettier ✅. Windows (`phase14c.cmd`: Vitest, vite build, src-tauri) and tauri dev: pending.
+Verified (agent side): fmt ✅ clippy ✅ cargo tests ✅ (Linux: core 75, agent 151 + 2 ignored, all crates green) tsc ✅ eslint ✅ prettier ✅. Windows: fmt ✅ clippy ✅ tests ✅ (cargo + Vitest) typecheck ✅ lint ✅ vite build ✅ (phase14c.cmd). tauri dev on Windows ✅ (manual exit checks by the user).
 
 ## Phase 14 follow-ups (web research testing) — 2026-11-13
 The user made a `web-research` skill in Oxide (Chrome, then Browser, then Web search; Google first, DuckDuckGo fallback; 2–3 sources for quick questions; open results by clicking their [n], never guessed addresses; Sources list; new tabs only, closed when done) and tested it with “whats the latest news about the Nvidia scandal?” on `swift-iq2_xs`. Fixes:
