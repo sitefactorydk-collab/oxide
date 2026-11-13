@@ -36,6 +36,9 @@ pub struct ToolApprovalRequest {
     /// For `save_skill`: what would be written (the card shows it; it never offers "Allow
     /// always").
     pub skill: Option<crate::SkillSavePreview>,
+    /// For computer use: the card that starts it in a chat, or one for an app.
+    #[serde(default)]
+    pub computer: Option<Box<crate::computer::ComputerApproval>>,
     pub requested_at: Timestamp,
 }
 
@@ -83,6 +86,9 @@ pub enum ToolUsageKind {
     /// The user's Chrome through Oxide's extension: a tab opened, read, clicked or typed in
     /// (the label is the URL or what was clicked or typed).
     Chrome,
+    /// Computer use: the screen seen, the mouse and keyboard used (the label is the action
+    /// or the app).
+    Computer,
 }
 
 /// One tool call, logged per chat.

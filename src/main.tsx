@@ -10,10 +10,24 @@ import { createRoot } from "react-dom/client";
 const root = document.getElementById("root");
 if (!root) throw new Error("#root element missing from index.html");
 
-/** `index.html?window=quick` is the quick entry window; anything else is the app. */
-const isQuickEntry = new URLSearchParams(window.location.search).get("window") === "quick";
+/**
+ * `index.html?window=quick` is the quick entry window, `?window=computer` computer use's
+ * control bar; anything else is the app.
+ */
+const windowKind = new URLSearchParams(window.location.search).get("window");
+const isQuickEntry = windowKind === "quick";
 
 async function start(el: HTMLElement) {
+  if (windowKind === "computer") {
+    const { ComputerBarRoot } = await import("@/features/computer/ComputerBar");
+    document.documentElement.dataset.window = "computer";
+    createRoot(el).render(
+      <StrictMode>
+        <ComputerBarRoot />
+      </StrictMode>,
+    );
+    return;
+  }
   if (isQuickEntry) {
     // Loaded on its own, so the small window doesn't parse the whole app.
     const { QuickEntryRoot } = await import("@/features/quick-entry/QuickEntryRoot");

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_agent::{
-    AttachmentStore, ChatService, EventSink, McpTools, ModelRegistry, Scheduler, SchedulerSink,
-    Skills, Tools,
+    AttachmentStore, ChatService, ComputerUse, EventSink, McpTools, ModelRegistry, Scheduler,
+    SchedulerSink, Skills, Tools,
 };
 use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
@@ -38,6 +38,10 @@ pub struct AppState {
     pub chrome: Bridge,
     /// Scheduled tasks: runs them in new chats while Oxide is open or in the tray.
     pub scheduler: Arc<Scheduler>,
+    /// Computer use (Windows only for now): `None` where it isn't supported.
+    pub computer: Option<ComputerUse>,
+    /// The control bar and Oxide's window around computer use.
+    pub computer_bar: Arc<crate::computer::TauriComputerSink>,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -90,8 +94,8 @@ pub struct McpParts {
 impl AppState {
     /// Opens the database in `data_dir` (creating it) and uses the OS keychain for secrets,
     /// with entries grouped under `service` (the app identifier). Reply events go to `sink`.
-    // One sink per subsystem (chat, Python, sandbox, browser, Chrome, scheduler) plus the MCP
-    // parts.
+    // One sink per subsystem (chat, Python, sandbox, browser, Chrome, scheduler, computer use)
+    // plus the MCP parts.
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         dirs: &AppDirs,
@@ -102,6 +106,7 @@ impl AppState {
         browser_sink: Arc<dyn BrowserSink>,
         chrome_sink: Arc<dyn BridgeSink>,
         schedule_sink: Arc<dyn SchedulerSink>,
+        computer_bar: Arc<crate::computer::TauriComputerSink>,
         mcp: impl FnOnce(&Arc<ModelRegistry>, &Arc<dyn SecretStore>) -> McpParts,
     ) -> anyhow::Result<Self> {
         let data_dir = dirs.data.as_path();
@@ -138,6 +143,7 @@ impl AppState {
         chrome.set_extension_dir(extension_dir());
         match store.app_settings().await {
             Ok(s) => {
+                computer_bar.set_display(s.computer.display.clone());
                 sandboxes.configure(&s.sandbox);
                 browser.configure(&s.browser);
                 chrome.configure(&s.chrome).await;
@@ -155,6 +161,19 @@ impl AppState {
         .with_sandboxes(sandboxes.clone())
         .with_browser(browser.clone())
         .with_chrome(chrome.clone());
+        // Computer use: the real screen, mouse and keyboard, where Oxide can control them.
+        let computer = oxide_computer::Desktop::supported().then(|| {
+            ComputerUse::new(
+                Arc::new(crate::computer::DesktopControl(
+                    oxide_computer::Desktop::new(),
+                )),
+                computer_bar.clone(),
+            )
+        });
+        let tools = match &computer {
+            Some(c) => tools.with_computer(c.clone()),
+            None => tools,
+        };
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         let scheduler = Scheduler::new(
             store.clone(),
@@ -176,6 +195,8 @@ impl AppState {
             browser,
             chrome,
             scheduler,
+            computer,
+            computer_bar,
         })
     }
 }

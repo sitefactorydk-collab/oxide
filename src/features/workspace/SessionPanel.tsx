@@ -2,11 +2,10 @@ import {
   BookOpen,
   Box,
   Braces,
-  Compass,
-  PanelTop,
   CheckCircle2,
   Circle,
   CircleDot,
+  Compass,
   ExternalLink,
   FileText,
   Folder,
@@ -15,6 +14,8 @@ import {
   FolderSearch,
   Globe,
   Lightbulb,
+  MonitorSmartphone,
+  PanelTop,
   Plug,
   Shapes,
   ShieldCheck,
@@ -275,6 +276,7 @@ function UsageIcon({ kind }: { kind: UsageRow["kind"] }) {
     sandbox: Box,
     browser: Compass,
     chrome: PanelTop,
+    computer: MonitorSmartphone,
   };
   const Icon = icons[kind] ?? Plug;
   return <Icon aria-hidden className="size-4" />;

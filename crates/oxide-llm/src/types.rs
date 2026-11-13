@@ -80,6 +80,30 @@ pub struct ChatRequest {
     /// Let the provider clear old tool results itself (Anthropic context editing). Ignored
     /// by OpenAI-compatible servers.
     pub clear_tool_results: Option<ToolResultClearing>,
+    /// Anthropic's own computer tool, sent instead of the `computer` function tool (which the
+    /// caller leaves out of `tools`). Ignored by OpenAI-compatible servers.
+    pub computer: Option<ComputerTool>,
+}
+
+/// Which version of Anthropic's computer tool a model takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComputerFlavor {
+    /// `computer_toolset_20260801`: one member tool per action (`left_click`, …) carrying
+    /// `toolset_name: "computer"`; no beta header; screen size taken from the screenshots.
+    Toolset,
+    /// `computer_20251124` (beta `computer-use-2025-11-24`): one `computer` tool with an
+    /// `action`, plus zoom.
+    V20251124,
+    /// `computer_20250124` (beta `computer-use-2025-01-24`).
+    V20250124,
+}
+
+/// Anthropic's computer tool for one request: its version and the screenshots' size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComputerTool {
+    pub flavor: ComputerFlavor,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Server-side clearing of old tool results (Anthropic `clear_tool_uses_20250919`).
@@ -107,6 +131,7 @@ impl ChatRequest {
             images: true,
             native_pdfs: true,
             clear_tool_results: None,
+            computer: None,
         }
     }
 }

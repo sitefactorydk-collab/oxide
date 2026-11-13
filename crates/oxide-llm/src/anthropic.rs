@@ -1,10 +1,11 @@
 //! Anthropic Messages API: streaming over SSE, extended thinking, tool use, images, PDFs and
 //! prompt-cache breakpoints. Requests that hit 429/529 are retried with backoff.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use oxide_core::computer::{COMPUTER_ACTIONS, COMPUTER_TOOL};
 use oxide_core::{ContentBlock, ModelInfo, StopReason, Usage, model::model_id};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -15,7 +16,8 @@ use crate::media::{IMAGE_OMITTED, base64_of, is_text, pdf_as_text, text_of};
 use crate::sse::SseEvent;
 use crate::stream::{Decoder, Out, sse_stream};
 use crate::{
-    ChatEvent, ChatRequest, ChatStream, Endpoint, LlmError, ModelListing, Provider, Thinking,
+    ChatEvent, ChatRequest, ChatStream, ComputerFlavor, Endpoint, LlmError, ModelListing, Provider,
+    Thinking,
 };
 
 /// `anthropic-version` header value.
@@ -23,6 +25,9 @@ pub const ANTHROPIC_VERSION: &str = "2026-10-21";
 
 /// Beta header for context editing (server-side clearing of old tool results).
 pub const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
+/// Beta headers of the older computer tool versions (the toolset needs none).
+pub const COMPUTER_BETA_20251124: &str = "computer-use-2025-11-24";
+pub const COMPUTER_BETA_20250124: &str = "computer-use-2025-01-24";
 
 /// Output limit used when the request doesn't set one.
 pub const DEFAULT_MAX_TOKENS: u32 = 8_192;
@@ -108,8 +113,9 @@ impl AnthropicProvider {
         let mut req = with_auth(self.client.post(&url), Some(key))
             .header("accept", "text/event-stream")
             .json(&body);
-        if request.clear_tool_results.is_some() {
-            req = req.header("anthropic-beta", CONTEXT_MANAGEMENT_BETA);
+        let betas = beta_headers(&request);
+        if !betas.is_empty() {
+            req = req.header("anthropic-beta", betas.join(","));
         }
         let res = send_with_retry(req, &self.endpoint.base_url).await?;
         Ok(sse_stream(res, AnthropicDecoder::default()))
@@ -153,11 +159,81 @@ struct ModelEntry {
     capabilities: Option<Value>,
 }
 
+/// The `anthropic-beta` values a request needs.
+pub(crate) fn beta_headers(req: &ChatRequest) -> Vec<&'static str> {
+    let mut betas = Vec::new();
+    if req.clear_tool_results.is_some() {
+        betas.push(CONTEXT_MANAGEMENT_BETA);
+    }
+    match req.computer.map(|c| c.flavor) {
+        Some(ComputerFlavor::V20251124) => betas.push(COMPUTER_BETA_20251124),
+        Some(ComputerFlavor::V20250124) => betas.push(COMPUTER_BETA_20250124),
+        Some(ComputerFlavor::Toolset) | None => {}
+    }
+    betas
+}
+
+/// Anthropic's computer tool definition.
+fn computer_tool_json(c: &crate::ComputerTool) -> Value {
+    match c.flavor {
+        ComputerFlavor::Toolset => json!({ "type": "computer_toolset_20260801" }),
+        ComputerFlavor::V20251124 => json!({
+            "type": "computer_20251124",
+            "name": COMPUTER_TOOL,
+            "display_width_px": c.width,
+            "display_height_px": c.height,
+            "enable_zoom": true,
+        }),
+        ComputerFlavor::V20250124 => json!({
+            "type": "computer_20250124",
+            "name": COMPUTER_TOOL,
+            "display_width_px": c.width,
+            "display_height_px": c.height,
+        }),
+    }
+}
+
+/// A `computer` call's action, when it names one of the toolset's members.
+fn toolset_member(input_json: &str) -> Option<(String, Value)> {
+    let mut input: Value = serde_json::from_str(input_json).ok()?;
+    let action = input.get("action")?.as_str()?.to_owned();
+    if !COMPUTER_ACTIONS.contains(&action.as_str()) {
+        return None;
+    }
+    input.as_object_mut()?.remove("action");
+    Some((action, input))
+}
+
+/// The ids of `computer` calls that go to the API as toolset members.
+fn toolset_ids(req: &ChatRequest) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if req.computer.map(|c| c.flavor) != Some(ComputerFlavor::Toolset) {
+        return ids;
+    }
+    for m in &req.messages {
+        for b in &m.content {
+            if let ContentBlock::ToolUse {
+                id,
+                name,
+                input_json,
+                ..
+            } = b
+                && name == COMPUTER_TOOL
+                && toolset_member(input_json).is_some()
+            {
+                ids.insert(id.clone());
+            }
+        }
+    }
+    ids
+}
+
 /// Builds the Messages API request body.
 pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
+    let toolset = toolset_ids(req);
     let mut messages: Vec<Value> = Vec::new();
     for m in &req.messages {
-        let blocks = convert_blocks(&m.content, req).await?;
+        let blocks = convert_blocks(&m.content, req, &toolset).await?;
         if !blocks.is_empty() {
             messages.push(json!({ "role": m.role.as_str(), "content": blocks }));
         }
@@ -197,10 +273,12 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
     if !system.is_empty() {
         body.insert("system".into(), json!(system));
     }
-    if !req.tools.is_empty() || !req.server_tools.is_empty() {
+    if !req.tools.is_empty() || !req.server_tools.is_empty() || req.computer.is_some() {
         let mut tools: Vec<Value> = req
             .tools
             .iter()
+            // Anthropic's own computer tool replaces the function tool of that name.
+            .filter(|t| req.computer.is_none() || t.name != COMPUTER_TOOL)
             .map(|t| {
                 json!({
                     "name": t.name,
@@ -208,6 +286,7 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
                     "input_schema": t.input_schema,
                 })
             })
+            .chain(req.computer.as_ref().map(computer_tool_json))
             .chain(req.server_tools.iter().cloned())
             .collect();
         if req.cache
@@ -288,6 +367,7 @@ fn add_message_breakpoints(messages: &mut [Value]) {
 async fn convert_blocks(
     content: &[ContentBlock],
     req: &ChatRequest,
+    toolset: &HashSet<String>,
 ) -> Result<Vec<Value>, LlmError> {
     let mut out = Vec::new();
     for block in content {
@@ -347,6 +427,19 @@ async fn convert_blocks(
                 input_json,
                 ..
             } => {
+                // A computer call goes back as the toolset member it came as.
+                if toolset.contains(id)
+                    && let Some((member, input)) = toolset_member(input_json)
+                {
+                    out.push(json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": member,
+                        "toolset_name": COMPUTER_TOOL,
+                        "input": input,
+                    }));
+                    continue;
+                }
                 let input: Value = serde_json::from_str(input_json).unwrap_or_else(|_| json!({}));
                 out.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
             }
@@ -373,13 +466,17 @@ async fn convert_blocks(
                 content,
                 is_error,
             } => {
-                let inner = Box::pin(convert_blocks(content, req)).await?;
-                out.push(json!({
+                let inner = Box::pin(convert_blocks(content, req, toolset)).await?;
+                let mut result = json!({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
                     "content": inner,
                     "is_error": is_error,
-                }));
+                });
+                if toolset.contains(tool_use_id) {
+                    result["toolset_name"] = json!(COMPUTER_TOOL);
+                }
+                out.push(result);
             }
             ContentBlock::ArtifactRef { title, version, .. } => out.push(json!({
                 "type": "text",
@@ -423,6 +520,9 @@ fn usage_of(v: &Value) -> Usage {
 pub(crate) struct AnthropicDecoder {
     /// Content block index → tool call id.
     tools: HashMap<u64, String>,
+    /// Content block index → (computer toolset member, its input so far). Their input is
+    /// sent whole at the block's end, with the member as `action`.
+    members: HashMap<u64, (String, String)>,
     usage: Usage,
     stop: Option<StopReason>,
     finished: bool,
@@ -461,7 +561,21 @@ impl Decoder for AnthropicDecoder {
                         let id = block["id"].as_str().unwrap_or_default().to_owned();
                         let name = block["name"].as_str().unwrap_or_default().to_owned();
                         self.tools.insert(index, id.clone());
-                        out.push_back(Ok(ChatEvent::ToolUseStart { id, name }));
+                        // A computer toolset member: one `computer` call with an action.
+                        if block["toolset_name"].as_str() == Some(COMPUTER_TOOL) {
+                            let start = block
+                                .get("input")
+                                .filter(|i| i.as_object().is_some_and(|o| !o.is_empty()))
+                                .map(Value::to_string)
+                                .unwrap_or_default();
+                            self.members.insert(index, (name, start));
+                            out.push_back(Ok(ChatEvent::ToolUseStart {
+                                id,
+                                name: COMPUTER_TOOL.to_owned(),
+                            }));
+                        } else {
+                            out.push_back(Ok(ChatEvent::ToolUseStart { id, name }));
+                        }
                     }
                     "text" => {
                         if let Some(t) = block["text"].as_str().filter(|t| !t.is_empty()) {
@@ -520,7 +634,11 @@ impl Decoder for AnthropicDecoder {
                         }
                     }
                     "input_json_delta" => {
-                        if let (Some(id), Some(p)) =
+                        if let Some((_, buf)) = self.members.get_mut(&index) {
+                            if let Some(p) = delta["partial_json"].as_str() {
+                                buf.push_str(p);
+                            }
+                        } else if let (Some(id), Some(p)) =
                             (self.tools.get(&index), delta["partial_json"].as_str())
                         {
                             out.push_back(Ok(ChatEvent::ToolUseDelta {
@@ -533,6 +651,23 @@ impl Decoder for AnthropicDecoder {
                 }
             }
             "content_block_stop" => {
+                if let Some((member, buf)) = self.members.remove(&index)
+                    && let Some(id) = self.tools.get(&index)
+                {
+                    let mut input: Value = if buf.trim().is_empty() {
+                        json!({})
+                    } else {
+                        serde_json::from_str(&buf).unwrap_or_else(|_| json!({}))
+                    };
+                    if !input.is_object() {
+                        input = json!({});
+                    }
+                    input["action"] = json!(member);
+                    out.push_back(Ok(ChatEvent::ToolUseDelta {
+                        id: id.clone(),
+                        partial_json: input.to_string(),
+                    }));
+                }
                 if let Some(id) = self.tools.remove(&index) {
                     out.push_back(Ok(ChatEvent::ToolUseEnd { id }));
                 }
@@ -791,6 +926,179 @@ mod tests {
         assert_eq!(blocks[0]["input"]["query"], "oxide");
         assert_eq!(blocks[1]["type"], "web_search_tool_result");
         assert_eq!(blocks[1]["content"][0]["encrypted_content"], "abc");
+    }
+
+    #[tokio::test]
+    async fn computer_toolset_calls_become_computer_actions_and_go_back_as_members() {
+        let stream = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_a\",\"name\":\"left_click\",\"toolset_name\":\"computer\",\"input\":{}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"coordinate\\\":\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"[512, 742]}\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_b\",\"name\":\"screenshot\",\"toolset_name\":\"computer\",\"input\":{}}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":9}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        let server = serve(vec![Reply::sse(stream)]).await;
+        let provider = connect(endpoint(&server.base)).expect("connects");
+        let mut req = ChatRequest::new("claude-opus-5-5", vec![ChatMessage::user("hi")]);
+        req.tools = vec![ToolSpec {
+            name: "computer".into(),
+            description: "function version".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        req.computer = Some(crate::ComputerTool {
+            flavor: ComputerFlavor::Toolset,
+            width: 1366,
+            height: 768,
+        });
+        let events: Vec<ChatEvent> = collect(provider.stream(req).await.expect("starts"))
+            .await
+            .into_iter()
+            .map(|e| e.expect("ok"))
+            .collect();
+        assert!(events.contains(&ChatEvent::ToolUseStart {
+            id: "toolu_a".into(),
+            name: "computer".into()
+        }));
+        let input_of = |id: &str| -> Value {
+            let json: String = events
+                .iter()
+                .filter_map(|e| match e {
+                    ChatEvent::ToolUseDelta {
+                        id: i,
+                        partial_json,
+                    } if i == id => Some(partial_json.clone()),
+                    _ => None,
+                })
+                .collect();
+            serde_json::from_str(&json).expect("one whole JSON object")
+        };
+        assert_eq!(
+            input_of("toolu_a"),
+            json!({"action": "left_click", "coordinate": [512, 742]})
+        );
+        assert_eq!(input_of("toolu_b"), json!({"action": "screenshot"}));
+        let sent = server.requests().await.remove(0);
+        assert!(
+            !sent.head.to_lowercase().contains("anthropic-beta"),
+            "no beta header"
+        );
+        let body: Value = serde_json::from_str(&sent.body).expect("json");
+        assert_eq!(
+            body["tools"],
+            json!([{"type": "computer_toolset_20260801"}])
+        );
+
+        // History: member calls with toolset_name, results with toolset_name.
+        let mut req = ChatRequest::new("claude-opus-5-5", vec![ChatMessage::user("hi")]);
+        req.computer = Some(crate::ComputerTool {
+            flavor: ComputerFlavor::Toolset,
+            width: 1366,
+            height: 768,
+        });
+        req.messages.push(ChatMessage {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "toolu_a".into(),
+                    name: "computer".into(),
+                    input_json: "{\"action\":\"left_click\",\"coordinate\":[512,742]}".into(),
+                    server: None,
+                    tool: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "toolu_c".into(),
+                    name: "search".into(),
+                    input_json: "{}".into(),
+                    server: None,
+                    tool: None,
+                },
+            ],
+        });
+        req.messages.push(ChatMessage {
+            role: Role::User,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_a".into(),
+                    content: vec![ContentBlock::text("OK")],
+                    is_error: false,
+                },
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_c".into(),
+                    content: vec![ContentBlock::text("found")],
+                    is_error: false,
+                },
+            ],
+        });
+        let body = request_body(&req).await.expect("body");
+        let call = &body["messages"][1]["content"][0];
+        assert_eq!(call["name"], "left_click");
+        assert_eq!(call["toolset_name"], "computer");
+        assert_eq!(call["input"], json!({"coordinate": [512, 742]}));
+        assert!(
+            body["messages"][1]["content"][1]
+                .get("toolset_name")
+                .is_none()
+        );
+        let results = &body["messages"][2]["content"];
+        assert_eq!(results[0]["toolset_name"], "computer");
+        assert!(results[1].get("toolset_name").is_none());
+    }
+
+    #[tokio::test]
+    async fn older_computer_tools_send_their_size_and_beta_header() {
+        let server = serve(vec![Reply::sse(STREAM)]).await;
+        let provider = connect(endpoint(&server.base)).expect("connects");
+        let mut req = ChatRequest::new("claude-opus-4-5", vec![ChatMessage::user("hi")]);
+        req.computer = Some(crate::ComputerTool {
+            flavor: ComputerFlavor::V20251124,
+            width: 1280,
+            height: 800,
+        });
+        req.clear_tool_results = Some(crate::ToolResultClearing {
+            trigger_tokens: 1000,
+            keep: 2,
+        });
+        let _ = collect(provider.stream(req.clone()).await.expect("starts")).await;
+        let sent = server.requests().await.remove(0);
+        assert!(sent.head.to_lowercase().contains(&format!(
+            "anthropic-beta: {CONTEXT_MANAGEMENT_BETA},{COMPUTER_BETA_20251124}"
+        )));
+        let body: Value = serde_json::from_str(&sent.body).expect("json");
+        assert_eq!(body["tools"][0]["type"], "computer_20251124");
+        assert_eq!(body["tools"][0]["name"], "computer");
+        assert_eq!(body["tools"][0]["display_width_px"], 1280);
+        assert_eq!(body["tools"][0]["display_height_px"], 800);
+        // History stays a plain `computer` call with its action.
+        req.computer = Some(crate::ComputerTool {
+            flavor: ComputerFlavor::V20250124,
+            width: 1280,
+            height: 800,
+        });
+        req.messages.push(ChatMessage {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "toolu_a".into(),
+                name: "computer".into(),
+                input_json: "{\"action\":\"screenshot\"}".into(),
+                server: None,
+                tool: None,
+            }],
+        });
+        assert_eq!(
+            beta_headers(&req),
+            vec![CONTEXT_MANAGEMENT_BETA, COMPUTER_BETA_20250124]
+        );
+        let body = request_body(&req).await.expect("body");
+        assert_eq!(body["tools"][0]["type"], "computer_20250124");
+        assert_eq!(body["messages"][1]["content"][0]["name"], "computer");
+        assert_eq!(
+            body["messages"][1]["content"][0]["input"]["action"],
+            "screenshot"
+        );
     }
 
     #[tokio::test]

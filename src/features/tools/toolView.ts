@@ -395,6 +395,7 @@ export type ToolKind =
   | "sandbox"
   | "browser"
   | "chrome"
+  | "computer"
   | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
@@ -413,6 +414,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (isSandboxCall(call)) return "sandbox";
   if (isBrowserCall(call)) return "browser";
   if (isChromeCall(call)) return "chrome";
+  if (call.server === "computer" && call.tool === "computer") return "computer";
   return "connector";
 }
 
@@ -472,6 +474,10 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       const [doing, did] = CHROME_TOOL_VERBS[call.tool] ?? ["Using Chrome", "Used Chrome"];
       return { action: busy ? doing : did, detail };
     }
+    case "computer": {
+      const [doing, did] = computerVerbs(call.inputJson);
+      return { action: busy ? doing : did, detail: computerDetail(call.inputJson) };
+    }
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -528,7 +534,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                             ? "Browser"
                             : u.kind === "chrome"
                               ? "Chrome"
-                              : (u.server ?? "Connector");
+                              : u.kind === "computer"
+                                ? "Computer"
+                                : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,
@@ -550,4 +558,79 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
     rows.set(key, row);
   }
   return [...rows.values()];
+}
+
+// ---- Computer use ----------------------------------------------------------------------------
+
+const COMPUTER_VERBS: Record<string, [string, string]> = {
+  screenshot: ["Taking a screenshot", "Took a screenshot"],
+  zoom: ["Zooming in", "Zoomed in"],
+  left_click: ["Clicking", "Clicked"],
+  click: ["Clicking", "Clicked"],
+  right_click: ["Right-clicking", "Right-clicked"],
+  middle_click: ["Middle-clicking", "Middle-clicked"],
+  double_click: ["Double-clicking", "Double-clicked"],
+  triple_click: ["Triple-clicking", "Triple-clicked"],
+  left_click_drag: ["Dragging", "Dragged"],
+  drag: ["Dragging", "Dragged"],
+  mouse_move: ["Moving the mouse", "Moved the mouse"],
+  left_mouse_down: ["Pressing the mouse button", "Pressed the mouse button"],
+  left_mouse_up: ["Releasing the mouse button", "Released the mouse button"],
+  cursor_position: ["Finding the mouse pointer", "Found the mouse pointer"],
+  scroll: ["Scrolling", "Scrolled"],
+  type: ["Typing", "Typed"],
+  key: ["Pressing", "Pressed"],
+  hold_key: ["Holding", "Held"],
+  wait: ["Waiting", "Waited"],
+};
+
+/** The action a computer call asks for (`left_click`, `type`, …). */
+export function computerAction(json: string): string {
+  const a = parse(json).action;
+  return typeof a === "string" ? a.trim() : "";
+}
+
+/** "Clicking" / "Clicked" for a computer call. */
+export function computerVerbs(json: string): [string, string] {
+  return COMPUTER_VERBS[computerAction(json)] ?? ["Using the computer", "Used the computer"];
+}
+
+function pointOf(v: unknown): string {
+  if (Array.isArray(v) && v.length === 2) return `(${String(v[0])}, ${String(v[1])})`;
+  return "";
+}
+
+/** What a computer call acts on: where it clicks, what it types or presses. */
+export function computerDetail(json: string): string {
+  const input = parse(json);
+  const action = computerAction(json);
+  const text = typeof input.text === "string" ? input.text : "";
+  switch (action) {
+    case "type": {
+      const short = text.replace(/\n/g, " ");
+      return `“${short.length > 40 ? `${short.slice(0, 40)}…` : short}”`;
+    }
+    case "key":
+    case "hold_key":
+      return text;
+    case "scroll": {
+      const dir = typeof input.scroll_direction === "string" ? input.scroll_direction : "down";
+      const at = pointOf(input.coordinate);
+      return at ? `${dir} at ${at}` : dir;
+    }
+    case "left_click_drag":
+    case "drag": {
+      const from = pointOf(input.start_coordinate);
+      const to = pointOf(input.coordinate);
+      return from && to ? `${from} → ${to}` : to;
+    }
+    case "wait": {
+      const d = typeof input.duration === "number" ? input.duration : 1;
+      return `${d} s`;
+    }
+    default: {
+      const at = pointOf(input.coordinate);
+      return at ? `at ${at}` : "";
+    }
+  }
 }

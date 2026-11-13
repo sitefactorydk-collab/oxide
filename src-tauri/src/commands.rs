@@ -6,6 +6,7 @@ pub mod attachments;
 pub mod browser;
 pub mod chats;
 pub mod chrome;
+pub mod computer;
 pub mod desktop;
 pub mod extensions;
 pub mod mcp;

@@ -42,6 +42,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Markdown | `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` + Shiki for code (JavaScript regex engine, since the CSP blocks WASM; colours from a CSS-variables theme in `tokens.css`). Model output is pre-processed (`components/markdown/prepare.ts`) for LaTeX delimiters, prices vs `$math$`, and partial input while streaming |
 | Desktop integration | Official Tauri plugins: single-instance (registered first), deep-link (`oxide://`), global-shortcut, autostart (`--hidden` starts in the tray), notification, window-state. Tray via Tauri's `tray-icon` feature. Quick entry is a second, hidden-at-startup webview window (`index.html?window=quick`); screenshots via `xcap` in `oxide-computer` (Phase 9) |
 | Artifacts | Built-in `artifact` tool (create / update / rewrite). HTML and React run in an `<iframe>` sandboxed without `allow-same-origin`, loaded from Oxide's own `oxide-artifact` URI scheme with its own CSP (inline scripts yes, network requests no) — not `srcdoc`, which would inherit the app's CSP (Phase 8) |
+| Computer use | `oxide-computer`: xcap screens, enigo input, Win32 + UI Automation for the app under the pointer and the focused field. Claude gets Anthropic's own computer tool (version per model); other models one `computer` function with the same input. Each chat asks once, then per app; a top bar with Stop and Ctrl+Alt+Esc stop it. **Windows only for now** (Phase 16) |
 | Location | `C:\AI Apps\Oxide` |
 
 ### Repository layout (target)

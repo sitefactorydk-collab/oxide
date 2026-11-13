@@ -6,6 +6,7 @@
 
 mod artifact_frame;
 mod commands;
+mod computer;
 mod desktop;
 mod error;
 mod events;
@@ -30,8 +31,8 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, browser, chats, chrome, desktop, extensions, mcp, memory, models,
-        projects, providers, python, sandbox, schedule, settings, system, tools, workspace,
+        artifacts, attachments, browser, chats, chrome, computer, desktop, extensions, mcp, memory,
+        models, projects, providers, python, sandbox, schedule, settings, system, tools, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -46,6 +47,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::BrowserLive,
             events::ChromeChanged,
             events::ScheduleChanged,
+            events::ComputerChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -180,6 +182,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             schedule::scheduled_task_runs,
             schedule::preview_schedule,
             schedule::task_run_for_chat,
+            // Computer use
+            computer::computer_status,
+            computer::computer_activity,
+            computer::computer_stop_all,
             // System
             system::open_external,
             // Desktop integration
@@ -306,7 +312,7 @@ pub fn run() -> anyhow::Result<()> {
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(desktop::window_state_flags())
-                .with_denylist(&[desktop::quick::QUICK_LABEL])
+                .with_denylist(&[desktop::quick::QUICK_LABEL, computer::BAR_LABEL])
                 .build(),
         )
         .on_window_event(desktop::on_window_event)
@@ -344,6 +350,7 @@ pub fn run() -> anyhow::Result<()> {
             let service = app.config().identifier.clone();
             let sink = Arc::new(events::TauriSink::new(app.handle().clone()));
             let handle = app.handle().clone();
+            let computer_bar = Arc::new(computer::TauriComputerSink::new(app.handle().clone()));
             let state = tauri::async_runtime::block_on(state::AppState::open(
                 &dirs,
                 &service,
@@ -353,6 +360,7 @@ pub fn run() -> anyhow::Result<()> {
                 Arc::new(events::TauriBrowserSink::new(app.handle().clone())),
                 Arc::new(events::TauriChromeSink::new(app.handle().clone())),
                 Arc::new(events::TauriScheduleSink::new(app.handle().clone())),
+                computer_bar,
                 move |models, secrets| state::McpParts {
                     sink: Arc::new(mcp_bridge::TauriMcpSink::new(handle.clone())),
                     agent: Arc::new(mcp_bridge::AppAgent::new(handle.clone(), models.clone())),
@@ -388,8 +396,15 @@ pub fn run() -> anyhow::Result<()> {
 
             let handle = app.handle().clone();
             desktop::apply_settings(&handle, &settings.desktop);
+            desktop::apply_computer(
+                &handle,
+                settings.computer.enabled && oxide_computer::Desktop::supported(),
+            );
             desktop::tray::build(&handle)?;
             desktop::quick::create(&handle)?;
+            if oxide_computer::Desktop::supported() {
+                computer::create_bar(&handle)?;
+            }
             setup_deep_links(&handle);
             if !start_hidden {
                 desktop::show_main(&handle);

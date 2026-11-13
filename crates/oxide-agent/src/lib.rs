@@ -21,6 +21,7 @@ pub mod artifacts;
 pub mod attachments;
 mod chat;
 pub mod compaction;
+pub mod computer;
 mod context;
 pub mod demo;
 mod error;
@@ -37,6 +38,7 @@ pub mod tools;
 
 pub use attachments::{AttachmentError, AttachmentStore};
 pub use chat::{ChatService, EventSink, path_to};
+pub use computer::{ComputerControl, ComputerSink, ComputerUse, NoComputerSink, Press};
 pub use context::{
     PromptContext, build_messages, plan_request, reply_turns, request_messages, system_prompt,
 };

@@ -40,6 +40,8 @@ pub struct DesktopState {
     quick: quick::QuickState,
     /// The user has been told once that closing the window keeps Oxide in the tray.
     told_about_tray: AtomicBool,
+    /// Why the panic shortcut couldn't be registered.
+    panic_error: Mutex<Option<String>>,
 }
 
 /// Locks a mutex, recovering the data if a thread panicked while holding it (the data here
@@ -62,6 +64,10 @@ impl DesktopState {
 
     pub fn shortcut_status(&self) -> shortcut::ShortcutStatus {
         lock(&self.shortcut).clone()
+    }
+
+    pub fn panic_error(&self) -> Option<String> {
+        lock(&self.panic_error).clone()
     }
 
     pub fn autostart_error(&self) -> Option<String> {
@@ -104,6 +110,14 @@ fn sync_autostart(app: &AppHandle, state: &DesktopState, want: bool) {
             Some(format!("Oxide couldn't change this setting: {e}"))
         }
     };
+}
+
+/// Applies Settings → Computer use: the panic shortcut is registered while it's on.
+pub fn apply_computer(app: &AppHandle, on: bool) {
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    shortcut::apply_panic(app, &state, on);
 }
 
 /// Whether start at login is actually on, as the OS reports it.

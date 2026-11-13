@@ -1,11 +1,15 @@
 //! Computer use for Oxide: screen capture and mouse/keyboard input.
 //!
-//! Phase 9 uses screen capture for quick entry's screenshot attachment. Input and the rest
-//! of computer use arrive in Phase 16 (see PLAN.md).
+//! Phase 9 uses screen capture for quick entry's screenshot attachment; Phase 16 adds the
+//! rest of computer use in [`desktop`] (screens, mouse, keyboard, which app is where).
 //!
-//! Capturing is blocking work: call it from `spawn_blocking`.
+//! Capturing and input are blocking work: call them from `spawn_blocking`.
 
 use std::io::Cursor;
+
+pub mod desktop;
+
+pub use desktop::{Desktop, Press};
 
 use thiserror::Error;
 

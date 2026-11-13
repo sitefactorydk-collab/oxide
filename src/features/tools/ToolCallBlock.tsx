@@ -11,6 +11,7 @@ import {
   Globe,
   ListChecks,
   Loader2,
+  MonitorSmartphone,
   Plug,
   SquareTerminal,
   ShieldAlert,
@@ -22,6 +23,7 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import type { ApprovalDecision, ContentBlock, ToolApprovalRequest } from "@/bindings";
 import { ArtifactCard } from "@/features/artifacts/ArtifactCard";
+import { ComputerApprovalCard } from "@/features/computer/ComputerApprovalCard";
 import { SkillSaveDetails } from "@/features/extensions/SkillSavePreview";
 import { useSkillFocus } from "@/features/extensions/store";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
@@ -71,7 +73,9 @@ function KindIcon({ call }: { call: ToolCallView }) {
                           ? Compass
                           : kind === "chrome"
                             ? PanelTop
-                            : Plug;
+                            : kind === "computer"
+                              ? MonitorSmartphone
+                              : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -184,8 +188,17 @@ function ArtifactLink({ id, title, version }: { id: string; title: string; versi
   );
 }
 
-/** "Allow Oxide to use …?" with the arguments and three answers. */
+/** The approval card for a call: computer use has its own. */
 export function ApprovalCard({ request }: { request: ToolApprovalRequest }) {
+  return request.computer ? (
+    <ComputerApprovalCard request={request} computer={request.computer} />
+  ) : (
+    <ToolApprovalCard request={request} />
+  );
+}
+
+/** "Allow Oxide to use …?" with the arguments and three answers. */
+function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
   const answer = useAnswerApproval();
   const name = request.title ?? request.tool;
   const send = (decision: ApprovalDecision) => {
@@ -452,6 +465,7 @@ function ToolLine({ call }: { call: ToolCallView }) {
         <PythonOutputs content={call.result} />
       )}
       {!open && toolKind(call) === "browser" && <BrowserView call={call} />}
+      {!open && toolKind(call) === "computer" && <ComputerShot call={call} />}
       {call.server === null &&
         call.tool === "save_skill" &&
         call.status === "done" &&
@@ -493,6 +507,17 @@ function BrowserView({ call }: { call: ToolCallView }) {
         </figcaption>
       )}
     </figure>
+  );
+}
+
+/** The screenshot a computer action came back with, small, under its line. */
+function ComputerShot({ call }: { call: ToolCallView }) {
+  const shot = (call.result ?? []).filter((b) => b.type === "image").slice(-1);
+  if (shot.length === 0 || call.isError) return null;
+  return (
+    <div className="border-t border-line px-3 py-3 [&_img]:max-h-40">
+      <ToolResultView content={shot} isError={false} />
+    </div>
   );
 }
 

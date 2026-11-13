@@ -33,6 +33,7 @@ function request(messageId: string, toolUseId = "t1"): ToolApprovalRequest {
     readOnly: false,
     destructive: true,
     skill: null,
+    computer: null,
     requestedAt: Date.now(),
   };
 }

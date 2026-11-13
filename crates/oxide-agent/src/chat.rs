@@ -15,6 +15,10 @@ use futures_util::future::join_all;
 use oxide_core::RUN_PYTHON;
 use oxide_core::browser::{BROWSER_SWITCH, browser_tool_reads_only};
 use oxide_core::chrome::{CHROME_SWITCH, chrome_tool_reads_only};
+use oxide_core::computer::{
+    COMPUTER_APP_GRANT, COMPUTER_SESSION_GRANT, COMPUTER_SWITCH, COMPUTER_TOOL, ComputerAction,
+    ComputerApp, ComputerApproval, ComputerApprovalKind, HALT_TEXT, PANIC_SHORTCUT_LABEL,
+};
 use oxide_core::context::WindowSource;
 use oxide_core::conversation::title_from_text;
 use oxide_core::message::plain_text;
@@ -28,7 +32,7 @@ use oxide_core::{
     ModelInfo, ProviderKind, Role, StopReason, StreamEvent, TaskItem, TaskList, TaskStatus,
     ThinkingStyle, ToolApprovalRequest, ToolUsageKind, Usage,
 };
-use oxide_llm::capabilities::anthropic_curated;
+use oxide_llm::capabilities::{anthropic_computer_flavor, anthropic_curated};
 use oxide_llm::{
     ChatEvent, ChatMessage, ChatRequest, ContextNumbers, Provider, Thinking, ToolResultClearing,
     complete_text,
@@ -54,6 +58,7 @@ use crate::registry::ModelRegistry;
 use crate::title::{clean_title, pick_title_model, title_prompt};
 use crate::tools::browser as browser_tools;
 use crate::tools::chrome as chrome_tools;
+use crate::tools::computer as computer_tools;
 use crate::tools::files::{FileOp, Sandbox, file_entry, file_label};
 use crate::tools::python::{python_entry, run_python};
 use crate::tools::sandbox as sandbox_tools;
@@ -258,6 +263,10 @@ struct Setup {
     result_cap: usize,
     /// A scheduled task runs without asking (see [`ChatService::set_unattended`]).
     auto_approve: bool,
+    /// Anthropic's own computer tool replaces the `computer` function tool.
+    computer_native: Option<oxide_llm::ComputerTool>,
+    /// The screen computer use sees ("Dell U2720Q (2560×1440)"), when it's offered.
+    computer_display: Option<String>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -366,6 +375,13 @@ impl ChatService {
         {
             let id = conversation_id.to_owned();
             rt.spawn(async move { python.forget_chat(&id).await });
+        }
+        // Computer use ends.
+        if let Some(c) = self.tools.computer().cloned()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            let id = conversation_id.to_owned();
+            rt.spawn(async move { c.end(&id).await });
         }
         // Its tabs in Chrome (banners come down).
         if let Some(c) = self.tools.chrome().cloned()
@@ -625,6 +641,10 @@ impl ChatService {
         if let Some(c) = self.tools.chrome() {
             c.release(&cid).await;
         }
+        // And stops controlling the computer: held keys come up, the control bar goes.
+        if let Some(c) = self.tools.computer() {
+            c.end(&cid).await;
+        }
         // Calls that never ran get a result, so the reply stays a valid history.
         let note = if stop_reason == StopReason::Stopped {
             STOPPED_NOTE
@@ -810,6 +830,9 @@ impl ChatService {
         let mut browser_llm = None;
         let mut browser_on = false;
         let mut chrome_on = false;
+        let mut computer_native = None;
+        let mut computer_display = None;
+        let mut computer_prompt = None;
         if caps.tools {
             let at = tool_set
                 .entries
@@ -899,6 +922,34 @@ impl ChatService {
                 own.extend(chrome_tools::chrome_entries());
                 chrome_on = true;
             }
+            // The user's screen, mouse and keyboard: only for models that see images.
+            if settings.computer.enabled
+                && caps.images
+                && chat_tools.allows_builtin(COMPUTER_SWITCH)
+                && let Some(cu) = self.tools.computer()
+            {
+                match cu.frame(&settings.computer).await {
+                    Ok(frame) => {
+                        own.push(computer_tools::computer_entry(&frame));
+                        if config.kind == ProviderKind::Anthropic
+                            && settings.computer.native_anthropic
+                        {
+                            computer_native = Some(oxide_llm::ComputerTool {
+                                flavor: anthropic_computer_flavor(model),
+                                width: frame.width,
+                                height: frame.height,
+                            });
+                        }
+                        computer_prompt = Some(crate::context::ComputerPrompt {
+                            width: frame.width,
+                            height: frame.height,
+                            hide_oxide: settings.computer.hide_oxide,
+                        });
+                        computer_display = Some(frame.display.label());
+                    }
+                    Err(e) => tracing::info!("computer use not offered: {e}"),
+                }
+            }
             tool_set.entries.splice(at..at, own);
         }
         let project = match &conversation.project_id {
@@ -974,6 +1025,7 @@ impl ChatService {
             sandbox: sandbox_prompt,
             browser: browser_on,
             chrome: chrome_on,
+            computer: computer_prompt,
             save_skill: tool_set
                 .entries
                 .iter()
@@ -1005,6 +1057,8 @@ impl ChatService {
             server_clearing,
             result_cap: crate::tools::MAX_RESULT_CHARS,
             auto_approve: unattended.as_ref().is_some_and(|u| u.auto_approve),
+            computer_native,
+            computer_display,
         })
     }
 
@@ -1106,6 +1160,10 @@ impl ChatService {
             );
             request.tools = setup.tool_set.specs();
             request.server_tools = setup.tool_set.server_tools.clone();
+            if let Some(c) = setup.computer_native {
+                request.tools.retain(|t| t.name != COMPUTER_TOOL);
+                request.computer = Some(c);
+            }
             if setup.server_clearing {
                 request.clear_tool_results = Some(ToolResultClearing {
                     trigger_tokens: ctx.budget.trigger,
@@ -1133,6 +1191,8 @@ impl ChatService {
                     _ => messages.push(ChatMessage::user(note)),
                 }
             }
+            // Only the newest screenshots stay: older ones show a screen that's gone.
+            crate::computer::trim_screenshots_default(&mut messages);
             ctx.last_raw = ctx.overhead.saturating_add(messages_tokens(&messages));
             request.messages = messages;
             self.remember_context(cid, &ctx, request.max_tokens);
@@ -1951,6 +2011,11 @@ impl ChatService {
         if entry.kind == ToolKind::Builtin(Builtin::SaveSkill) {
             return true;
         }
+        // Computer use starts with the user's yes for this chat, also in scheduled runs set to
+        // run without asking (each app it reaches asks too, when the action runs).
+        if entry.kind == ToolKind::Computer {
+            return !setup.grants.contains(COMPUTER_SESSION_GRANT);
+        }
         // A scheduled task the user set to run without asking.
         if setup.auto_approve {
             return false;
@@ -1988,6 +2053,7 @@ impl ChatService {
             // Acting in the user's own Chrome asks unless Settings → Chrome says not to (the
             // extension also asks per site). Looking never asks here.
             ToolKind::Chrome { tool } => !chrome_tool_reads_only(tool) && setup.settings.chrome.ask,
+            ToolKind::Computer => true,
             ToolKind::Builtin(_) => setup.settings.tools.ask_before_web,
             ToolKind::Mcp { .. } => !(entry.read_only && setup.settings.tools.auto_allow_read_only),
         }
@@ -2003,6 +2069,7 @@ impl ChatService {
         entry: &ToolEntry,
         input: &Value,
         skill: Option<&crate::skills::SavePlan>,
+        computer: Option<ComputerApproval>,
         cancelled: &mut watch::Receiver<bool>,
     ) -> Option<ApprovalDecision> {
         let request = ToolApprovalRequest {
@@ -2017,6 +2084,7 @@ impl ChatService {
             read_only: entry.read_only,
             destructive: entry.destructive,
             skill: skill.map(|p| p.preview.clone()),
+            computer: computer.map(Box::new),
             requested_at: now_ms(),
         };
         let (tx, rx) = oneshot::channel();
@@ -2058,6 +2126,8 @@ impl ChatService {
             ask: bool,
             /// `save_skill`: what it would write (shown on the card, written on Allow).
             skill: Option<crate::skills::SavePlan>,
+            /// `computer`: the action.
+            computer: Option<ComputerAction>,
         }
         let mut ready: Vec<Ready> = Vec::new();
         for call in calls {
@@ -2121,12 +2191,25 @@ impl ChatService {
                     }
                 }
             }
+            let mut computer = None;
+            if entry.kind == ToolKind::Computer {
+                match oxide_core::computer::parse_action(&input) {
+                    Ok(a) => computer = Some(a),
+                    Err(e) => {
+                        let out = ToolOutput::error(e);
+                        self.finish_call(cid, reply_id, &call, Some(&entry), &input, out, reply)
+                            .await;
+                        continue;
+                    }
+                }
+            }
             ready.push(Ready {
                 call,
                 entry,
                 input,
                 ask,
                 skill,
+                computer,
             });
         }
 
@@ -2162,11 +2245,28 @@ impl ChatService {
             .collect();
         let (chrome_done, chrome_turn) = watch::channel(0usize);
         let chrome_done = &chrome_done;
+        // Computer actions too, in the order the model gave them; after one fails, the rest
+        // of the turn's computer actions don't run.
+        let computer_order: Vec<Option<usize>> = ready
+            .iter()
+            .scan(0usize, |k, r| {
+                Some((r.entry.kind == ToolKind::Computer).then(|| {
+                    *k += 1;
+                    *k - 1
+                }))
+            })
+            .collect();
+        let (computer_done, computer_turn) = watch::channel(0usize);
+        let computer_done = &computer_done;
+        let computer_failed = &std::sync::atomic::AtomicBool::new(false);
+        let computer_display = setup.computer_display.as_deref();
         let work = join_all(ready.iter().enumerate().map(|(i, r)| {
             let mut cancel = cancelled.clone();
             let (grants, turns, done) = (&grants, &turns, &done);
             let mut chrome_turn = chrome_turn.clone();
             let order = chrome_order.get(i).copied().flatten();
+            let mut computer_turn = computer_turn.clone();
+            let computer_k = computer_order.get(i).copied().flatten();
             async move {
                 let _in_order = match order {
                     Some(k) => {
@@ -2175,9 +2275,36 @@ impl ChatService {
                     }
                     None => None,
                 };
+                let _computer_in_order = match computer_k {
+                    Some(k) => {
+                        let _ = computer_turn.wait_for(|n| *n >= k).await;
+                        Some(InOrder(computer_done))
+                    }
+                    None => None,
+                };
+                if r.computer.is_some() && computer_failed.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    let out = ToolOutput::error(HALT_TEXT);
+                    self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
+                        .await;
+                    lock(done).push((i, out));
+                    return;
+                }
                 let key = Self::grant_key(&r.entry, &r.input);
                 let granted = r.skill.is_none() && lock(grants).contains(&key);
                 if r.ask && !granted {
+                    let card = r.computer.as_ref().map(|a| {
+                        if let Some(c) = self.tools.computer() {
+                            c.waiting(cid);
+                        }
+                        ComputerApproval {
+                            kind: ComputerApprovalKind::Session,
+                            app: None,
+                            display: computer_display.map(str::to_owned),
+                            action: a.label(),
+                            panic_shortcut: PANIC_SHORTCUT_LABEL.into(),
+                        }
+                    });
                     match self
                         .ask(
                             cid,
@@ -2186,12 +2313,16 @@ impl ChatService {
                             &r.entry,
                             &r.input,
                             r.skill.as_ref(),
+                            card,
                             &mut cancel,
                         )
                         .await
                     {
                         None => return,
                         Some(ApprovalDecision::Deny) => {
+                            if r.computer.is_some() {
+                                computer_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
                             let out = ToolOutput::error(DENIED_NOTE);
                             self.report(cid, reply_id, &r.call, Some(&r.entry), &r.input, &out)
                                 .await;
@@ -2262,6 +2393,28 @@ impl ChatService {
                     let started = Instant::now();
                     let input = capped_input(&r.entry, &r.input, cap);
                     let mut out = self.run_chrome_tool(cid, tool, &input).await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let Some(action) = &r.computer {
+                    let started = Instant::now();
+                    let mut out = self
+                        .run_computer(
+                            cid,
+                            reply_id,
+                            &r.call,
+                            &r.entry,
+                            &r.input,
+                            action,
+                            settings,
+                            grants,
+                            computer_display,
+                            &mut cancel,
+                        )
+                        .await;
+                    if out.is_error {
+                        computer_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
@@ -2462,6 +2615,87 @@ impl ChatService {
         }
     }
 
+    /// Runs a computer action for a chat, asking about each app it reaches that the chat may
+    /// not use yet.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_computer(
+        &self,
+        cid: &str,
+        reply_id: &str,
+        call: &OpenCall,
+        entry: &ToolEntry,
+        input: &Value,
+        action: &ComputerAction,
+        settings: &AppSettings,
+        grants: &Mutex<HashSet<String>>,
+        display: Option<&str>,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> ToolOutput {
+        let Some(cu) = self.tools.computer() else {
+            return ToolOutput::error("Computer use isn't available in this build.");
+        };
+        let mut once: Option<ComputerApp> = None;
+        loop {
+            let allowed = |app: &ComputerApp| {
+                settings.computer.always_allows(app)
+                    || lock(grants).contains(&format!("{COMPUTER_APP_GRANT}{}", app.id))
+            };
+            match cu
+                .act(cid, &settings.computer, action, &allowed, once.as_ref())
+                .await
+            {
+                crate::computer::Step::Done(r) => {
+                    let mut content = vec![ContentBlock::text(r.text)];
+                    if let Some(jpeg) = r.image {
+                        use base64::Engine as _;
+                        let data = base64::engine::general_purpose::STANDARD.encode(jpeg);
+                        content.push(
+                            self.tools
+                                .image_block("image/jpeg", data, "screenshot")
+                                .await,
+                        );
+                    }
+                    return ToolOutput {
+                        content,
+                        is_error: r.is_error,
+                        duration_ms: 0,
+                    };
+                }
+                crate::computer::Step::NeedsApp(app) => {
+                    cu.waiting(cid);
+                    let card = ComputerApproval {
+                        kind: ComputerApprovalKind::App,
+                        app: Some(app.clone()),
+                        display: display.map(str::to_owned),
+                        action: action.label(),
+                        panic_shortcut: PANIC_SHORTCUT_LABEL.into(),
+                    };
+                    match self
+                        .ask(cid, reply_id, call, entry, input, None, Some(card), cancel)
+                        .await
+                    {
+                        None => return ToolOutput::error(STOPPED_NOTE),
+                        Some(ApprovalDecision::Deny) => {
+                            return ToolOutput::error(format!(
+                                "The user didn't allow Oxide to use {} in this chat. Don't use \
+                                 it unless they say so: ask them, or finish another way.",
+                                app.name
+                            ));
+                        }
+                        Some(ApprovalDecision::AllowChat) => {
+                            let key = format!("{COMPUTER_APP_GRANT}{}", app.id);
+                            if let Err(e) = self.store.grant_chat_tool(cid, &key).await {
+                                tracing::warn!("couldn't save the approval: {e}");
+                            }
+                            lock(grants).insert(key);
+                        }
+                        Some(ApprovalDecision::AllowOnce) => once = Some(app),
+                    }
+                }
+            }
+        }
+    }
+
     /// Calls one of the Chrome extension's tools in the chat's session.
     async fn run_chrome_tool(&self, cid: &str, tool: &str, input: &Value) -> ToolOutput {
         let Some(c) = self.tools.chrome() else {
@@ -2531,6 +2765,7 @@ impl ChatService {
                     ) => sandbox_tools::label(b, input),
                     ToolKind::Browser { ref tool } => browser_tools::browser_label(tool, input),
                     ToolKind::Chrome { ref tool } => chrome_tools::chrome_label(tool, input),
+                    ToolKind::Computer => computer_tools::computer_label(input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,
@@ -3254,6 +3489,8 @@ pub(crate) mod tests {
         probe_answer: bool,
         /// The model's context window in its listing.
         window: Option<u32>,
+        /// The model sees images.
+        vision: bool,
         pub requests: Mutex<Vec<ChatRequest>>,
         /// Summarizing requests (answered without a script).
         pub summaries: Mutex<Vec<ChatRequest>>,
@@ -3280,6 +3517,7 @@ pub(crate) mod tests {
                     unverified: false,
                     probe_answer: false,
                     window: None,
+                    vision: false,
                     requests: Mutex::new(Vec::new()),
                     summaries: Mutex::new(Vec::new()),
                     list_calls: AtomicUsize::new(0),
@@ -3298,6 +3536,10 @@ pub(crate) mod tests {
 
         pub fn window(self, tokens: u32) -> Self {
             self.rebuild(|i| i.window = Some(tokens))
+        }
+
+        pub fn vision(self) -> Self {
+            self.rebuild(|i| i.vision = true)
         }
 
         fn rebuild(self, f: impl FnOnce(&mut FakeInner)) -> Self {
@@ -3338,6 +3580,7 @@ pub(crate) mod tests {
                 label: "Fake".into(),
                 capabilities: ModelCapabilities {
                     tools: !self.fake.unverified,
+                    images: self.fake.vision,
                     ..ModelCapabilities::default()
                 },
                 context_window: self.fake.window,
@@ -4984,6 +5227,377 @@ pub(crate) mod tests {
         let reqs = f.fake.requests();
         let last = reqs.last().expect("a request");
         assert!(last.tools.iter().all(|t| !t.name.starts_with("browser__")));
+    }
+
+    // ---- Computer use (a stand-in screen) -------------------------------------------------
+
+    /// A chat on `model` with computer use available (Settings → Computer use on) on a fake
+    /// 2560×1440 screen where Notepad is everywhere.
+    async fn fixture_computer(
+        scripts: Vec<Vec<Step>>,
+        model: &str,
+    ) -> (
+        Fixture,
+        Arc<crate::computer::testing::FakeComputer>,
+        Arc<crate::computer::testing::SinkLog>,
+        crate::computer::ComputerUse,
+    ) {
+        use crate::computer::testing::{FakeComputer, SinkLog};
+        let fake = FakeProvider::new(scripts).vision();
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        store
+            .set_provider_key(
+                &secrets,
+                "anthropic",
+                oxide_store::Secret::new("sk-ant-test"),
+            )
+            .await
+            .expect("key");
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let screen = Arc::new(FakeComputer::with_app(
+            "C:\\Windows\\notepad.exe",
+            "Notepad",
+            4242,
+        ));
+        let bar = Arc::new(SinkLog::default());
+        let cu = crate::computer::ComputerUse::new(screen.clone(), bar.clone())
+            .with_own_pid(1)
+            .with_delays(Duration::from_millis(20), Duration::from_millis(20));
+        let tools = Tools::new(None, secrets, None).with_computer(cu.clone());
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Open Notepad and write hello".into(),
+                model: model.into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+                tools: None,
+            })
+            .await
+            .expect("chat");
+        let mut settings = store.app_settings().await.expect("settings");
+        settings.computer.enabled = true;
+        store.save_app_settings(settings).await.expect("saves");
+        (
+            Fixture {
+                store,
+                service,
+                fake,
+                sink,
+                chat,
+                first,
+            },
+            screen,
+            bar,
+            cu,
+        )
+    }
+
+    /// Waits for a waiting approval that matches.
+    async fn wait_pending(
+        f: &Fixture,
+        what: impl Fn(&ToolApprovalRequest) -> bool,
+    ) -> ToolApprovalRequest {
+        for _ in 0..500 {
+            if let Some(r) = f.service.pending_approvals().into_iter().find(|r| what(r)) {
+                return r;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no such approval: {:?}", f.service.pending_approvals());
+    }
+
+    fn is_card(kind: ComputerApprovalKind) -> impl Fn(&ToolApprovalRequest) -> bool {
+        move |r| r.computer.as_ref().is_some_and(|c| c.kind == kind)
+    }
+
+    #[tokio::test]
+    async fn computer_use_asks_for_the_chat_then_each_app_and_acts_in_order() {
+        let mut steps = call("c1", "computer", r#"{"action":"screenshot"}"#);
+        steps.extend(call(
+            "c2",
+            "computer",
+            r#"{"action":"left_click","coordinate":[683,384]}"#,
+        ));
+        steps.extend(call(
+            "c3",
+            "computer",
+            r#"{"action":"type","text":"hello"}"#,
+        ));
+        let (f, screen, bar, cu) = fixture_computer(
+            vec![
+                turn(steps, StopReason::ToolUse),
+                turn(vec![text("Notepad says hello.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            "lmstudio/fake-model",
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // First: may Oxide control the computer in this chat?
+        let card = wait_pending(&f, is_card(ComputerApprovalKind::Session)).await;
+        assert_eq!(card.tool_use_id, "c1");
+        let c = *card.computer.clone().expect("computer card");
+        assert_eq!(c.display.as_deref(), Some("Test screen (2560×1440)"));
+        assert_eq!(c.action, "Taking a screenshot");
+        assert_eq!(c.panic_shortcut, "Ctrl+Alt+Esc");
+        assert_eq!(
+            f.service.pending_approvals().len(),
+            1,
+            "one card, not three"
+        );
+        assert!(
+            screen.log().is_empty(),
+            "nothing seen before the user says yes"
+        );
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "c1", ApprovalDecision::AllowChat)
+        );
+        // Then: may it use Notepad?
+        let card = wait_pending(&f, is_card(ComputerApprovalKind::App)).await;
+        assert_eq!(card.tool_use_id, "c2");
+        let c = *card.computer.clone().expect("computer card");
+        assert_eq!(
+            c.app,
+            Some(ComputerApp {
+                id: "notepad.exe".into(),
+                name: "Notepad".into()
+            })
+        );
+        assert_eq!(c.action, "Clicking at (683, 384)");
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "c2", ApprovalDecision::AllowChat)
+        );
+        // Typing into Notepad doesn't ask again.
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        for id in ["c1", "c2", "c3"] {
+            let (r, bad) = result_of(&m, id);
+            assert!(!bad, "{id}: {r}");
+        }
+        let (r, _) = result_of(&m, "c2");
+        assert!(r.contains("Notepad"), "{r}");
+        assert!(m.content.iter().any(|b| matches!(b,
+            ContentBlock::ToolResult { tool_use_id, content, .. }
+                if tool_use_id == "c3"
+                    && content.iter().any(|c| matches!(c, ContentBlock::Image { .. })))));
+        assert_eq!(
+            screen.log(),
+            vec![
+                "capture",
+                "move 1280,720",
+                "button Left Click",
+                "capture",
+                "text hello",
+                "capture"
+            ]
+        );
+        // What the model got: the function tool and the paragraph.
+        let reqs = f.fake.requests();
+        let tool = reqs[0]
+            .tools
+            .iter()
+            .find(|t| t.name == "computer")
+            .expect("the computer tool");
+        assert!(
+            tool.description.contains("1366×768"),
+            "{}",
+            tool.description
+        );
+        assert_eq!(reqs[0].computer, None);
+        assert!(
+            reqs[0]
+                .system
+                .clone()
+                .unwrap_or_default()
+                .contains("computer tool")
+        );
+        // Both answers are kept for the chat.
+        let grants = f.store.chat_tool_grants(&f.chat.id).await.expect("grants");
+        assert!(
+            grants.contains(&"builtin/computer".to_owned()),
+            "{grants:?}"
+        );
+        assert!(
+            grants.contains(&"computer-app/notepad.exe".to_owned()),
+            "{grants:?}"
+        );
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(|u| u.kind == ToolUsageKind::Computer
+            && u.label.as_deref() == Some("Clicking at (683, 384)")));
+        // The reply is over: computer use ended; the bar was told.
+        assert!(cu.active().is_empty());
+        let told = lock(&bar.0).clone();
+        assert!(
+            told.iter().any(|t| t == &format!("waiting {}", f.chat.id)),
+            "{told:?}"
+        );
+        assert_eq!(told.last(), Some(&format!("ended {}", f.chat.id)));
+    }
+
+    #[tokio::test]
+    async fn a_denied_start_stops_the_rest_of_the_turns_computer_actions() {
+        let mut steps = call("c1", "computer", r#"{"action":"screenshot"}"#);
+        steps.extend(call("c2", "computer", r#"{"action":"key","text":"super"}"#));
+        steps.extend(call("c3", "computer", r#"{"action":"fly"}"#));
+        let (f, screen, _bar, _cu) = fixture_computer(
+            vec![
+                turn(steps, StopReason::ToolUse),
+                turn(vec![text("OK, I won't.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            "lmstudio/fake-model",
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_pending(&f, is_card(ComputerApprovalKind::Session)).await;
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "c1", ApprovalDecision::Deny)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        assert!(result_of(&m, "c1").1);
+        assert_eq!(result_of(&m, "c2"), (HALT_TEXT.to_owned(), true));
+        let (r, bad) = result_of(&m, "c3");
+        assert!(bad && r.contains("isn't an action"), "{r}");
+        assert!(screen.log().is_empty());
+        assert!(f.service.pending_approvals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn scheduled_runs_set_to_run_without_asking_still_ask_for_computer_use() {
+        let (f, screen, _bar, _cu) = fixture_computer(
+            vec![
+                turn(
+                    call("c1", "computer", r#"{"action":"screenshot"}"#),
+                    StopReason::ToolUse,
+                ),
+                turn(vec![text("Done.")], StopReason::EndTurn),
+                title_step(),
+            ],
+            "lmstudio/fake-model",
+        )
+        .await;
+        f.service.set_unattended(&f.chat.id, "Morning check", true);
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        wait_pending(&f, is_card(ComputerApprovalKind::Session)).await;
+        assert!(screen.log().is_empty());
+        f.service.stop(&f.chat.id);
+        f.sink.wait_finished().await;
+    }
+
+    #[tokio::test]
+    async fn claude_gets_its_own_computer_tool_instead_of_the_function() {
+        let (f, _screen, _bar, _cu) = fixture_computer(
+            vec![turn(vec![text("Hi.")], StopReason::EndTurn), title_step()],
+            "anthropic/claude-opus-5-5",
+        )
+        .await;
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        f.sink.wait_finished().await;
+        let reqs = f.fake.requests();
+        assert_eq!(
+            reqs[0].computer,
+            Some(oxide_llm::ComputerTool {
+                flavor: oxide_llm::ComputerFlavor::Toolset,
+                width: 1366,
+                height: 768
+            })
+        );
+        assert!(reqs[0].tools.iter().all(|t| t.name != "computer"));
+    }
+
+    #[tokio::test]
+    async fn computer_use_needs_the_setting_a_seeing_model_and_the_chat_switch() {
+        // (Settings on, model sees images, switched off in the chat) → offered?
+        for (enabled, vision, chat_off, offered) in [
+            (false, true, false, false),
+            (true, false, false, false),
+            (true, true, true, false),
+            (true, true, false, true),
+        ] {
+            let (f, _screen, _bar, _cu) = fixture_computer(
+                vec![turn(vec![text("Hi.")], StopReason::EndTurn), title_step()],
+                "lmstudio/fake-model",
+            )
+            .await;
+            let mut settings = f.store.app_settings().await.expect("settings");
+            settings.computer.enabled = enabled;
+            f.store.save_app_settings(settings).await.expect("saves");
+            if !vision {
+                // A model that can't see: the same chat on a fresh, blind fake.
+                let fake = FakeProvider::new(vec![
+                    turn(vec![text("Hi.")], StopReason::EndTurn),
+                    title_step(),
+                ]);
+                let registry = Arc::new(ModelRegistry::with_connector(
+                    f.store.clone(),
+                    Arc::new(MemorySecrets::default()),
+                    fake_connector(fake.clone()),
+                ));
+                let screen = Arc::new(crate::computer::testing::FakeComputer::default());
+                let cu = crate::computer::ComputerUse::new(
+                    screen,
+                    Arc::new(crate::computer::NoComputerSink),
+                );
+                let tools =
+                    Tools::new(None, Arc::new(MemorySecrets::default()), None).with_computer(cu);
+                let service = ChatService::new(f.store.clone(), registry, f.sink.clone(), tools);
+                service
+                    .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+                    .await
+                    .expect("starts");
+                f.sink.wait_finished().await;
+                let reqs = fake.requests();
+                assert!(reqs[0].tools.iter().all(|t| t.name != "computer"));
+                continue;
+            }
+            if chat_off {
+                f.store
+                    .set_chat_tools(
+                        &f.chat.id,
+                        &oxide_core::ChatTools {
+                            disabled_builtins: vec!["computer".into()],
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect("switch");
+            }
+            f.service
+                .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+                .await
+                .expect("starts");
+            f.sink.wait_finished().await;
+            let reqs = f.fake.requests();
+            let has = reqs[0].tools.iter().any(|t| t.name == "computer");
+            assert_eq!(
+                has, offered,
+                "enabled={enabled} vision={vision} chat_off={chat_off}"
+            );
+        }
     }
 
     // ---- Chrome (the extension, through the bridge) ----------------------------------------

@@ -63,6 +63,16 @@ pub struct ChromeChanged(pub oxide_core::ChromeStatus);
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct ScheduleChanged(pub oxide_core::ScheduleChange);
 
+/// What chats controlling the computer do now (`events.computerChanged`), for the control
+/// bar and the main window. `chats` is empty when none does.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputerChanged {
+    pub chats: Vec<oxide_core::computer::ComputerActivity>,
+    /// The chat that changed.
+    pub changed: oxide_core::computer::ComputerActivity,
+}
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]

@@ -87,6 +87,16 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "chrome"])],
     });
 
+  /** Computer use ("Use the computer" in the "+" menu, when it's on in Settings). */
+  const computerOn = !tools.disabledBuiltins.includes("computer");
+  const toggleComputer = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "computer")
+        : [...new Set([...tools.disabledBuiltins, "computer"])],
+    });
+
   /** `save_skill` ("Save skills" in the "+" menu): models may create and change skills. */
   const saveSkillsOn = !tools.disabledBuiltins.includes("save_skill");
   const toggleSaveSkills = (on: boolean) =>
@@ -103,6 +113,8 @@ export function useToolSwitches(conversationId: string | undefined) {
     toggleSaveSkills,
     chromeOn,
     toggleChrome,
+    computerOn,
+    toggleComputer,
     sandboxOn,
     toggleSandbox,
     browserOn,

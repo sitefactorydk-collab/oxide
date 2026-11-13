@@ -62,6 +62,7 @@ function request(
     readOnly: false,
     destructive: false,
     skill,
+    computer: null,
     requestedAt: Date.now(),
   };
 }

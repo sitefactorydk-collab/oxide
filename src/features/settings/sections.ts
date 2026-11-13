@@ -7,6 +7,7 @@ import {
   Globe,
   Info,
   KeyRound,
+  MonitorSmartphone,
   PanelTop,
   Palette,
   Plug,
@@ -111,6 +112,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: PanelTop,
     blurb:
       "Oxide's Chrome extension: pair your everyday Chrome so models can work in its tabs, with your sign-ins.",
+  },
+  {
+    id: "computer",
+    label: "Computer use",
+    icon: MonitorSmartphone,
+    blurb:
+      "Let models see your screen and use the mouse and keyboard, like a person at your computer. Each chat asks first, and so does each app it uses.",
   },
   {
     id: "memory",

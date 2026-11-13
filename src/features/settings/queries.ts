@@ -6,6 +6,7 @@ import {
   type BrowserSettings,
   type ChatFont,
   type ChromeSettings,
+  type ComputerSettings,
   type ContextSettings,
   type DesktopSettings,
   type MemorySettings,
@@ -68,6 +69,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     agentModel: null,
   },
   chrome: { enabled: false, port: 47820, ask: false },
+  computer: {
+    enabled: false,
+    display: null,
+    hideOxide: true,
+    nativeAnthropic: true,
+    alwaysAllowedApps: [],
+  },
   context: {
     compaction: true,
     threshold: 75,
@@ -211,6 +219,12 @@ export function useSetChromeSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<ChromeSettings>) =>
     update((s) => ({ ...s, chrome: { ...s.chrome, ...patch } }));
+}
+
+export function useSetComputerSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<ComputerSettings>) =>
+    update((s) => ({ ...s, computer: { ...s.computer, ...patch } }));
 }
 
 export function useSetToolSettings() {

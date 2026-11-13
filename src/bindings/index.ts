@@ -1231,6 +1231,40 @@ async taskRunForChat(conversationId: string) : Promise<Result<TaskRun | null, Co
 }
 },
 /**
+ * Whether this build can control the computer, its screens, the chats doing so now and the
+ * panic shortcut's state.
+ */
+async computerStatus() : Promise<Result<ComputerStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What chats controlling the computer are doing (the control bar asks when it opens).
+ */
+async computerActivity() : Promise<Result<ComputerActivity[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_activity") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stops every chat that controls the computer (the control bar's Stop); returns them.
+ */
+async computerStopAll() : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("computer_stop_all") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1454,7 +1488,7 @@ async getSettings() : Promise<Result<AppSettings, CommandError>> {
 },
 /**
  * Replaces the settings; returns them as stored (trimmed). Desktop settings (shortcut,
- * start at login) and the sandbox's take effect at once.
+ * start at login, the panic shortcut) and the sandbox's take effect at once.
  */
 async saveSettings(settings: AppSettings) : Promise<Result<AppSettings, CommandError>> {
     try {
@@ -1535,6 +1569,7 @@ browserChanged: BrowserChanged,
 browserLive: BrowserLive,
 chatStream: ChatStream,
 chromeChanged: ChromeChanged,
+computerChanged: ComputerChanged,
 conversationUpdated: ConversationUpdated,
 desktopRequest: DesktopRequest,
 mcpChanged: McpChanged,
@@ -1548,6 +1583,7 @@ browserChanged: "browser-changed",
 browserLive: "browser-live",
 chatStream: "chat-stream",
 chromeChanged: "chrome-changed",
+computerChanged: "computer-changed",
 conversationUpdated: "conversation-updated",
 desktopRequest: "desktop-request",
 mcpChanged: "mcp-changed",
@@ -1569,6 +1605,10 @@ export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSett
  * Settings → Chrome (the extension and its bridge).
  */
 chrome: ChromeSettings; 
+/**
+ * Settings → Computer use.
+ */
+computer: ComputerSettings; 
 /**
  * Context management (shown in Settings → Models).
  */
@@ -2034,6 +2074,135 @@ export type CompactionTrigger =
  * here on (`summary` lists them). Only shown in the transcript.
  */
 "cleared"
+export type ComputerActivity = { conversationId: string; state: ComputerActivityState; 
+/**
+ * The current action ("Typing “hello”").
+ */
+action: string | null }
+/**
+ * What a chat that controls the computer is doing (for the control bar).
+ */
+export type ComputerActivityState = 
+/**
+ * Acting (the bar shows the action).
+ */
+"working" | 
+/**
+ * Waiting for the user (an approval card); Oxide's window comes back.
+ */
+"waiting" | 
+/**
+ * Done: the bar goes when no chat is working.
+ */
+"ended"
+/**
+ * An app, as approvals and settings name it.
+ */
+export type ComputerApp = { 
+/**
+ * Stable id: the program's file name in lower case (`notepad.exe`), or a group id
+ * (`windows-shell`).
+ */
+id: string; 
+/**
+ * Name for users ("Notepad").
+ */
+name: string }
+/**
+ * The computer part of a [`crate::tools::ToolApprovalRequest`].
+ */
+export type ComputerApproval = { kind: ComputerApprovalKind; 
+/**
+ * The app, for an app card.
+ */
+app: ComputerApp | null; 
+/**
+ * The screen models will see ("Dell U2720Q (2560×1440)").
+ */
+display: string | null; 
+/**
+ * What the model wants to do ("Clicking at (512, 300)").
+ */
+action: string; 
+/**
+ * The shortcut that stops it.
+ */
+panicShortcut: string }
+/**
+ * What a computer approval card asks.
+ */
+export type ComputerApprovalKind = 
+/**
+ * Start controlling the computer in this chat.
+ */
+"session" | 
+/**
+ * Use this app.
+ */
+"app"
+/**
+ * What chats controlling the computer do now (`events.computerChanged`), for the control
+ * bar and the main window. `chats` is empty when none does.
+ */
+export type ComputerChanged = { chats: ComputerActivity[]; 
+/**
+ * The chat that changed.
+ */
+changed: ComputerActivity }
+/**
+ * A screen, in the coordinates the input functions use (physical pixels on Windows).
+ */
+export type ComputerDisplay = { 
+/**
+ * Stable id (the system's name for the screen).
+ */
+id: string; 
+/**
+ * Name for users ("Dell U2720Q").
+ */
+name: string; x: number; y: number; width: number; height: number; scaleFactor: number; primary: boolean }
+/**
+ * Settings → Computer use. Off by default: while on, models in a chat may ask to control
+ * the computer (each chat asks first, and each app it uses asks too).
+ */
+export type ComputerSettings = { enabled: boolean; 
+/**
+ * Which screen models see and use ([`ComputerDisplay::id`]); `None`: the main one.
+ */
+display: string | null; 
+/**
+ * Minimize Oxide's window while a chat acts, so models see what's behind it.
+ */
+hideOxide: boolean; 
+/**
+ * On Claude, use Claude's own computer tool (else the same function tool as other
+ * models).
+ */
+nativeAnthropic: boolean; 
+/**
+ * Apps every chat may use without asking.
+ */
+alwaysAllowedApps: ComputerApp[] }
+/**
+ * Settings → Computer use.
+ */
+export type ComputerStatus = { 
+/**
+ * This build can control the computer.
+ */
+supported: boolean; displays: ComputerDisplay[]; 
+/**
+ * Why screens couldn't be listed.
+ */
+error: string | null; 
+/**
+ * Chats controlling the computer now.
+ */
+active: string[]; panicShortcut: string; 
+/**
+ * The panic shortcut couldn't be registered (another app has it).
+ */
+panicError: string | null }
 /**
  * A piece of message content. Mirrors the block types of the model APIs.
  */
@@ -3674,7 +3843,11 @@ destructive: boolean;
  * For `save_skill`: what would be written (the card shows it; it never offers "Allow
  * always").
  */
-skill: SkillSavePreview | null; requestedAt: number }
+skill: SkillSavePreview | null; 
+/**
+ * For computer use: the card that starts it in a chat, or one for an app.
+ */
+computer?: ComputerApproval | null; requestedAt: number }
 /**
  * Tool approvals and the tool loop (Settings → Permissions).
  */
@@ -3754,7 +3927,12 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  * The user's Chrome through Oxide's extension: a tab opened, read, clicked or typed in
  * (the label is the URL or what was clicked or typed).
  */
-"chrome"
+"chrome" | 
+/**
+ * Computer use: the screen seen, the mouse and keyboard used (the label is the action
+ * or the app).
+ */
+"computer"
 /**
  * Token counts for one reply.
  */

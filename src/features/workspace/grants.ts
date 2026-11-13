@@ -12,6 +12,8 @@ export function grantLabel(key: string): string {
   if (key.startsWith("builtin/chrome__")) {
     return `Chrome: ${key.slice("builtin/chrome__".length).replace(/_/g, " ")}`;
   }
+  if (key === "builtin/computer") return "Control the computer";
+  if (key.startsWith("computer-app/")) return `Computer: ${key.slice("computer-app/".length)}`;
   if (key.startsWith("builtin/")) return key.slice("builtin/".length).replace(/_/g, " ");
   const [server, ...rest] = key.split("/");
   return `${rest.join("/")} · ${server}`;

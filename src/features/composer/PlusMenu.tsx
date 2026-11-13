@@ -2,6 +2,7 @@ import { useQueries } from "@tanstack/react-query";
 import {
   Box,
   Compass,
+  MonitorSmartphone,
   PanelTop,
   FileText,
   FolderPlus,
@@ -75,6 +76,7 @@ export function PlusMenu({
   const sandboxEnabled = settings.sandbox.enabled;
   const browserEnabled = settings.browser.enabled;
   const chromeEnabled = settings.chrome.enabled;
+  const computerEnabled = settings.computer.enabled;
   const running = servers.filter((s) => s.status === "running");
   const lists = useQueries({
     queries: running.map((s) => ({
@@ -229,6 +231,16 @@ export function PlusMenu({
             >
               <PanelTop />
               Chrome
+            </MenuCheckboxItem>
+          )}
+          {computerEnabled && (
+            <MenuCheckboxItem
+              checked={switches.computerOn}
+              onCheckedChange={(v) => switches.toggleComputer(v === true)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <MonitorSmartphone />
+              Use the computer
             </MenuCheckboxItem>
           )}
           <MenuSub>

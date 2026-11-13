@@ -7,6 +7,7 @@
 
 pub mod browser;
 pub mod chrome;
+pub mod computer;
 pub mod files;
 pub mod html;
 pub mod python;
@@ -148,6 +149,9 @@ pub enum ToolKind {
     Chrome {
         tool: String,
     },
+    /// The user's screen, mouse and keyboard (Phase 16; run by the chat service, which asks
+    /// for the chat and for each app).
+    Computer,
 }
 
 /// One tool as offered to the model.
@@ -172,6 +176,7 @@ impl ToolEntry {
             ToolKind::SandboxFile { .. } => Some(oxide_core::sandbox::SANDBOX_SERVER),
             ToolKind::Browser { .. } => Some(oxide_core::browser::BROWSER_SERVER),
             ToolKind::Chrome { .. } => Some(oxide_core::chrome::CHROME_SERVER),
+            ToolKind::Computer => Some(oxide_core::computer::COMPUTER_TOOL),
         }
     }
 
@@ -183,6 +188,7 @@ impl ToolEntry {
             | ToolKind::SandboxFile { tool }
             | ToolKind::Browser { tool }
             | ToolKind::Chrome { tool } => tool,
+            ToolKind::Computer => oxide_core::computer::COMPUTER_TOOL,
         }
     }
 
@@ -192,6 +198,7 @@ impl ToolEntry {
             ToolKind::SandboxFile { tool } => format!("builtin/sandbox__{tool}"),
             ToolKind::Browser { tool } => format!("builtin/browser__{tool}"),
             ToolKind::Chrome { tool } => format!("builtin/chrome__{tool}"),
+            ToolKind::Computer => oxide_core::computer::COMPUTER_SESSION_GRANT.to_owned(),
             _ => format!("{}/{}", self.server().unwrap_or("builtin"), self.tool()),
         }
     }
@@ -213,6 +220,7 @@ impl ToolEntry {
             | ToolKind::SandboxFile { .. } => ToolUsageKind::Sandbox,
             ToolKind::Browser { .. } => ToolUsageKind::Browser,
             ToolKind::Chrome { .. } => ToolUsageKind::Chrome,
+            ToolKind::Computer => ToolUsageKind::Computer,
             ToolKind::Mcp { .. } => ToolUsageKind::Connector,
         }
     }
@@ -313,6 +321,7 @@ pub struct Tools {
     sandboxes: Option<oxide_sandbox::Sandboxes>,
     browser: Option<oxide_pyenv::BrowserAgents>,
     chrome: Option<oxide_bridge::Bridge>,
+    computer: Option<crate::computer::ComputerUse>,
 }
 
 impl Tools {
@@ -330,6 +339,7 @@ impl Tools {
             sandboxes: None,
             browser: None,
             chrome: None,
+            computer: None,
         }
     }
 
@@ -372,6 +382,16 @@ impl Tools {
 
     pub fn chrome(&self) -> Option<&oxide_bridge::Bridge> {
         self.chrome.as_ref()
+    }
+
+    /// Gives models the `computer` tool (when Settings → Computer use is on).
+    pub fn with_computer(mut self, computer: crate::computer::ComputerUse) -> Self {
+        self.computer = Some(computer);
+        self
+    }
+
+    pub fn computer(&self) -> Option<&crate::computer::ComputerUse> {
+        self.computer.as_ref()
     }
 
     /// Gives models the skills in this folder (`load_skill`).
@@ -512,7 +532,8 @@ impl Tools {
             )
             | ToolKind::SandboxFile { .. }
             | ToolKind::Browser { .. }
-            | ToolKind::Chrome { .. } => ToolOutput::error("This tool runs in the chat, not here."),
+            | ToolKind::Chrome { .. }
+            | ToolKind::Computer => ToolOutput::error("This tool runs in the chat, not here."),
             ToolKind::Mcp { server, tool } => match &self.mcp {
                 None => ToolOutput::error("Connectors aren't available."),
                 Some(mcp) => match mcp

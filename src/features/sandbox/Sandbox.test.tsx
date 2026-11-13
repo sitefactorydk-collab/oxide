@@ -220,6 +220,7 @@ describe("sandbox calls in a reply", () => {
         readOnly: false,
         destructive: false,
         skill: null,
+        computer: null,
         requestedAt: Date.now(),
       });
     });

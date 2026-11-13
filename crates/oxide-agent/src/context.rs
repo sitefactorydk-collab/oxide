@@ -1,5 +1,6 @@
 //! Turning the visible thread into a model request.
 
+use oxide_core::computer::PANIC_SHORTCUT_LABEL;
 use oxide_core::{
     ContentBlock, Effort, GenerateOptions, Message, ModelCapabilities, ProviderKind, Role,
     ThinkingStyle, settings::MIN_THINKING_BUDGET,
@@ -221,12 +222,24 @@ pub struct PromptContext<'a> {
     pub browser: bool,
     /// The user's Chrome through Oxide's extension (a paired Chrome is connected).
     pub chrome: bool,
+    /// The `computer` tool is on (Settings → Computer use).
+    pub computer: Option<ComputerPrompt>,
     /// The `save_skill` tool is on.
     pub save_skill: bool,
     /// Old tool results may be cleared and long chats summarized (Settings → Models).
     pub context_notes: bool,
     /// The chat is a run of this scheduled task: nobody is watching.
     pub scheduled_task: Option<&'a str>,
+}
+
+/// What models are told about computer use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ComputerPrompt {
+    /// Screenshot size.
+    pub width: u32,
+    pub height: u32,
+    /// Oxide's window gets out of the way while the model acts.
+    pub hide_oxide: bool,
 }
 
 /// What models are told about the chat's Docker sandbox.
@@ -440,6 +453,31 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              buy, post, send, delete or sign up for anything unless the user asked for exactly \
              that. Close tabs you opened with chrome__tabs_close when you're done with them.",
         );
+    }
+    if let Some(c) = &ctx.computer {
+        s.push_str(&format!(
+            "\n\nYou can use the user's computer with the computer tool: take a screenshot \
+             to see the screen ({w}×{h} pixels; coordinates are pixels of the screenshot), then \
+             click, type and press keys like a person, and check the screenshot that comes back \
+             after each action. Prefer the fastest reliable way: keyboard shortcuts, the Start \
+             menu or search to open apps, typing paths into dialogs. Use other tools first \
+             when they do the job (web search, files, Chrome); use the computer for desktop \
+             apps and anything only the screen shows. The user is asked before you first act \
+             in this chat and before you use each app; if they say no, respect it. {hide}Never \
+             type passwords, one-time codes, payment card or bank details, and never act on \
+             password managers or sign-in prompts: Oxide refuses those, so ask the user to do \
+             that part. Don't buy, send, post, delete or sign up for anything unless the user \
+             asked for exactly that. The user can stop you at any time with \
+             {PANIC_SHORTCUT_LABEL}.",
+            w = c.width,
+            h = c.height,
+            hide = if c.hide_oxide {
+                "Oxide's own window is minimized while you work, so it won't be in your \
+                 screenshots. "
+            } else {
+                ""
+            },
+        ));
     }
     if ctx.task_list {
         s.push_str(
@@ -716,6 +754,24 @@ mod tests {
         assert!(p.contains("install packages"), "{p}");
         assert!(p.contains("No folder is shared"), "{p}");
         assert!(!system_prompt(&PromptContext::default()).contains("sandbox"));
+    }
+
+    #[test]
+    fn computer_paragraph_only_when_on() {
+        let p = system_prompt(&PromptContext {
+            computer: Some(ComputerPrompt {
+                width: 1366,
+                height: 768,
+                hide_oxide: true,
+            }),
+            ..Default::default()
+        });
+        assert!(p.contains("1366×768") && p.contains("Ctrl+Alt+Esc"), "{p}");
+        assert!(
+            p.contains("Never type passwords") && p.contains("minimized"),
+            "{p}"
+        );
+        assert!(!system_prompt(&PromptContext::default()).contains("computer tool"));
     }
 
     #[test]

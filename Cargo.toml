@@ -59,6 +59,13 @@ todo = "warn"
 [profile.dev]
 incremental = true
 
+# Screenshots for computer use are resized and JPEG-encoded on every action; unoptimized,
+# that takes seconds per screenshot in dev builds and tests (Phase 16).
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true

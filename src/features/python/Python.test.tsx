@@ -156,6 +156,7 @@ describe("run_python in a reply", () => {
         readOnly: false,
         destructive: true,
         skill: null,
+        computer: null,
         requestedAt: Date.now(),
       });
     });

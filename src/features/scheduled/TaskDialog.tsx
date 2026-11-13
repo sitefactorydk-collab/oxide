@@ -25,7 +25,7 @@ import {
 const TOOL_SWITCHES: Array<{
   label: string;
   builtins: string[];
-  setting?: "browser" | "chrome" | "sandbox";
+  setting?: "browser" | "chrome" | "sandbox" | "computer";
 }> = [
   { label: "Web search and fetch", builtins: ["web_search", "web_fetch"] },
   { label: "Files in the shared folders", builtins: ["files"] },
@@ -33,6 +33,11 @@ const TOOL_SWITCHES: Array<{
   { label: "Browser", builtins: ["browser"], setting: "browser" },
   { label: "Chrome", builtins: ["chrome"], setting: "chrome" },
   { label: "Sandbox", builtins: ["sandbox"], setting: "sandbox" },
+  {
+    label: "Use the computer (always waits for your approval)",
+    builtins: ["computer"],
+    setting: "computer",
+  },
   { label: "Save skills (always waits for your approval)", builtins: ["save_skill"] },
 ];
 

@@ -245,6 +245,8 @@ pub struct AppSettings {
     pub browser: BrowserSettings,
     /// Settings → Chrome (the extension and its bridge).
     pub chrome: crate::chrome::ChromeSettings,
+    /// Settings → Computer use.
+    pub computer: crate::computer::ComputerSettings,
     /// Context management (shown in Settings → Models).
     pub context: ContextSettings,
 }
@@ -297,6 +299,7 @@ impl AppSettings {
         self.sandbox = self.sandbox.normalized();
         self.browser = self.browser.normalized();
         self.chrome = self.chrome.normalized();
+        self.computer = self.computer.normalized();
         self.context = self.context.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)

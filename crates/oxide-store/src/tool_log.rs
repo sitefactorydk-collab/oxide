@@ -20,6 +20,7 @@ fn kind_str(kind: ToolUsageKind) -> &'static str {
         ToolUsageKind::Sandbox => "sandbox",
         ToolUsageKind::Browser => "browser",
         ToolUsageKind::Chrome => "chrome",
+        ToolUsageKind::Computer => "computer",
     }
 }
 
@@ -38,6 +39,7 @@ fn parse_kind(s: &str) -> ToolUsageKind {
         "sandbox" => ToolUsageKind::Sandbox,
         "browser" => ToolUsageKind::Browser,
         "chrome" => ToolUsageKind::Chrome,
+        "computer" => ToolUsageKind::Computer,
         _ => ToolUsageKind::Connector,
     }
 }

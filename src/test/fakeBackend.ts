@@ -34,6 +34,7 @@ import type {
   BrowserStatus,
   ChatWorkspace,
   ChromeStatus,
+  ComputerChanged,
   ScheduleChange,
   TaskList,
   ToolApprovalRequest,
@@ -48,6 +49,7 @@ import {
   resetFakeChrome,
   setChromeEmitter,
 } from "./fakeChrome";
+import { fakeComputerCommands, resetFakeComputer, setComputerEmitter } from "./fakeComputer";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -148,6 +150,8 @@ export interface FakeSeed {
     browser: Partial<AppSettings["browser"]>;
     /** Changes to the Chrome settings (off by default). */
     chrome: Partial<AppSettings["chrome"]>;
+    /** Changes to the computer use settings (off by default). */
+    computer: Partial<AppSettings["computer"]>;
     /** Changes to context management. */
     context: Partial<AppSettings["context"]>;
   }>;
@@ -213,6 +217,14 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         ...seed.settings?.browser,
       },
       chrome: { enabled: false, port: 47820, ask: false, ...seed.settings?.chrome },
+      computer: {
+        enabled: false,
+        display: null,
+        hideOxide: true,
+        nativeAnthropic: true,
+        alwaysAllowedApps: [],
+        ...seed.settings?.computer,
+      },
       context: {
         compaction: true,
         threshold: 75,
@@ -258,6 +270,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeSandbox();
   resetFakeBrowser();
   resetFakeChrome();
+  resetFakeComputer();
   resetFakeSchedule();
   configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
@@ -359,6 +372,8 @@ const chromeChanged = fakeEvent<ChromeStatus>("chrome-changed");
 setChromeEmitter((s) => void chromeChanged.emit(s));
 const scheduleChanged = fakeEvent<ScheduleChange>("schedule-changed");
 setScheduleEmitter((c) => void scheduleChanged.emit(c));
+const computerChanged = fakeEvent<ComputerChanged>("computer-changed");
+setComputerEmitter((c) => void computerChanged.emit(c));
 
 export const fakeEvents = {
   chatStream,
@@ -373,6 +388,7 @@ export const fakeEvents = {
   browserLive,
   chromeChanged,
   scheduleChanged,
+  computerChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -752,6 +768,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeSandboxCommands,
   ...fakeBrowserCommands,
   ...fakeChromeCommands,
+  ...fakeComputerCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({

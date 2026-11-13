@@ -214,6 +214,7 @@ function command(toolUseId: string, cmd: string, messageId = "m6"): ToolApproval
     readOnly: false,
     destructive: true,
     skill: null,
+    computer: null,
     requestedAt: Date.now(),
   };
 }

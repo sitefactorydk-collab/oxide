@@ -37,6 +37,54 @@ pub fn anthropic_curated(id: &str) -> ModelCapabilities {
     }
 }
 
+/// Which version of Anthropic's computer tool a Claude model takes (from the computer use
+/// docs, 2026-11): the newest models only take the toolset; models from Opus 4.5 to the 5.1
+/// generation take `computer_20251124`; older ones `computer_20250124`. Unknown ids are
+/// taken to be new.
+pub fn anthropic_computer_flavor(id: &str) -> crate::ComputerFlavor {
+    use crate::ComputerFlavor::*;
+    let rest = id.strip_prefix("claude-").unwrap_or(id);
+    // Drop a date suffix (`-20251101`) and anything after an `@` or `:` (Bedrock, Vertex).
+    let rest = rest.split(['@', ':']).next().unwrap_or(rest);
+    let parts: Vec<&str> = rest
+        .split('-')
+        .filter(|p| !(p.len() == 8 && p.chars().all(|c| c.is_ascii_digit())))
+        .collect();
+    let key = parts.join("-");
+    const V2511: [&str; 13] = [
+        "fable-5-1",
+        "mythos-5-1",
+        "fable-5",
+        "mythos-5",
+        "opus-5",
+        "sonnet-5",
+        "opus-4-8",
+        "opus-4-7",
+        "opus-4-6",
+        "sonnet-4-6",
+        "opus-4-5",
+        "opus-5-0",
+        "sonnet-5-0",
+    ];
+    const V2501: [&str; 8] = [
+        "sonnet-4-5",
+        "haiku-4-5",
+        "opus-4-1",
+        "sonnet-4",
+        "opus-4",
+        "3-7-sonnet",
+        "sonnet-4-0",
+        "opus-4-0",
+    ];
+    if V2511.contains(&key.as_str()) {
+        V20251124
+    } else if V2501.contains(&key.as_str()) || key.starts_with("3-") {
+        V20250124
+    } else {
+        Toolset
+    }
+}
+
 /// The effort level a Claude model uses when none is sent (from the effort docs: medium on
 /// Opus 5.5 and Haiku 5.5, high elsewhere).
 pub fn anthropic_default_effort(id: &str) -> Effort {
@@ -212,6 +260,32 @@ mod tests {
         assert_eq!(claude_generation("claude-sonnet-4-5-20250929"), Some(4));
         assert_eq!(claude_generation("claude-opus-5-5"), Some(5));
         assert_eq!(claude_generation("gpt-4o"), None);
+    }
+
+    #[test]
+    fn computer_tool_versions_follow_the_model() {
+        use crate::ComputerFlavor::*;
+        assert_eq!(anthropic_computer_flavor("claude-opus-5-5"), Toolset);
+        assert_eq!(anthropic_computer_flavor("claude-sonnet-5-5"), Toolset);
+        assert_eq!(anthropic_computer_flavor("claude-haiku-5-5"), Toolset);
+        assert_eq!(anthropic_computer_flavor("claude-fable-5-2"), Toolset);
+        assert_eq!(anthropic_computer_flavor("claude-opus-6"), Toolset);
+        assert_eq!(anthropic_computer_flavor("claude-opus-5"), V20251124);
+        assert_eq!(anthropic_computer_flavor("claude-fable-5-1"), V20251124);
+        assert_eq!(
+            anthropic_computer_flavor("claude-opus-4-5-20251101"),
+            V20251124
+        );
+        assert_eq!(anthropic_computer_flavor("claude-sonnet-4-6"), V20251124);
+        assert_eq!(
+            anthropic_computer_flavor("claude-sonnet-4-5-20250929"),
+            V20250124
+        );
+        assert_eq!(anthropic_computer_flavor("claude-haiku-4-5"), V20250124);
+        assert_eq!(
+            anthropic_computer_flavor("claude-3-7-sonnet-20250219"),
+            V20250124
+        );
     }
 
     #[test]
