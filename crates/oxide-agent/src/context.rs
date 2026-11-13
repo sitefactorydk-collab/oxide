@@ -461,8 +461,12 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
             "\n\nYou can use the user's computer with the computer tool: take a screenshot \
              to see the screen ({w}×{h} pixels; coordinates are pixels of the screenshot), then \
              click, type and press keys like a person, and check the screenshot that comes back \
-             after each action. Prefer the fastest reliable way: keyboard shortcuts, the Start \
-             menu or search to open apps, typing paths into dialogs. Use other tools first \
+             after each action. Prefer the fastest reliable way, the keyboard over clicking: \
+             open an app with Win+R, its program name (notepad, calc, mspaint, explorer) and \
+             Enter, or with the Windows key, its name and Enter (never click the search panel's web \
+             results: they open the browser); in Save and Open dialogs type the full path into \
+             the file name box and press Enter; use keyboard shortcuts (Ctrl+S, Ctrl+N, \
+             Alt+F4). Use other tools first \
              when they do the job (web search, files, Chrome); use the computer for desktop \
              apps and anything only the screen shows. The user is asked before you first act \
              in this chat and before you use each app; if they say no, respect it. {hide}Never \
@@ -783,6 +787,7 @@ mod tests {
         });
         assert!(p.contains("1366×768") && p.contains("Ctrl+Alt+Esc"), "{p}");
         assert!(p.contains("Documents = C:\\Users\\info\\Documents"), "{p}");
+        assert!(p.contains("Win+R") && p.contains("web results"), "{p}");
         assert!(
             p.contains("Never type passwords") && p.contains("minimized"),
             "{p}"

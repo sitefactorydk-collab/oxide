@@ -187,10 +187,12 @@ impl ComputerSink for TauriComputerSink {
             crate::desktop::quick::hide(&self.app);
         }
         if !shown {
+            tracing::debug!("computer use: Oxide's window is already out of the way");
             return quick;
         }
         match w.minimize() {
             Ok(()) => {
+                tracing::info!("computer use: minimized Oxide's window");
                 self.hid_main.store(true, Ordering::SeqCst);
                 true
             }
