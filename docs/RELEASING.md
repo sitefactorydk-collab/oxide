@@ -18,7 +18,10 @@ before.
 
 ## One-time setup
 
-1. **A GitHub repository.** Create one (private is fine) and push `main`:
+1. **A GitHub repository.** Create one and push `main`. It must be **public** for in-app
+   updates: GitHub serves a private repo's release files (`latest.json`, the installers) only
+   to signed-in users, so installed copies can't fetch them. (To keep the code private, publish
+   releases to a separate public repo instead.)
    ```
    git remote add origin https://github.com/<you>/oxide.git
    git push -u origin main
