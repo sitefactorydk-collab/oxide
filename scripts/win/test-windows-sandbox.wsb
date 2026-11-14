@@ -1,0 +1,16 @@
+<!-- Opens a clean, throwaway Windows (Windows Sandbox, Windows 11 Pro/Enterprise) with
+     C:\AI Apps\Oxide\release-test on its desktop, read-only. Put the release's -setup.exe
+     and .msi there, double-click this file, then install Oxide inside the sandbox.
+     Everything is gone when the sandbox window closes. -->
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\AI Apps\Oxide\release-test</HostFolder>
+      <SandboxFolder>C:\Users\WDAGUtilityAccount\Desktop\release-test</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>explorer.exe C:\Users\WDAGUtilityAccount\Desktop\release-test</Command>
+  </LogonCommand>
+</Configuration>

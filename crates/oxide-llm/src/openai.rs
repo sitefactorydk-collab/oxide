@@ -27,6 +27,25 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// A probe may have to wait for a local server to load the model.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Whether a model id from an OpenAI-compatible service is likely a chat model (not an
+/// embedding, speech, image or moderation model).
+fn looks_like_chat(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    ![
+        "embed",
+        "whisper",
+        "tts",
+        "transcribe",
+        "dall-e",
+        "image",
+        "moderation",
+        "guard",
+        "rerank",
+    ]
+    .iter()
+    .any(|w| id.contains(w))
+}
+
 pub struct OpenAiCompatProvider {
     endpoint: Endpoint,
     client: reqwest::Client,
@@ -97,16 +116,30 @@ impl OpenAiCompatProvider {
             ProviderKind::OpenAi => {
                 let mut ids = self.model_entries().await?;
                 ids.sort();
-                let models = ids
+                let models: Vec<ModelInfo> = ids
                     .iter()
                     .filter_map(|(id, context)| match openai_curated(id) {
                         OpenAiModel::Chat(caps) => Some(self.info(id, caps, *context)),
                         OpenAiModel::NotChat => None,
                     })
                     .collect();
+                if !models.is_empty() || ids.is_empty() {
+                    return Ok(ModelListing {
+                        models,
+                        unverified: Vec::new(),
+                    });
+                }
+                // No OpenAI model ids at all: another OpenAI-compatible service (Groq,
+                // OpenRouter, Together, …). Its models are listed and their tool support is
+                // probed once each, like Strata's.
+                let entries: Vec<&(String, Option<u32>)> =
+                    ids.iter().filter(|(id, _)| looks_like_chat(id)).collect();
                 Ok(ModelListing {
-                    models,
-                    unverified: Vec::new(),
+                    models: entries
+                        .iter()
+                        .map(|(id, context)| self.info(id, ModelCapabilities::default(), *context))
+                        .collect(),
+                    unverified: entries.into_iter().map(|(id, _)| id.clone()).collect(),
                 })
             }
             ProviderKind::LmStudio => match self.lmstudio_native().await {
@@ -993,5 +1026,27 @@ mod tests {
         let probe: Value = serde_json::from_str(&server.requests().await[1].body).expect("json");
         assert_eq!(probe["tools"][0]["function"]["name"], "ping");
         assert_eq!(probe["stream"], false);
+    }
+
+    #[tokio::test]
+    async fn other_openai_compatible_services_are_listed_and_probed() {
+        // Groq's ids: none in OpenAI's curated table.
+        let server = serve(vec![Reply::json(
+            r#"{"object":"list","data":[{"id":"openai/gpt-oss-20b","context_window":131072},
+                {"id":"llama-3.3-70b-versatile"},{"id":"meta-llama/llama-prompt-guard-2-22m"},
+                {"id":"whisper-large-v3"}]}"#,
+        )])
+        .await;
+        let provider =
+            connect(endpoint(ProviderKind::OpenAi, &server.base, Some("gsk"))).expect("connects");
+        let listing = provider.list_models().await.expect("lists");
+        let ids: Vec<_> = listing.models.iter().map(|m| m.model.as_str()).collect();
+        assert_eq!(ids, vec!["llama-3.3-70b-versatile", "openai/gpt-oss-20b"]);
+        assert_eq!(listing.unverified, ids);
+        assert!(
+            listing.models.iter().all(|m| !m.capabilities.tools),
+            "until probed"
+        );
+        assert_eq!(listing.models[1].context_window, Some(131_072));
     }
 }
