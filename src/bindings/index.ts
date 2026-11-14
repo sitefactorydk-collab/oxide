@@ -1277,6 +1277,91 @@ async computerCalibrate(model: string) : Promise<Result<PointerCalibration, Comm
 }
 },
 /**
+ * Oxide's data, config and log folders, and how much the data folder holds.
+ */
+async dataLocations() : Promise<Result<DataLocations, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("data_locations") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the data folder in the file manager.
+ */
+async openDataFolder() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_data_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Asks where to save, then writes everything into one zip. `None` when the dialog was
+ * cancelled.
+ */
+async exportAllData() : Promise<Result<DataExport | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_all_data") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Shows the last export in the file manager.
+ */
+async revealDataExport() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_data_export") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes every chat, project, memory, setting, file and keychain entry Oxide made, then
+ * restarts Oxide. `confirm` must be the word the dialog asks for.
+ */
+async deleteAllData(confirm: string) : Promise<Result<DataDeleted, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_all_data", { confirm }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The updater's state.
+ */
+async updateStatus() : Promise<UpdateStatus> {
+    return await TAURI_INVOKE("update_status");
+},
+/**
+ * Looks for a newer version now.
+ */
+async checkForUpdate() : Promise<Result<UpdateStatus, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_update") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Downloads and installs the version found by the last check, then restarts Oxide.
+ */
+async installUpdate() : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_update") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1589,7 +1674,8 @@ memoryChanged: MemoryChanged,
 pythonChanged: PythonChanged,
 sandboxChanged: SandboxChanged,
 scheduleChanged: ScheduleChanged,
-taskListChanged: TaskListChanged
+taskListChanged: TaskListChanged,
+updateChanged: UpdateChanged
 }>({
 browserChanged: "browser-changed",
 browserLive: "browser-live",
@@ -1603,7 +1689,8 @@ memoryChanged: "memory-changed",
 pythonChanged: "python-changed",
 sandboxChanged: "sandbox-changed",
 scheduleChanged: "schedule-changed",
-taskListChanged: "task-list-changed"
+taskListChanged: "task-list-changed",
+updateChanged: "update-changed"
 })
 
 /** user-defined constants **/
@@ -1624,7 +1711,11 @@ computer: ComputerSettings;
 /**
  * Context management (shown in Settings → Models).
  */
-context: ContextSettings }
+context: ContextSettings; 
+/**
+ * Settings → About → Updates.
+ */
+updates: UpdateSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -2354,6 +2445,66 @@ export type ConversationChanged = { conversation: Conversation }
  * (`events.conversationUpdated`).
  */
 export type ConversationUpdated = ConversationChanged
+/**
+ * What "Delete all data" did before Oxide restarts.
+ */
+export type DataDeleted = { 
+/**
+ * Keychain entries removed (API keys, sign-ins, pairings, extension secrets).
+ */
+secrets: number; 
+/**
+ * Files and folders that couldn't be removed yet; Oxide tries again when it starts.
+ */
+leftovers: string[] }
+/**
+ * What "Export all" wrote.
+ */
+export type DataExport = { 
+/**
+ * The zip file.
+ */
+path: string; 
+/**
+ * Database tables written (one JSON file each).
+ */
+tables: number; 
+/**
+ * Rows across those tables.
+ */
+rows: number; 
+/**
+ * Files copied in (attachments, skills, extension manifests, the MCP config).
+ */
+files: number; 
+/**
+ * Size of the zip.
+ */
+bytes: number; 
+/**
+ * Files left out (too large or unreadable), with the reason.
+ */
+skipped: string[] }
+/**
+ * Where Oxide keeps its files (Settings → Data).
+ */
+export type DataLocations = { 
+/**
+ * The database, attachments, skills, extensions, the managed Python, sandboxes.
+ */
+data: string; 
+/**
+ * The MCP config file and window positions.
+ */
+config: string; 
+/**
+ * MCP server and sandbox logs.
+ */
+logs: string; 
+/**
+ * Bytes used by the data folder, when it could be measured.
+ */
+dataBytes: number | null }
 /**
  * Something the main window should do, sent by the tray, a menu, quick entry or a deep link
  * (`events.desktopRequest`).
@@ -4014,6 +4165,76 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  * or the app).
  */
 "computer"
+/**
+ * The updater checked, found a version, downloaded part of it or failed
+ * (`events.updateChanged`).
+ */
+export type UpdateChanged = UpdateStatus
+/**
+ * A newer version on the update server.
+ */
+export type UpdateInfo = { version: string; 
+/**
+ * Release date as the update manifest gives it (RFC 3339), if any.
+ */
+date: string | null; 
+/**
+ * Release notes from the manifest (plain text or Markdown).
+ */
+notes: string | null }
+/**
+ * Where the updater is.
+ */
+export type UpdatePhase = 
+/**
+ * Nothing checked yet in this run.
+ */
+"idle" | "checking" | "upToDate" | 
+/**
+ * `available` says which version.
+ */
+"available" | 
+/**
+ * `downloaded` / `total` say how far.
+ */
+"downloading" | 
+/**
+ * Installed; Oxide restarts (Windows' installer closes Oxide itself).
+ */
+"installing" | 
+/**
+ * `error` says why.
+ */
+"failed"
+/**
+ * Settings → About → Updates.
+ */
+export type UpdateSettings = { 
+/**
+ * Look for a new version shortly after start and then every few hours.
+ */
+checkAutomatically: boolean }
+/**
+ * The updater's state (Settings → About, and the `updateChanged` event).
+ */
+export type UpdateStatus = { currentVersion: string; 
+/**
+ * This build knows where to look for updates (release builds made by CI).
+ */
+configured: boolean; 
+/**
+ * Updates can be installed from inside Oxide. False for Linux `.deb`/`.rpm` installs,
+ * which the system's package manager updates; `note` says so.
+ */
+canInstall: boolean; phase: UpdatePhase; available: UpdateInfo | null; downloaded: number; total: number | null; 
+/**
+ * Why the last check or install failed, written for users.
+ */
+error: string | null; checkedAt: number | null; 
+/**
+ * Something users should know about updates on this install, if anything.
+ */
+note: string | null }
 /**
  * Token counts for one reply.
  */

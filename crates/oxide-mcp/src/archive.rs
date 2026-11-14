@@ -415,6 +415,201 @@ pub fn write_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
+/// A zip written entry by entry to `W` (an export file), with Zip64 records once offsets or
+/// the entry count outgrow the classic format. Each entry is compressed in memory, so one
+/// entry must stay under 4 GiB; callers skip larger files.
+pub struct ZipWriter<W: Write> {
+    out: W,
+    offset: u64,
+    central: Vec<u8>,
+    count: u64,
+    dos_time: [u8; 4],
+    /// Offsets and counts at or above this use Zip64 (lowered in tests).
+    limit: u64,
+}
+
+/// Largest entry [`ZipWriter`] takes.
+pub const MAX_ZIP_ENTRY: u64 = u32::MAX as u64 - 1;
+
+impl<W: Write> ZipWriter<W> {
+    /// Entries are dated `unix_secs` (UTC).
+    pub fn new(out: W, unix_secs: i64) -> Self {
+        Self {
+            out,
+            offset: 0,
+            central: Vec::new(),
+            count: 0,
+            dos_time: dos_time(unix_secs),
+            limit: u64::from(u32::MAX),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_limit(mut self, limit: u64) -> Self {
+        self.limit = limit;
+        self
+    }
+
+    /// Adds a file named `name` (`/` separators) holding `data`; deflated unless that
+    /// doesn't make it smaller.
+    pub fn add(&mut self, name: &str, data: &[u8]) -> std::io::Result<()> {
+        let size = data.len() as u64;
+        if size > MAX_ZIP_ENTRY {
+            return Err(std::io::Error::other(format!(
+                "{name} is too large for the zip"
+            )));
+        }
+        let deflated = if data.is_empty() {
+            None
+        } else {
+            let mut enc =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            enc.write_all(data)?;
+            Some(enc.finish()?).filter(|d| d.len() < data.len())
+        };
+        let (method, body): (u16, &[u8]) = match &deflated {
+            Some(d) => (8, d),
+            None => (0, data),
+        };
+        let crc = crc32fast::hash(data);
+        let n = u16::try_from(name.len())
+            .map_err(|_| std::io::Error::other(format!("{name} has too long a name")))?;
+        let csize = u32::try_from(body.len()).unwrap_or(u32::MAX);
+        let usize_ = u32::try_from(size).unwrap_or(u32::MAX);
+        let big_offset = self.offset >= self.limit;
+        let version: u16 = if big_offset { 45 } else { 20 };
+
+        let mut local = Vec::with_capacity(30 + name.len());
+        local.extend_from_slice(&LOCAL.to_le_bytes());
+        local.extend_from_slice(&version.to_le_bytes());
+        local.extend_from_slice(&0x0800u16.to_le_bytes()); // UTF-8 names
+        local.extend_from_slice(&method.to_le_bytes());
+        local.extend_from_slice(&self.dos_time);
+        local.extend_from_slice(&crc.to_le_bytes());
+        local.extend_from_slice(&csize.to_le_bytes());
+        local.extend_from_slice(&usize_.to_le_bytes());
+        local.extend_from_slice(&n.to_le_bytes());
+        local.extend_from_slice(&0u16.to_le_bytes());
+        local.extend_from_slice(name.as_bytes());
+        self.out.write_all(&local)?;
+        self.out.write_all(body)?;
+
+        let c = &mut self.central;
+        c.extend_from_slice(&CENTRAL.to_le_bytes());
+        c.extend_from_slice(&(0x0300u16 | version).to_le_bytes()); // made on Unix
+        c.extend_from_slice(&version.to_le_bytes());
+        c.extend_from_slice(&0x0800u16.to_le_bytes());
+        c.extend_from_slice(&method.to_le_bytes());
+        c.extend_from_slice(&self.dos_time);
+        c.extend_from_slice(&crc.to_le_bytes());
+        c.extend_from_slice(&csize.to_le_bytes());
+        c.extend_from_slice(&usize_.to_le_bytes());
+        c.extend_from_slice(&n.to_le_bytes());
+        c.extend_from_slice(&(if big_offset { 12u16 } else { 0 }).to_le_bytes());
+        c.extend_from_slice(&[0; 6]); // comment, disk, internal attributes
+        c.extend_from_slice(&((0o100_644u32) << 16).to_le_bytes());
+        let off32 = if big_offset {
+            u32::MAX
+        } else {
+            u32::try_from(self.offset).unwrap_or(u32::MAX)
+        };
+        c.extend_from_slice(&off32.to_le_bytes());
+        c.extend_from_slice(name.as_bytes());
+        if big_offset {
+            c.extend_from_slice(&1u16.to_le_bytes());
+            c.extend_from_slice(&8u16.to_le_bytes());
+            c.extend_from_slice(&self.offset.to_le_bytes());
+        }
+        self.offset += (local.len() + body.len()) as u64;
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Writes the central directory and returns the writer.
+    pub fn finish(mut self) -> std::io::Result<W> {
+        let cd_offset = self.offset;
+        let cd_size = self.central.len() as u64;
+        self.out.write_all(&self.central)?;
+        let zip64 = cd_offset >= self.limit
+            || cd_offset + cd_size >= self.limit
+            || self.count >= u64::from(u16::MAX).min(self.limit);
+        if zip64 {
+            let rec = cd_offset + cd_size;
+            let mut b = Vec::with_capacity(56 + 20);
+            b.extend_from_slice(&EOCD64.to_le_bytes());
+            b.extend_from_slice(&44u64.to_le_bytes()); // size of the rest of the record
+            b.extend_from_slice(&0x032Du16.to_le_bytes()); // made by Unix, 4.5
+            b.extend_from_slice(&45u16.to_le_bytes());
+            b.extend_from_slice(&[0; 8]); // this disk, the directory's disk
+            b.extend_from_slice(&self.count.to_le_bytes());
+            b.extend_from_slice(&self.count.to_le_bytes());
+            b.extend_from_slice(&cd_size.to_le_bytes());
+            b.extend_from_slice(&cd_offset.to_le_bytes());
+            b.extend_from_slice(&EOCD64_LOCATOR.to_le_bytes());
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&rec.to_le_bytes());
+            b.extend_from_slice(&1u32.to_le_bytes());
+            self.out.write_all(&b)?;
+        }
+        let count16 = if zip64 {
+            u16::MAX
+        } else {
+            u16::try_from(self.count).unwrap_or(u16::MAX)
+        };
+        let size32 = if zip64 {
+            u32::MAX
+        } else {
+            u32::try_from(cd_size).unwrap_or(u32::MAX)
+        };
+        let off32 = if zip64 {
+            u32::MAX
+        } else {
+            u32::try_from(cd_offset).unwrap_or(u32::MAX)
+        };
+        let mut e = Vec::with_capacity(22);
+        e.extend_from_slice(&EOCD.to_le_bytes());
+        e.extend_from_slice(&[0; 4]);
+        e.extend_from_slice(&count16.to_le_bytes());
+        e.extend_from_slice(&count16.to_le_bytes());
+        e.extend_from_slice(&size32.to_le_bytes());
+        e.extend_from_slice(&off32.to_le_bytes());
+        e.extend_from_slice(&0u16.to_le_bytes());
+        self.out.write_all(&e)?;
+        self.out.flush()?;
+        Ok(self.out)
+    }
+}
+
+/// MS-DOS time and date (little-endian, time first) for a Unix time, clamped to 1980–2107.
+fn dos_time(unix_secs: i64) -> [u8; 4] {
+    let days = unix_secs.div_euclid(86_400);
+    let secs = unix_secs.rem_euclid(86_400);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day, secs) = if year < 1980 {
+        (1980, 1, 1, 0)
+    } else if year > 2107 {
+        (2107, 12, 31, 86_399)
+    } else {
+        (year, month, day, secs)
+    };
+    let time =
+        u16::try_from(((secs / 3600) << 11) | (((secs % 3600) / 60) << 5) | ((secs % 60) / 2))
+            .unwrap_or(0);
+    let date = u16::try_from(((year - 1980) << 9) | (month << 5) | day).unwrap_or(0x21);
+    let [t0, t1] = time.to_le_bytes();
+    let [d0, d1] = date.to_le_bytes();
+    [t0, t1, d0, d1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +713,90 @@ mod tests {
         assert!(err.to_string().contains("compression method"), "{err}");
         zip.truncate(10);
         assert!(read_entries(&mut Cursor::new(zip)).is_err());
+    }
+
+    #[test]
+    fn zip_writer_round_trips_through_the_reader() {
+        let big: Vec<u8> = (0..50_000u32).flat_map(|i| (i % 7).to_le_bytes()).collect();
+        let random: Vec<u8> = (0..2_000u32)
+            .map(|i| u8::try_from(i.wrapping_mul(2_654_435_761) >> 24).unwrap_or(0))
+            .collect();
+        let mut w = ZipWriter::new(Vec::new(), 1_794_600_000);
+        w.add("database/messages.json", &big).expect("adds");
+        w.add("random.bin", &random).expect("adds");
+        w.add("empty.txt", b"").expect("adds");
+        w.add("attachments/ä ö.txt", "hej".as_bytes())
+            .expect("adds");
+        let bytes = w.finish().expect("finishes");
+        let mut cur = std::io::Cursor::new(bytes);
+        let entries = read_entries(&mut cur).expect("reads");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "database/messages.json",
+                "random.bin",
+                "empty.txt",
+                "attachments/ä ö.txt"
+            ]
+        );
+        assert_eq!(entries[0].method, 8, "compressible data is deflated");
+        assert_eq!(
+            read_entry(&mut cur, &entries[0], u64::MAX).expect("entry"),
+            big
+        );
+        assert_eq!(
+            read_entry(&mut cur, &entries[1], u64::MAX).expect("entry"),
+            random
+        );
+        assert!(
+            read_entry(&mut cur, &entries[2], u64::MAX)
+                .expect("entry")
+                .is_empty()
+        );
+        assert_eq!(
+            read_entry(&mut cur, &entries[3], u64::MAX).expect("entry"),
+            b"hej"
+        );
+    }
+
+    #[test]
+    fn zip_writer_switches_to_zip64_past_the_limit() {
+        let mut w = ZipWriter::new(Vec::new(), 0).with_limit(100);
+        for i in 0..5 {
+            w.add(
+                &format!("file-{i}.txt"),
+                format!("content number {i} ").repeat(10).as_bytes(),
+            )
+            .expect("adds");
+        }
+        let bytes = w.finish().expect("finishes");
+        assert!(
+            bytes.windows(4).any(|b| b == EOCD64.to_le_bytes()),
+            "a Zip64 end record is written"
+        );
+        let mut cur = std::io::Cursor::new(bytes);
+        let entries = read_entries(&mut cur).expect("reads");
+        assert_eq!(entries.len(), 5);
+        assert!(entries[4].offset > 100);
+        for (i, e) in entries.iter().enumerate() {
+            let data = read_entry(&mut cur, e, u64::MAX).expect("entry");
+            assert_eq!(data, format!("content number {i} ").repeat(10).as_bytes());
+        }
+    }
+
+    #[test]
+    fn dos_times_are_civil_dates() {
+        // 2026-11-13 21:52:30 UTC
+        let t = dos_time(1_794_606_750);
+        let time = u16::from_le_bytes([t[0], t[1]]);
+        let date = u16::from_le_bytes([t[2], t[3]]);
+        assert_eq!((date >> 9) + 1980, 2026);
+        assert_eq!((date >> 5) & 0xF, 11);
+        assert_eq!(date & 0x1F, 13);
+        assert_eq!(time >> 11, 21);
+        assert_eq!((time >> 5) & 0x3F, 52);
+        assert_eq!((time & 0x1F) * 2, 30);
+        assert_eq!(dos_time(0), [0, 0, 0x21, 0], "before 1980 is 1980-01-01");
     }
 }

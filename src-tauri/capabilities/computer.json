@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "computer-bar",
+  "description": "Computer use's control bar: what the chats controlling the computer are doing, and Stop. Its theme and the computerChanged event.",
+  "windows": ["computer"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-theme",
+    "allow-computer-activity",
+    "allow-computer-stop-all"
+  ]
+}

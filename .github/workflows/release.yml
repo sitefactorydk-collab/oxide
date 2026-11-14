@@ -1,0 +1,134 @@
+# Installers for Windows (NSIS + MSI), macOS (universal .dmg) and Linux (AppImage, .deb, .rpm),
+# signed update bundles with latest.json for the in-app updater, and the Chrome extension zip,
+# all attached to a draft GitHub release. Push a tag (v0.2.0) or run it by hand.
+# Setup (secrets, signing, testing on clean VMs): docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            args: ""
+            uv: ""
+          - name: macOS universal
+            os: macos-latest
+            args: --target universal-apple-darwin
+            uv: --target aarch64-apple-darwin --target x86_64-apple-darwin --target universal-apple-darwin
+          - name: Linux x64
+            # The oldest supported Ubuntu, so the AppImage and .deb run on older glibc too.
+            os: ubuntu-22.04
+            args: ""
+            uv: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf libssl-dev libxdo-dev libdbus-1-dev libxcb1-dev libxrandr-dev \
+            libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev clang libfuse2 rpm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - run: npm ci
+      - name: uv sidecar
+        run: node scripts/fetch-uv.mjs ${{ matrix.uv }}
+
+      # Code signing is optional: without these secrets the macOS app is signed ad hoc
+      # ("signingIdentity": "-") and Windows installers are unsigned.
+      - name: macOS signing (when configured)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!v}" ]; then
+              {
+                echo "$v<<__OXIDE_EOF__"
+                echo "${!v}"
+                echo "__OXIDE_EOF__"
+              } >> "$GITHUB_ENV"
+            fi
+          done
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update bundles; the public key is plugins.updater.pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Compiled into the app (src-tauri/src/updater.rs): where it looks for updates.
+          OXIDE_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+        with:
+          tagName: v__VERSION__
+          releaseName: Oxide v__VERSION__
+          releaseBody: |
+            Installers for Windows, macOS and Linux, and the Chrome extension (unzip it and use
+            "Load unpacked" in chrome://extensions; the installers also include it).
+            See docs/RELEASING.md for what's signed and how to open unsigned builds.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+  extension:
+    name: Chrome extension zip
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run extension
+      - name: Zip and attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          name="oxide-chrome-extension-${version}.zip"
+          (cd extension/dist && zip -qr "../../${name}" .)
+          gh release upload "v${version}" "${name}" --clobber --repo "${{ github.repository }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oxide-chrome-extension
+          path: oxide-chrome-extension-*.zip

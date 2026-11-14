@@ -23,6 +23,7 @@ mod chat;
 pub mod compaction;
 pub mod computer;
 mod context;
+pub mod data;
 pub mod demo;
 mod error;
 pub mod export;

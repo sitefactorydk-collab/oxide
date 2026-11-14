@@ -4,6 +4,8 @@
 //! under `crates/`. Every command is registered through `tauri-specta`, which generates
 //! the TypeScript bindings in `src/bindings/index.ts`.
 
+#[cfg(test)]
+mod acl;
 mod artifact_frame;
 mod commands;
 mod computer;
@@ -12,6 +14,7 @@ mod error;
 mod events;
 mod mcp_bridge;
 mod state;
+mod updater;
 mod zone;
 
 use std::sync::Arc;
@@ -31,8 +34,9 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, browser, chats, chrome, computer, desktop, extensions, mcp, memory,
-        models, projects, providers, python, sandbox, schedule, settings, system, tools, workspace,
+        artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions, mcp,
+        memory, models, projects, providers, python, sandbox, schedule, settings, system, tools,
+        updates, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -48,6 +52,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::ChromeChanged,
             events::ScheduleChanged,
             events::ComputerChanged,
+            events::UpdateChanged,
             events::DesktopRequest
         ])
         .commands(collect_commands![
@@ -187,6 +192,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             computer::computer_activity,
             computer::computer_stop_all,
             computer::computer_calibrate,
+            // Data (export all, delete all) and updates
+            data::data_locations,
+            data::open_data_folder,
+            data::export_all_data,
+            data::reveal_data_export,
+            data::delete_all_data,
+            updates::update_status,
+            updates::check_for_update,
+            updates::install_update,
             // System
             system::open_external,
             // Desktop integration
@@ -300,6 +314,8 @@ pub fn run() -> anyhow::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // In-app updates; where to look is set per build (see updater.rs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .args([desktop::HIDDEN_ARG])
@@ -343,11 +359,16 @@ pub fn run() -> anyhow::Result<()> {
         .setup(move |app| {
             builder.mount_events(app);
             app.manage(desktop::DesktopState::default());
+            app.manage(commands::data::LastExport::default());
+            app.manage(updater::Updates::new(app.handle()));
             let dirs = state::AppDirs {
                 data: app.path().app_data_dir()?,
                 config: app.path().app_config_dir()?,
                 logs: app.path().app_log_dir()?,
+                resources: app.path().resource_dir().ok(),
             };
+            // What an earlier "Delete all" couldn't remove goes before anything opens.
+            oxide_agent::data::finish_pending_delete(&dirs.data_dirs());
             let service = app.config().identifier.clone();
             let sink = Arc::new(events::TauriSink::new(app.handle().clone()));
             let handle = app.handle().clone();
@@ -407,6 +428,7 @@ pub fn run() -> anyhow::Result<()> {
                 computer::create_bar(&handle)?;
             }
             setup_deep_links(&handle);
+            updater::start_background(&handle);
             if !start_hidden {
                 desktop::show_main(&handle);
             }

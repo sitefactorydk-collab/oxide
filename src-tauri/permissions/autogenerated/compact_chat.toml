@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compact-chat"
+description = "Enables the compact_chat command without any pre-configured scope."
+commands.allow = ["compact_chat"]
+
+[[permission]]
+identifier = "deny-compact-chat"
+description = "Denies the compact_chat command without any pre-configured scope."
+commands.deny = ["compact_chat"]

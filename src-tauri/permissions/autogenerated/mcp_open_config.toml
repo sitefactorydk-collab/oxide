@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-open-config"
+description = "Enables the mcp_open_config command without any pre-configured scope."
+commands.allow = ["mcp_open_config"]
+
+[[permission]]
+identifier = "deny-mcp-open-config"
+description = "Denies the mcp_open_config command without any pre-configured scope."
+commands.deny = ["mcp_open_config"]

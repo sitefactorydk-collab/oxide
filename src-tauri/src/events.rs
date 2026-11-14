@@ -73,6 +73,11 @@ pub struct ComputerChanged {
     pub changed: oxide_core::computer::ComputerActivity,
 }
 
+/// The updater checked, found a version, downloaded part of it or failed
+/// (`events.updateChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct UpdateChanged(pub oxide_core::UpdateStatus);
+
 /// The tray, a menu, quick entry or a deep link asks the main window to do something
 /// (`events.desktopRequest`; sent to the main window only).
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]

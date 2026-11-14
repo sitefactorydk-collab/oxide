@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-remove-server"
+description = "Enables the mcp_remove_server command without any pre-configured scope."
+commands.allow = ["mcp_remove_server"]
+
+[[permission]]
+identifier = "deny-mcp-remove-server"
+description = "Denies the mcp_remove_server command without any pre-configured scope."
+commands.deny = ["mcp_remove_server"]

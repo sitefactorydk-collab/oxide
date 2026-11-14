@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-get-prompt"
+description = "Enables the mcp_get_prompt command without any pre-configured scope."
+commands.allow = ["mcp_get_prompt"]
+
+[[permission]]
+identifier = "deny-mcp-get-prompt"
+description = "Denies the mcp_get_prompt command without any pre-configured scope."
+commands.deny = ["mcp_get_prompt"]

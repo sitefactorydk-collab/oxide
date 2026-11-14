@@ -281,6 +281,8 @@ pub struct AppSettings {
     pub computer: crate::computer::ComputerSettings,
     /// Context management (shown in Settings → Models).
     pub context: ContextSettings,
+    /// Settings → About → Updates.
+    pub updates: crate::data::UpdateSettings,
 }
 
 impl AppSettings {

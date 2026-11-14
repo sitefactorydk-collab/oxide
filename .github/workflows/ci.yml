@@ -1,0 +1,60 @@
+# Lint and test on Windows, macOS and Linux: the same checks as scripts\win\check.ps1.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf libssl-dev libxdo-dev libdbus-1-dev libxcb1-dev libxrandr-dev \
+            libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev clang
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: npm ci
+      - name: uv sidecar
+        run: npm run fetch-uv
+      - name: Chrome extension
+        run: npm run extension
+
+      - run: cargo fmt --all --check
+      - run: npm run format:check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test

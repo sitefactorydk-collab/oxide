@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-scheduled-task-runs"
+description = "Enables the scheduled_task_runs command without any pre-configured scope."
+commands.allow = ["scheduled_task_runs"]
+
+[[permission]]
+identifier = "deny-scheduled-task-runs"
+description = "Denies the scheduled_task_runs command without any pre-configured scope."
+commands.deny = ["scheduled_task_runs"]

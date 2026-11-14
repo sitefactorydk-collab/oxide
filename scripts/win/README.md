@@ -29,6 +29,7 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase13b.cmd` | Phase 13b: context management & compaction; bindings, checks, vite build, saves Strata's and LM Studio's model listings to `logs\phase13b-models.json`, commit when green, then starts the app | `phase13b-*`, `check*`, `commit*`, `dev.log` |
 | `phase13b-fix.cmd` | Phase 13b fix: repetition guard, gentler clearing shown in the transcript; bindings, checks, vite build, commit when green, then starts the app | `phase13bf-*`, `check*`, `commit*`, `dev.log` |
 | `phase12-fix.cmd` | Phase 12 fix (Python status after setup): checks, commit when green, then starts the app | `check*`, `commit*`, `dev.log` |
+| `phase17.cmd` | Phase 17: makes the update signing key (once, `%USERPROFILE%\.tauri\oxide-updater.key`) and writes its public key into `tauri.conf.json`, pins uv for every target, bindings, the extension, checks, the Windows installers (`npx tauri build` → `target\release\bundle\nsis` and `msi`), commit when green, then opens the installers' folder | `phase17*`, `check*`, `commit*` |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 
 Later phases add a `phaseN.cmd` that does the phase's setup, runs `check.ps1`, commits when green and starts the app.

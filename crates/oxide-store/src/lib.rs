@@ -8,6 +8,7 @@ mod artifacts;
 mod chat_tools;
 mod compactions;
 mod conversations;
+mod dump;
 mod knowledge;
 mod memory;
 mod messages;
@@ -29,8 +30,10 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
 pub use artifacts::NewArtifactVersion;
+pub use dump::TableDump;
 pub use knowledge::{CHUNK_CHARS, MAX_FILE_CHARS, NewKnowledgeFile, any_word_query, chunk_text};
 pub use messages::NewReply;
+pub use providers::secret_name as provider_secret_name;
 pub use search::fts_query;
 pub use secrets::{
     KeyringSecrets, MemorySecrets, Secret, SecretError, SecretStore, delete_large, get_large,

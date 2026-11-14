@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-setup"
+description = "Enables the browser_setup command without any pre-configured scope."
+commands.allow = ["browser_setup"]
+
+[[permission]]
+identifier = "deny-browser-setup"
+description = "Denies the browser_setup command without any pre-configured scope."
+commands.deny = ["browser_setup"]

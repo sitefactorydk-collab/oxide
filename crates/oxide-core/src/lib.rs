@@ -12,6 +12,7 @@ pub mod chrome;
 pub mod computer;
 pub mod context;
 pub mod conversation;
+pub mod data;
 pub mod desktop;
 pub mod extension;
 pub mod mcp;
@@ -50,6 +51,10 @@ pub use context::{
     WindowSource,
 };
 pub use conversation::{Conversation, SearchHit, StartConversation};
+pub use data::{
+    DELETE_ALL_CONFIRMATION, DataDeleted, DataExport, DataLocations, UpdateInfo, UpdatePhase,
+    UpdateSettings, UpdateStatus,
+};
 pub use desktop::DesktopAction;
 pub use extension::{
     Extension, ExtensionField, ExtensionFieldType, ExtensionInfo, ExtensionItem, ExtensionPreview,

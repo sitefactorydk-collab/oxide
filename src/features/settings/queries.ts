@@ -90,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     anthropicClearing: true,
     windows: [],
   },
+  updates: { checkAutomatically: true },
 };
 
 export function useSettings() {

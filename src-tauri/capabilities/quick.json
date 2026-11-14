@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-entry",
+  "description": "The quick entry window: list models, start a chat (with a screenshot), hide itself and open the chat in the main window. Dragging, its theme and its focus events.",
+  "windows": ["quick"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-theme",
+    "allow-list-models",
+    "allow-start-conversation",
+    "allow-hide-quick-entry",
+    "allow-open-quick-entry-chat",
+    "allow-capture-screenshot"
+  ]
+}

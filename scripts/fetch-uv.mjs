@@ -4,6 +4,9 @@
 //   node scripts/fetch-uv.mjs                     the host's target
 //   node scripts/fetch-uv.mjs --target <triple>   another target
 //   node scripts/fetch-uv.mjs --all               every target in uv-pins.json
+//   node scripts/fetch-uv.mjs --target universal-apple-darwin
+//                                                 both macOS archives joined with lipo (macOS
+//                                                 only), for `tauri build --target universal-apple-darwin`
 //   node scripts/fetch-uv.mjs --force             download again even if the file exists
 //   node scripts/fetch-uv.mjs --archive <file>    use an archive you downloaded yourself
 //
@@ -167,7 +170,25 @@ function findBinary(dir, exe) {
   return null;
 }
 
+/** A universal macOS binary from both architectures (lipo comes with Xcode). */
+async function fetchUniversal(pins, force) {
+  const dest = join(outDir, "uv-universal-apple-darwin");
+  if (!force && existsSync(dest) && statSync(dest).size > 0) {
+    console.log(`uv ${pins.version} universal: already at ${dest}`);
+    return;
+  }
+  const parts = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+  for (const t of parts) await fetchTarget(pins, t, force, null);
+  mkdirSync(outDir, { recursive: true });
+  execFileSync("lipo", ["-create", "-output", dest, ...parts.map((t) => join(outDir, `uv-${t}`))], {
+    stdio: "inherit",
+  });
+  chmodSync(dest, 0o755);
+  console.log(`uv ${pins.version} universal: ${dest}`);
+}
+
 async function fetchTarget(pins, triple, force, archivePath) {
+  if (triple === "universal-apple-darwin") return fetchUniversal(pins, force);
   const pin = pins.targets[triple];
   if (!pin) throw new Error(`No uv pin for ${triple}. Add it to scripts/uv-pins.json.`);
   const windows = triple.includes("windows");

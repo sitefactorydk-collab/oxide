@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-save-server"
+description = "Enables the mcp_save_server command without any pre-configured scope."
+commands.allow = ["mcp_save_server"]
+
+[[permission]]
+identifier = "deny-mcp-save-server"
+description = "Denies the mcp_save_server command without any pre-configured scope."
+commands.deny = ["mcp_save_server"]

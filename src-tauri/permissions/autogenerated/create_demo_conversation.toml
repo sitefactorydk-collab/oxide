@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-demo-conversation"
+description = "Enables the create_demo_conversation command without any pre-configured scope."
+commands.allow = ["create_demo_conversation"]
+
+[[permission]]
+identifier = "deny-create-demo-conversation"
+description = "Denies the create_demo_conversation command without any pre-configured scope."
+commands.deny = ["create_demo_conversation"]

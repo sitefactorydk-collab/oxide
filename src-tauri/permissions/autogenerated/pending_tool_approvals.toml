@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pending-tool-approvals"
+description = "Enables the pending_tool_approvals command without any pre-configured scope."
+commands.allow = ["pending_tool_approvals"]
+
+[[permission]]
+identifier = "deny-pending-tool-approvals"
+description = "Denies the pending_tool_approvals command without any pre-configured scope."
+commands.deny = ["pending_tool_approvals"]

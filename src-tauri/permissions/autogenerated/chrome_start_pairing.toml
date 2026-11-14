@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-start-pairing"
+description = "Enables the chrome_start_pairing command without any pre-configured scope."
+commands.allow = ["chrome_start_pairing"]
+
+[[permission]]
+identifier = "deny-chrome-start-pairing"
+description = "Denies the chrome_start_pairing command without any pre-configured scope."
+commands.deny = ["chrome_start_pairing"]

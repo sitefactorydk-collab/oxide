@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-configure-extension"
+description = "Enables the configure_extension command without any pre-configured scope."
+commands.allow = ["configure_extension"]
+
+[[permission]]
+identifier = "deny-configure-extension"
+description = "Denies the configure_extension command without any pre-configured scope."
+commands.deny = ["configure_extension"]

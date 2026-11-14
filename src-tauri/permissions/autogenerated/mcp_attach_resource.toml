@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-attach-resource"
+description = "Enables the mcp_attach_resource command without any pre-configured scope."
+commands.allow = ["mcp_attach_resource"]
+
+[[permission]]
+identifier = "deny-mcp-attach-resource"
+description = "Denies the mcp_attach_resource command without any pre-configured scope."
+commands.deny = ["mcp_attach_resource"]

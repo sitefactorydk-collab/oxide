@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run extension",
     "frontendDist": "../dist"
   },
   "app": {
@@ -23,27 +23,69 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src http://oxide-artifact.localhost oxide-artifact:",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src http://oxide-artifact.localhost oxide-artifact:; worker-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'",
       "devCsp": null
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Oxide contributors",
+    "copyright": "Copyright © 2026 Oxide contributors",
+    "category": "Productivity",
+    "shortDescription": "A desktop AI assistant",
+    "longDescription": "Oxide is a desktop AI assistant written in Rust on Tauri: chats with Anthropic, OpenAI-compatible and local models, MCP connectors, projects, artifacts, agentic tools, a browser agent, a Chrome extension, scheduled tasks and computer use.",
+    "license": "MIT OR Apache-2.0",
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/uv"],
+    "resources": {
+      "../extension/dist/": "extension/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico"
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": true
+    },
+    "linux": {
+      "deb": {
+        "section": "utils"
+      },
+      "rpm": {
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   },
   "plugins": {
     "deep-link": {
       "desktop": {
         "schemes": ["oxide"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1RDU3RkU1RkY0Nzc1QjgKUldTNGRVZi81WC9WbGR1Qy9OU1B1K2dNNlVpNVY1UWE0dm1PYjJXN0IyWkFyaDBZOTNoZGZ3aDMK"
     }
   }
 }

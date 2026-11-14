@@ -8,6 +8,8 @@ import { PythonSection } from "@/features/python/PythonSection";
 import { BrowserSection } from "@/features/browser/BrowserSection";
 import { ChromeSection } from "@/features/chrome/ChromeSection";
 import { ComputerSection } from "@/features/computer/ComputerSection";
+import { DataSection } from "@/features/data/DataSection";
+import { UpdatesCard } from "@/features/data/UpdatesCard";
 import { SandboxSection } from "@/features/sandbox/SandboxSection";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
@@ -132,6 +134,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
       return <ChromeSection />;
     case "computer":
       return <ComputerSection />;
+    case "data":
+      return <DataSection />;
     case "about":
       return <AboutSection />;
     default:
@@ -322,6 +326,7 @@ function AboutSection() {
           JetBrains Mono (SIL Open Font License); KaTeX fonts for math (SIL OFL). Icons: Lucide
           (ISC). Syntax highlighting: Shiki (MIT).
         </p>
+        <UpdatesCard />
         {import.meta.env.DEV && <DemoChatButton />}
       </div>
     </div>

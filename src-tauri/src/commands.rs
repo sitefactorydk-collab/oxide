@@ -7,6 +7,7 @@ pub mod browser;
 pub mod chats;
 pub mod chrome;
 pub mod computer;
+pub mod data;
 pub mod desktop;
 pub mod extensions;
 pub mod mcp;
@@ -20,6 +21,7 @@ pub mod schedule;
 pub mod settings;
 pub mod system;
 pub mod tools;
+pub mod updates;
 pub mod workspace;
 
 use serde::Serialize;

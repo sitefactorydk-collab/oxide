@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-project-text"
+description = "Enables the add_project_text command without any pre-configured scope."
+commands.allow = ["add_project_text"]
+
+[[permission]]
+identifier = "deny-add-project-text"
+description = "Denies the add_project_text command without any pre-configured scope."
+commands.deny = ["add_project_text"]

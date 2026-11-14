@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-sign-out"
+description = "Enables the mcp_sign_out command without any pre-configured scope."
+commands.allow = ["mcp_sign_out"]
+
+[[permission]]
+identifier = "deny-mcp-sign-out"
+description = "Denies the mcp_sign_out command without any pre-configured scope."
+commands.deny = ["mcp_sign_out"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-cancel-pairing"
+description = "Enables the chrome_cancel_pairing command without any pre-configured scope."
+commands.allow = ["chrome_cancel_pairing"]
+
+[[permission]]
+identifier = "deny-chrome-cancel-pairing"
+description = "Denies the chrome_cancel_pairing command without any pre-configured scope."
+commands.deny = ["chrome_cancel_pairing"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-logs"
+description = "Enables the mcp_logs command without any pre-configured scope."
+commands.allow = ["mcp_logs"]
+
+[[permission]]
+identifier = "deny-mcp-logs"
+description = "Denies the mcp_logs command without any pre-configured scope."
+commands.deny = ["mcp_logs"]

@@ -42,6 +42,8 @@ pub struct AppState {
     pub computer: Option<ComputerUse>,
     /// The control bar and Oxide's window around computer use.
     pub computer_bar: Arc<crate::computer::TauriComputerSink>,
+    /// Oxide's data, config and log folders (Settings → Data).
+    pub dirs: oxide_agent::data::DataDirs,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -60,18 +62,28 @@ fn uv_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// The built extension users load unpacked: next to the app (a packaged build), else the
-/// repo's `extension/dist` (a development build). `None` until it has been built.
-fn extension_dir() -> Option<String> {
-    let mut dirs = Vec::new();
+/// The built extension users load unpacked. Release builds: the installer's copy in the
+/// app's resources (`bundle.resources` in `tauri.conf.json`), else next to the app. Debug
+/// builds: the repo's `extension/dist` first, so a pairing made with that folder keeps
+/// working (an unpacked extension's id comes from its folder). `None` until it's built.
+fn extension_dir(resources: Option<&std::path::Path>) -> Option<String> {
+    let mut packaged = Vec::new();
+    if let Some(dir) = resources {
+        packaged.push(dir.join("extension"));
+    }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        dirs.push(dir.join("extension"));
+        packaged.push(dir.join("extension"));
     }
-    if let Some(repo) = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
-        dirs.push(repo.join("extension").join("dist"));
-    }
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|r| r.join("extension").join("dist"));
+    let dirs: Vec<PathBuf> = if cfg!(debug_assertions) {
+        repo.into_iter().chain(packaged).collect()
+    } else {
+        packaged.into_iter().chain(repo).collect()
+    };
     dirs.into_iter()
         .find(|d| d.join("manifest.json").is_file())
         .map(|d| d.to_string_lossy().into_owned())
@@ -82,6 +94,19 @@ pub struct AppDirs {
     pub data: PathBuf,
     pub config: PathBuf,
     pub logs: PathBuf,
+    /// The app's bundled resources (the Chrome extension), when Tauri knows them.
+    pub resources: Option<PathBuf>,
+}
+
+impl AppDirs {
+    /// The folders "Export all" and "Delete all" work on.
+    pub fn data_dirs(&self) -> oxide_agent::data::DataDirs {
+        oxide_agent::data::DataDirs {
+            data: self.data.clone(),
+            config: self.config.clone(),
+            logs: self.logs.clone(),
+        }
+    }
 }
 
 /// The app-side pieces the MCP manager needs.
@@ -140,7 +165,7 @@ impl AppState {
         );
         let browser = BrowserAgents::new(python.clone(), browser_sink, Some(dirs.logs.clone()));
         let chrome = Bridge::open(data_dir.join("chrome.json"), secrets.clone(), chrome_sink).await;
-        chrome.set_extension_dir(extension_dir());
+        chrome.set_extension_dir(extension_dir(dirs.resources.as_deref()));
         match store.app_settings().await {
             Ok(s) => {
                 computer_bar.set_display(s.computer.display.clone());
@@ -198,6 +223,7 @@ impl AppState {
             scheduler,
             computer,
             computer_bar,
+            dirs: dirs.data_dirs(),
         })
     }
 }

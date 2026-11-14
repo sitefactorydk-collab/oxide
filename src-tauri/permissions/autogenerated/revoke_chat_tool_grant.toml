@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-revoke-chat-tool-grant"
+description = "Enables the revoke_chat_tool_grant command without any pre-configured scope."
+commands.allow = ["revoke_chat_tool_grant"]
+
+[[permission]]
+identifier = "deny-revoke-chat-tool-grant"
+description = "Denies the revoke_chat_tool_grant command without any pre-configured scope."
+commands.deny = ["revoke_chat_tool_grant"]

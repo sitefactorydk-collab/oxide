@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sandbox-copy-in"
+description = "Enables the sandbox_copy_in command without any pre-configured scope."
+commands.allow = ["sandbox_copy_in"]
+
+[[permission]]
+identifier = "deny-sandbox-copy-in"
+description = "Denies the sandbox_copy_in command without any pre-configured scope."
+commands.deny = ["sandbox_copy_in"]

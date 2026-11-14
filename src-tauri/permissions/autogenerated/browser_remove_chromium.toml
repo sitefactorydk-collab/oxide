@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-remove-chromium"
+description = "Enables the browser_remove_chromium command without any pre-configured scope."
+commands.allow = ["browser_remove_chromium"]
+
+[[permission]]
+identifier = "deny-browser-remove-chromium"
+description = "Denies the browser_remove_chromium command without any pre-configured scope."
+commands.deny = ["browser_remove_chromium"]

@@ -39,6 +39,7 @@ import type {
   TaskList,
   ToolApprovalRequest,
   ToolUsage,
+  UpdateStatus,
   WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
@@ -50,6 +51,7 @@ import {
   setChromeEmitter,
 } from "./fakeChrome";
 import { fakeComputerCommands, resetFakeComputer, setComputerEmitter } from "./fakeComputer";
+import { fakeDataCommands, resetFakeData, setUpdateEmitter } from "./fakeData";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -243,6 +245,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         windows: [],
         ...seed.settings?.context,
       },
+      updates: { checkAutomatically: true },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -282,6 +285,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeChrome();
   resetFakeComputer();
   resetFakeSchedule();
+  resetFakeData();
   configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
 
@@ -384,6 +388,8 @@ const scheduleChanged = fakeEvent<ScheduleChange>("schedule-changed");
 setScheduleEmitter((c) => void scheduleChanged.emit(c));
 const computerChanged = fakeEvent<ComputerChanged>("computer-changed");
 setComputerEmitter((c) => void computerChanged.emit(c));
+const updateChanged = fakeEvent<UpdateStatus>("update-changed");
+setUpdateEmitter((s) => void updateChanged.emit(s));
 
 export const fakeEvents = {
   chatStream,
@@ -399,6 +405,7 @@ export const fakeEvents = {
   chromeChanged,
   scheduleChanged,
   computerChanged,
+  updateChanged,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -779,6 +786,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeBrowserCommands,
   ...fakeChromeCommands,
   ...fakeComputerCommands,
+  ...fakeDataCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({

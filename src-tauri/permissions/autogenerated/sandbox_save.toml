@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sandbox-save"
+description = "Enables the sandbox_save command without any pre-configured scope."
+commands.allow = ["sandbox_save"]
+
+[[permission]]
+identifier = "deny-sandbox-save"
+description = "Denies the sandbox_save command without any pre-configured scope."
+commands.deny = ["sandbox_save"]

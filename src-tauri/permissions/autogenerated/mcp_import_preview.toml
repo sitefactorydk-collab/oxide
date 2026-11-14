@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-import-preview"
+description = "Enables the mcp_import_preview command without any pre-configured scope."
+commands.allow = ["mcp_import_preview"]
+
+[[permission]]
+identifier = "deny-mcp-import-preview"
+description = "Denies the mcp_import_preview command without any pre-configured scope."
+commands.deny = ["mcp_import_preview"]

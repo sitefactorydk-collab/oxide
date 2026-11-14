@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sandbox-files"
+description = "Enables the sandbox_files command without any pre-configured scope."
+commands.allow = ["sandbox_files"]
+
+[[permission]]
+identifier = "deny-sandbox-files"
+description = "Denies the sandbox_files command without any pre-configured scope."
+commands.deny = ["sandbox_files"]

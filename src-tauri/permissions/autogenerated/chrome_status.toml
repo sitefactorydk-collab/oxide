@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-status"
+description = "Enables the chrome_status command without any pre-configured scope."
+commands.allow = ["chrome_status"]
+
+[[permission]]
+identifier = "deny-chrome-status"
+description = "Denies the chrome_status command without any pre-configured scope."
+commands.deny = ["chrome_status"]

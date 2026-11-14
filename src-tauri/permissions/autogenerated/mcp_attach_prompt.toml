@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mcp-attach-prompt"
+description = "Enables the mcp_attach_prompt command without any pre-configured scope."
+commands.allow = ["mcp_attach_prompt"]
+
+[[permission]]
+identifier = "deny-mcp-attach-prompt"
+description = "Denies the mcp_attach_prompt command without any pre-configured scope."
+commands.deny = ["mcp_attach_prompt"]

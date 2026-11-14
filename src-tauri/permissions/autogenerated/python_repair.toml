@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-python-repair"
+description = "Enables the python_repair command without any pre-configured scope."
+commands.allow = ["python_repair"]
+
+[[permission]]
+identifier = "deny-python-repair"
+description = "Denies the python_repair command without any pre-configured scope."
+commands.deny = ["python_repair"]

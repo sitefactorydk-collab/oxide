@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sandbox-docker-status"
+description = "Enables the sandbox_docker_status command without any pre-configured scope."
+commands.allow = ["sandbox_docker_status"]
+
+[[permission]]
+identifier = "deny-sandbox-docker-status"
+description = "Denies the sandbox_docker_status command without any pre-configured scope."
+commands.deny = ["sandbox_docker_status"]

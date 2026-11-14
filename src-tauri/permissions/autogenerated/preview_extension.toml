@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-extension"
+description = "Enables the preview_extension command without any pre-configured scope."
+commands.allow = ["preview_extension"]
+
+[[permission]]
+identifier = "deny-preview-extension"
+description = "Denies the preview_extension command without any pre-configured scope."
+commands.deny = ["preview_extension"]

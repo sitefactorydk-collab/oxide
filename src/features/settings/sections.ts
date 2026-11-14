@@ -131,8 +131,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: "data",
     label: "Data",
     icon: Database,
-    phase: 17,
-    blurb: "Export everything or delete all local data.",
+    blurb: "Where Oxide keeps your data, a full export, and deleting everything.",
   },
   {
     id: "developer",
@@ -146,7 +145,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Server,
     blurb: "Managed Python environment: repair and reset.",
   },
-  { id: "about", label: "About", icon: Info, blurb: "Version information." },
+  { id: "about", label: "About", icon: Info, blurb: "Version information and updates." },
 ];
 
 export function findSection(id: string | undefined): SettingsSection {
