@@ -148,7 +148,7 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 **Memory:** opt-in memory across chats, viewable and editable [P7].
 **Voice dictation** [P18, stretch].
 **Packaging:** installers for all three OSes, auto-update, CI [P17].
-**Media generation:** images, video and audio from chats (and Utility Apps), a Gemini provider, and global default models per kind in Settings → Generation [P19].
+**Media generation:** images, video and audio from chats (and Utility Apps) through OpenAI-compatible endpoints, with global default models per kind in Settings → Generation [P19].
 **Utility Apps:** a sidebar page (after Projects) with a gallery of AI utility apps — small React apps in a sandboxed frame that use everything a chat can (each capability asked once per app), per-app model overrides, clone, export/import — and an AI Studio-style builder (chat + Preview/Code) to create and edit them [P20–P22].
 
 ---
@@ -448,15 +448,14 @@ Requested by the user after Phase 14: today models can only read skills (`load_s
 
 **Exit:** every checklist in this plan is ticked, and known issues are triaged in `PROGRESS.md`.
 
-### Phase 19 — Gemini provider & media generation
-Requested by the user after Phase 17 (planning for Utility Apps): Oxide must generate images, video and audio, with global default models per kind of generation.
-- **Gemini provider** in `oxide-llm` (Gemini API, key in the keychain): streaming chat with tools, thinking, images and PDFs, model listing with capabilities; shown with the other providers.
-- **Media generation** in `oxide-llm`: a `MediaProvider` trait — `generate_image` (prompt, optional reference images, size/count), `generate_video` (long-running operation, polled, with progress), `generate_speech` (text, voice) — implemented for Gemini (image models, Veo, TTS) and OpenAI (image, video and speech models), plus a custom URL (OpenAI-compatible) per endpoint. The models and APIs are checked against each provider's docs when the phase is built.
-- **Settings → Generation** (global defaults): four groups — **Text, Image, Video, Audio generation endpoint** — each with a model (from the providers' lists, or a custom model id), an optional custom URL and an optional API key that overrides the provider's key (keychain), shown with the chosen model in the group's header (like AI Studio's “Generation endpoints”).
+### Phase 19 — Generation endpoints & media generation (OpenAI-compatible)
+Requested by the user after Phase 17 (planning for Utility Apps): Oxide must generate images, video and audio, with global default models per kind of generation. **Decided with the user (2026-11-14): every generation endpoint speaks the OpenAI-compatible API** — OpenAI itself, Gemini's and Groq's compatible endpoints, and most local setups (LM Studio, Strata, LocalAI, vLLM, …). Anthropic's and Google's own APIs come later. Chats keep their existing providers.
+- **Media generation** in `oxide-llm` on the OpenAI-compatible API only: images (`/images/generations`, and `/images/edits` with reference images; size, count, base64 or URL results), speech (`/audio/speech`: text, voice, format) and video (`/videos`: create, poll the job with progress, download the result). Shapes are checked against OpenAI's API reference when the phase is built. A server without an endpoint gets a plain “this endpoint doesn't offer … generation” message; no provider-specific native calls.
+- **Settings → Generation** (global defaults): four groups — **Text, Image, Video, Audio generation endpoint** — each with a model (picked from an endpoint's model list, or typed), an optional **custom URL** (`https://…/v1`) and an optional **API key** (keychain) overriding the endpoint's key, the chosen model shown in the group's header (like AI Studio's “Generation endpoints”), and **Test** per group.
 - **Chat tools** `generate_image`, `generate_video`, `generate_audio` (ask before running; costs can be high): results saved as attachments, shown in the transcript (image, video player, audio player) with download, and listed in Used in this chat.
-- **Tests**: fake media servers for each API shape (incl. video polling and failures), settings round trip, tool results.
+- **Tests**: fake OpenAI-compatible servers for images, speech and video (incl. job polling, failures and missing endpoints), settings round trip, tool results.
 
-**Exit:** in a chat on Windows, “make an image of …”, “make a 5-second video of …” and “read this paragraph aloud” work with Gemini and with OpenAI using the Settings → Generation defaults; changing a default changes which model is used.
+**Exit:** in a chat on Windows, “make an image of …”, “make a 5-second video of …” and “read this paragraph aloud” work against OpenAI-compatible endpoints set in Settings → Generation (a local server where one offers the endpoint, else OpenAI); changing a default changes which model and endpoint are used.
 
 ### Phase 20 — Utility Apps: runtime and gallery
 Requested by the user after Phase 17: a **Utility Apps** page (sidebar item after **Projects**) with a collection of AI utility apps, modelled on the user's AI-Toolkit (`github.com/sitefactorydk-collab/AI-Toolkit`, built in Google AI Studio). Apps can be used, cloned, modified and created; sharing as a community platform may come later.
