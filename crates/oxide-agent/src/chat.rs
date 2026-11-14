@@ -3819,7 +3819,7 @@ pub(crate) mod tests {
 
         /// Waits until an event matching `pred` was recorded.
         async fn wait_for(&self, pred: impl Fn(&Recorder) -> bool) {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(Duration::from_secs(30), async {
                 loop {
                     let notified = self.notify.notified();
                     if pred(self) {

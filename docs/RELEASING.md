@@ -8,7 +8,7 @@ Installers, in-app updates and CI (Phase 17).
 |---|---|---|
 | Windows x64 | `Oxide_<v>_x64-setup.exe` (NSIS, per user, no admin), `Oxide_<v>_x64_en-US.msi` (per machine) | Both download the WebView2 runtime when it's missing (Windows 11 has it). |
 | macOS | `Oxide_<v>_universal.dmg` (Apple Silicon and Intel, macOS 11+) | Signed ad hoc unless the Apple secrets below are set. |
-| Linux x64 | `Oxide_<v>_amd64.AppImage`, `Oxide_<v>_amd64.deb`, `Oxide-<v>-1.x86_64.rpm` | Built on Ubuntu 22.04, so they run on that and newer. |
+| Linux x64 | `Oxide_<v>_amd64.AppImage`, `Oxide_<v>_amd64.deb`, `Oxide-<v>-1.x86_64.rpm` | Built on Ubuntu 24.04 (PipeWire 1.x is needed), so they run on 24.04 and newer. |
 | All | `latest.json` and a `.sig` per update bundle (the Windows installers themselves, `Oxide.app.tar.gz`, the AppImage) | For the in-app updater. |
 | Chrome | `oxide-chrome-extension-<v>.zip` | The installers also carry the unpacked extension; Settings → Chrome shows its folder. |
 
@@ -63,9 +63,8 @@ Drafts and pre-releases are invisible to the updater; only the latest published 
   ad-hoc signed app downloaded from the internet is quarantined: right-click → **Open** → **Open**,
   or `xattr -dr com.apple.quarantine /Applications/Oxide.app`. With the Apple secrets set it is
   signed and notarized and opens normally.
-- **Ubuntu 22.04 / 24.04**: `sudo apt install ./Oxide_<v>_amd64.deb` (pulls in WebKitGTK), or
-  `chmod +x Oxide_<v>_amd64.AppImage && ./Oxide_<v>_amd64.AppImage` (24.04 needs `libfuse2t64`
-  for AppImages). Fedora: `sudo dnf install ./Oxide-<v>-1.x86_64.rpm`.
+- **Ubuntu 24.04 or newer**: `sudo apt install ./Oxide_<v>_amd64.deb` (pulls in WebKitGTK), or
+  `chmod +x Oxide_<v>_amd64.AppImage && ./Oxide_<v>_amd64.AppImage` (AppImages need `libfuse2t64`). Fedora: `sudo dnf install ./Oxide-<v>-1.x86_64.rpm`.
 - **Updates**: install release *N*, publish *N+1*, then Settings → About → Check for updates →
   **Install … and restart**. Windows' installer closes Oxide, updates it and starts it again;
   macOS and the AppImage replace themselves and restart. `.deb`/`.rpm` installs say to update

@@ -32,23 +32,23 @@ jobs:
             args: --target universal-apple-darwin
             uv: --target aarch64-apple-darwin --target x86_64-apple-darwin --target universal-apple-darwin
           - name: Linux x64
-            # The oldest supported Ubuntu, so the AppImage and .deb run on older glibc too.
-            os: ubuntu-22.04
+            # Ubuntu 24.04: the screenshot library's PipeWire bindings need PipeWire 1.x (22.04 has 0.3.48).
+            os: ubuntu-24.04
             args: ""
             uv: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf libssl-dev libxdo-dev libdbus-1-dev libxcb1-dev libxrandr-dev \
-            libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev clang libfuse2 rpm
+            libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev clang libfuse2t64 rpm
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -111,10 +111,10 @@ jobs:
   extension:
     name: Chrome extension zip
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
