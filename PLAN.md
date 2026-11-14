@@ -148,6 +148,8 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 **Memory:** opt-in memory across chats, viewable and editable [P7].
 **Voice dictation** [P18, stretch].
 **Packaging:** installers for all three OSes, auto-update, CI [P17].
+**Media generation:** images, video and audio from chats (and Utility Apps), a Gemini provider, and global default models per kind in Settings → Generation [P19].
+**Utility Apps:** a sidebar page (after Projects) with a gallery of AI utility apps — small React apps in a sandboxed frame that use everything a chat can (each capability asked once per app), per-app model overrides, clone, export/import — and an AI Studio-style builder (chat + Preview/Code) to create and edit them [P20–P22].
 
 ---
 
@@ -445,6 +447,44 @@ Requested by the user after Phase 14: today models can only read skills (`load_s
 - **Stretch:** voice dictation (local `whisper-rs` or provider STT), a usage dashboard (tokens per provider), and conversation sharing via export to HTML.
 
 **Exit:** every checklist in this plan is ticked, and known issues are triaged in `PROGRESS.md`.
+
+### Phase 19 — Gemini provider & media generation
+Requested by the user after Phase 17 (planning for Utility Apps): Oxide must generate images, video and audio, with global default models per kind of generation.
+- **Gemini provider** in `oxide-llm` (Gemini API, key in the keychain): streaming chat with tools, thinking, images and PDFs, model listing with capabilities; shown with the other providers.
+- **Media generation** in `oxide-llm`: a `MediaProvider` trait — `generate_image` (prompt, optional reference images, size/count), `generate_video` (long-running operation, polled, with progress), `generate_speech` (text, voice) — implemented for Gemini (image models, Veo, TTS) and OpenAI (image, video and speech models), plus a custom URL (OpenAI-compatible) per endpoint. The models and APIs are checked against each provider's docs when the phase is built.
+- **Settings → Generation** (global defaults): four groups — **Text, Image, Video, Audio generation endpoint** — each with a model (from the providers' lists, or a custom model id), an optional custom URL and an optional API key that overrides the provider's key (keychain), shown with the chosen model in the group's header (like AI Studio's “Generation endpoints”).
+- **Chat tools** `generate_image`, `generate_video`, `generate_audio` (ask before running; costs can be high): results saved as attachments, shown in the transcript (image, video player, audio player) with download, and listed in Used in this chat.
+- **Tests**: fake media servers for each API shape (incl. video polling and failures), settings round trip, tool results.
+
+**Exit:** in a chat on Windows, “make an image of …”, “make a 5-second video of …” and “read this paragraph aloud” work with Gemini and with OpenAI using the Settings → Generation defaults; changing a default changes which model is used.
+
+### Phase 20 — Utility Apps: runtime and gallery
+Requested by the user after Phase 17: a **Utility Apps** page (sidebar item after **Projects**) with a collection of AI utility apps, modelled on the user's AI-Toolkit (`github.com/sitefactorydk-collab/AI-Toolkit`, built in Google AI Studio). Apps can be used, cloned, modified and created; sharing as a community platform may come later.
+- **What an app is:** a small React + TypeScript web app (several files) with a manifest `oxide-app.json` (id, name, description, icon, category, version, entry file, the capabilities it uses, default models per kind of generation). Stored in `<app data>\apps\<id>\`. It runs in a sandboxed frame on its own URI scheme (`oxide-app`, like the artifact frame: own origin, no Tauri IPC), compiled in the frame with the bundled Babel and an import map of bundled libraries (React, Tailwind, lucide, react-markdown, jszip, …).
+- **The `oxide` SDK in the frame** (postMessage to Oxide, typed, with a `.d.ts` for the builder): everything a chat can do — text generation with streaming, images and PDFs as input, structured JSON output; image, video and audio generation (Phase 19); web search, web fetch (page → Markdown), site crawl that respects robots.txt; MCP connector tools; files (pick, drop, save, zip); managed Python, the Docker sandbox, the browser agent and Chrome; per-app storage. **Each capability asks once per app** (an approval card naming the app and the capability, “Allow for this app” / “Deny”), revocable in the app's settings.
+- **Per-app settings:** override the global generation defaults (Text, Image, Video, Audio: model, custom URL, API key) for that app; the app's granted capabilities; its storage (clear).
+- **Gallery** (`/apps`): cards with icon, name, description and category, search, filter by category; an app opens full-page with a slim header (name, **Settings**, **Clone**, **Edit** for own apps, **Export**). Built-in apps are read-only; **Clone** makes an editable copy under “My apps”.
+- **Built-in apps** (ported from AI-Toolkit onto the SDK; the rest come in Phase 22): **AI Meta Tag Generator**, **Readability & Tone Analyzer**, **AI HTML Table from Image** and **AI SVG Creator** (text, page fetching, image input and code/SVG output between them). The user can change this pick.
+- **Sharing groundwork:** export an app as one `.oxideapp` file (zip of the folder) and import one (with its manifest and capabilities shown before installing); apps are included in Settings → Data → Export all and removed by Delete all.
+- **Tests**: manifest validation, SDK messages and capability approvals (once per app, revoke), the frame has no IPC (as in Phase 8), export/import round trip, the four built-in apps' happy paths against fake providers.
+
+**Exit:** on Windows, the four built-in apps run from the Utility Apps page with the global models and with a per-app override; each capability asks once; a cloned app can be exported and imported again.
+
+### Phase 21 — Utility App builder (build mode)
+Requested by the user: creating and editing apps “much like AI Studio's build mode”, with a switch between **Preview** and **Code**.
+- **Builder view** for **New app**, **Clone** and **Edit**: a chat on the left with a model (the Text default or a picked model) that builds the app; on the right **Preview | Code**. Preview reloads live after each change; Code shows the file tree and an editor (syntax highlighting, save, find) so the user can read and edit any file.
+- **Builder tools for the model** (scoped to the app's folder): list/read/write/edit/delete files, update the manifest (name, description, icon, category, capabilities, default models), read the preview's build errors and console, and take a screenshot of the preview. The system prompt carries the SDK's types and the app conventions. Errors in the preview offer **Fix with AI**.
+- **Checkpoints:** every model turn and every manual save makes a version; **Restore** goes back. New apps start from a template.
+- **Publish:** an app under construction is a draft until **Save to Utility Apps**; changing name, icon and category from the builder.
+- **Tests**: builder tools confined to the app folder, checkpoints and restore, compile errors reported to the model, the code editor's save reaching the preview.
+
+**Exit:** on Windows, “build an app that turns a pasted CSV into a chart and lets me download it as PNG” is built from scratch in the builder, its code is changed by hand in Code view, a built-in app is cloned and modified, and both are exported.
+
+### Phase 22 — More Utility Apps (rest of AI-Toolkit)
+- Port the remaining AI-Toolkit tools onto the SDK (AI Web Auditor, AI SEO Recommendations, AI Schema Markup Generator, Multi Purpose AI Translator, AI FAQ Questions Generator, llms.txt Generator, Markdown for AI Agents testing tool, AI SFT Dataset Generator, SP Page Builder - AI, AI Plugin Creator), in the order the user picks; each as a built-in app with its own test.
+- Later (not planned yet): a community catalogue for sharing apps.
+
+**Exit:** each ported app does on Windows what its AI-Toolkit original does, using Oxide's models and capabilities.
 
 ---
 
