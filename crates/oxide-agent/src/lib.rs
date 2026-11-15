@@ -28,6 +28,7 @@ pub mod demo;
 mod error;
 pub mod export;
 pub mod knowledge;
+pub mod markdown_html;
 pub mod memory;
 mod registry;
 pub mod sampling;

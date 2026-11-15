@@ -26,6 +26,7 @@ import {
   useRenameConversation,
   useStarConversation,
 } from "@/features/chats/queries";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { SIDEBAR_DEFAULT, useUi } from "@/stores/ui";
 import { ProfileMenu } from "./ProfileMenu";
@@ -37,6 +38,7 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
   const recentsOpen = useUi((s) => s.recentsOpen);
   const toggleSection = useUi((s) => s.toggleSection);
   const { data: conversations, isPending } = useConversations();
+  const t = useT();
 
   const [starred, recents] = useMemo(() => {
     // The list arrives newest first.
@@ -45,28 +47,33 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
 
   return (
     <aside
-      aria-label="Sidebar"
+      aria-label={t("nav.sidebar")}
       className="relative flex shrink-0 flex-col border-r border-line bg-sidebar"
       style={{ width }}
     >
       <nav aria-label="Primary" className="flex flex-col gap-0.5 px-2 pt-2">
-        <NavItem to="/new" icon={Plus} label="New chat" shortcut={shortcutText("newChat")} />
-        <Tooltip label="Search chats" shortcut={shortcutText("search")} side="right">
+        <NavItem
+          to="/new"
+          icon={Plus}
+          label={t("nav.newChat")}
+          shortcut={shortcutText("newChat")}
+        />
+        <Tooltip label={t("nav.searchChats")} shortcut={shortcutText("search")} side="right">
           <button type="button" onClick={() => setSearchOpen(true)} className={navItemClass(false)}>
             <Search className="size-[18px] shrink-0 text-fg-muted" />
-            <span className="flex-1 text-left">Search</span>
+            <span className="flex-1 text-left">{t("nav.search")}</span>
           </button>
         </Tooltip>
-        <NavItem to="/chats" icon={MessagesSquare} label="Chats" />
-        <NavItem to="/projects" icon={FolderClosed} label="Projects" />
-        <NavItem to="/artifacts" icon={Shapes} label="Artifacts" />
-        <NavItem to="/scheduled" icon={CalendarClock} label="Scheduled" end={false} />
+        <NavItem to="/chats" icon={MessagesSquare} label={t("nav.chats")} />
+        <NavItem to="/projects" icon={FolderClosed} label={t("nav.projects")} />
+        <NavItem to="/artifacts" icon={Shapes} label={t("nav.artifacts")} />
+        <NavItem to="/scheduled" icon={CalendarClock} label={t("nav.scheduled")} end={false} />
       </nav>
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {starred.length > 0 && (
           <Section
-            title="Starred"
+            title={t("nav.starred")}
             open={starredOpen}
             onToggle={() => toggleSection("starred")}
             items={starred}
@@ -74,12 +81,12 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
           />
         )}
         <Section
-          title="Recents"
+          title={t("nav.recents")}
           open={recentsOpen}
           onToggle={() => toggleSection("recents")}
           items={recents}
           activeChatId={activeChatId}
-          empty={isPending ? undefined : "No chats yet"}
+          empty={isPending ? undefined : t("nav.noChats")}
         />
       </div>
 

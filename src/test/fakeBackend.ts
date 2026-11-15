@@ -52,6 +52,7 @@ import {
 } from "./fakeChrome";
 import { fakeComputerCommands, resetFakeComputer, setComputerEmitter } from "./fakeComputer";
 import { fakeDataCommands, resetFakeData, setUpdateEmitter } from "./fakeData";
+import { fakeInsightCommands, resetFakeInsights } from "./fakeInsights";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -158,6 +159,10 @@ export interface FakeSeed {
     computer: Partial<AppSettings["computer"]>;
     /** Changes to context management. */
     context: Partial<AppSettings["context"]>;
+    /** Interface language. */
+    language: AppSettings["appearance"]["language"];
+    /** Changes to dictation (Settings → Voice). */
+    dictation: Partial<AppSettings["dictation"]>;
   }>;
   empty?: boolean;
   replies?: ReplyMode;
@@ -179,7 +184,11 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     keys: new Map(),
     settings: {
       profile: { name: seed.settings?.name ?? "" },
-      appearance: { theme: seed.settings?.theme ?? "system", chatFont: "serif" },
+      appearance: {
+        theme: seed.settings?.theme ?? "system",
+        chatFont: "serif",
+        language: seed.settings?.language ?? "system",
+      },
       models: {
         showUnsupported: false,
         autoTitle: true,
@@ -246,6 +255,13 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         ...seed.settings?.context,
       },
       updates: { checkAutomatically: true },
+      dictation: {
+        enabled: true,
+        providerId: null,
+        model: "whisper-1",
+        language: "",
+        ...seed.settings?.dictation,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -286,6 +302,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeComputer();
   resetFakeSchedule();
   resetFakeData();
+  resetFakeInsights();
   configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
 
@@ -787,6 +804,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeChromeCommands,
   ...fakeComputerCommands,
   ...fakeDataCommands,
+  ...fakeInsightCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
@@ -995,7 +1013,8 @@ export const fakeCommands: typeof RealCommands = {
       return fail("notFound", "conversation not found");
     }
     state.exports.push({ id, leafId, format });
-    return ok(`C:\\Users\\me\\Documents\\export.${format === "json" ? "json" : "md"}`);
+    const ext = format === "json" ? "json" : format === "html" ? "html" : "md";
+    return ok(`C:\\Users\\me\\Documents\\export.${ext}`);
   },
   createDemoConversation: (model) => {
     const now = Date.now();

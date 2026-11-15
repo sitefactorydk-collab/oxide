@@ -12,7 +12,7 @@ export function StatusDot({ status, className }: { status: McpStatus; className?
         status === "running" && "bg-success",
         status === "starting" && "animate-pulse bg-accent",
         status === "error" && "bg-danger",
-        status === "needsAuth" && "bg-accent",
+        (status === "needsAuth" || status === "needsTrust") && "bg-accent",
         (status === "disabled" || status === "stopped") && "bg-line-strong",
         className,
       )}

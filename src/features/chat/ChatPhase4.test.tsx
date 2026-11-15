@@ -110,6 +110,21 @@ describe("message actions", () => {
     );
     expect(await screen.findByText(/Exported to/)).toBeInTheDocument();
   });
+
+  it("exports a chat as a web page", async () => {
+    renderApp("/chat/c2");
+    await screen.findByText(/warm neutral palette/);
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    const trigger = within(crumbs).getByRole("button", {
+      name: /Design tokens for light and dark/,
+    });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Export as web page" }));
+    await waitFor(() =>
+      expect(fakeState().exports).toEqual([{ id: "c2", leafId: null, format: "html" }]),
+    );
+    expect(await screen.findByText(/export\.html/)).toBeInTheDocument();
+  });
 });
 
 describe("attachments", () => {

@@ -1,16 +1,25 @@
 //! Scheduled tasks (Phase 15): create, edit, pause, run now and history.
 
 use oxide_core::{ScheduledTask, TaskInput, TaskRun, TaskSchedule, Timestamp};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::error::CmdResult;
 use crate::state::AppState;
 
-/// Folders are checked (and made full paths) like a chat's, when the task is saved.
-async fn resolve_folders(mut input: TaskInput) -> CmdResult<TaskInput> {
+/// Folders are checked (and made full paths) like a chat's, when the task is saved. Those
+/// the task already has (`kept`) need no new confirmation.
+async fn resolve_folders(
+    app: &AppHandle,
+    mut input: TaskInput,
+    kept: &[String],
+) -> CmdResult<TaskInput> {
+    crate::chosen::remember(
+        app,
+        &kept.iter().map(std::path::PathBuf::from).collect::<Vec<_>>(),
+    );
     let mut folders = Vec::new();
     for f in std::mem::take(&mut input.folders) {
-        folders.push(crate::commands::workspace::resolve_folder(f).await?);
+        folders.push(crate::commands::workspace::resolve_folder(app.clone(), f).await?);
     }
     input.folders = folders;
     Ok(input)
@@ -35,21 +44,24 @@ pub async fn get_scheduled_task(
 #[tauri::command]
 #[specta::specta]
 pub async fn create_scheduled_task(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: TaskInput,
 ) -> CmdResult<ScheduledTask> {
-    let input = resolve_folders(input).await?;
+    let input = resolve_folders(&app, input, &[]).await?;
     Ok(state.scheduler.create(input).await?)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn update_scheduled_task(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     input: TaskInput,
 ) -> CmdResult<ScheduledTask> {
-    let input = resolve_folders(input).await?;
+    let kept = state.scheduler.get(&id).await?.folders;
+    let input = resolve_folders(&app, input, &kept).await?;
     Ok(state.scheduler.update(&id, input).await?)
 }
 

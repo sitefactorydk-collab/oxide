@@ -11,10 +11,14 @@ import { ComputerSection } from "@/features/computer/ComputerSection";
 import { DataSection } from "@/features/data/DataSection";
 import { UpdatesCard } from "@/features/data/UpdatesCard";
 import { SandboxSection } from "@/features/sandbox/SandboxSection";
+import { VoiceSection } from "@/features/dictation/VoiceSection";
+import { UsageSection } from "@/features/usage/UsageSection";
+import { useT, type MessageKey, type T } from "@/i18n";
+import type { UiLanguage } from "@/bindings";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
-import { commands, type PingResponse } from "@/bindings";
+import { commands, type AppMetrics, type PingResponse } from "@/bindings";
 import { OxideMark } from "@/components/OxideMark";
 import { IconButton } from "@/components/ui/IconButton";
 import { useNavigate } from "react-router";
@@ -27,7 +31,7 @@ import { ConnectorsSection } from "@/features/mcp/ConnectorsSection";
 import { DeveloperSection } from "@/features/mcp/DeveloperSection";
 import { ModelsSection } from "@/features/models/ModelsSection";
 import { ProvidersSection } from "@/features/providers/ProvidersSection";
-import { useSetChatFont, useSetProfileName, useSetTheme } from "./queries";
+import { useSetChatFont, useSetLanguage, useSetProfileName, useSetTheme } from "./queries";
 import { findSection, SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 
 /** Settings: left nav + section pages. Sections become real in the phase they name. */
@@ -43,6 +47,7 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const section = findSection(sectionId);
+  const t = useT();
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
@@ -52,11 +57,11 @@ export function SettingsDialog({
           className="ox-pop fixed left-1/2 top-1/2 z-50 flex h-[min(680px,calc(100vh-64px))] w-[min(960px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-line bg-app shadow-lg outline-none"
         >
           <nav
-            aria-label="Settings sections"
+            aria-label={t("settings.sections")}
             className="flex w-56 shrink-0 flex-col gap-px overflow-y-auto border-r border-line bg-sidebar p-2"
           >
             <Dialog.Title className="px-2.5 pb-3 pt-2 font-serif text-xl font-normal text-fg">
-              Settings
+              {t("settings.title")}
             </Dialog.Title>
             {SETTINGS_SECTIONS.map((s) => {
               const Icon = s.icon;
@@ -73,7 +78,7 @@ export function SettingsDialog({
                   )}
                 >
                   <Icon className="size-4 shrink-0" />
-                  {s.label}
+                  {sectionLabel(t, s)}
                 </button>
               );
             })}
@@ -81,13 +86,15 @@ export function SettingsDialog({
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="absolute right-3 top-3">
               <Dialog.Close asChild>
-                <IconButton label="Close settings">
+                <IconButton label={t("settings.close")}>
                   <X className="size-[18px]" />
                 </IconButton>
               </Dialog.Close>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-10 py-8">
-              <h2 className="mb-1 font-serif text-2xl font-normal text-fg">{section.label}</h2>
+              <h2 className="mb-1 font-serif text-2xl font-normal text-fg">
+                {sectionLabel(t, section)}
+              </h2>
               <p className="mb-8 text-md text-fg-muted">{section.blurb}</p>
               <SectionBody section={section} />
             </div>
@@ -98,8 +105,19 @@ export function SettingsDialog({
   );
 }
 
+/** A section's name in the interface language (its English label when not translated). */
+function sectionLabel(t: T, s: SettingsSection): string {
+  const key = `section.${s.id}` as MessageKey;
+  const text = t(key);
+  return text === key ? s.label : text;
+}
+
 function SectionBody({ section }: { section: SettingsSection }) {
   switch (section.id) {
+    case "voice":
+      return <VoiceSection />;
+    case "usage":
+      return <UsageSection />;
     case "general":
       return <GeneralSection />;
     case "appearance":
@@ -292,19 +310,59 @@ function AppearanceSection() {
           ))}
         </div>
       </Field>
+      <LanguageField />
     </>
+  );
+}
+
+function LanguageField() {
+  const t = useT();
+  const language = useUi((s) => s.language);
+  const setLanguage = useSetLanguage();
+  const options: Array<{ id: UiLanguage; label: string }> = [
+    { id: "system", label: t("settings.languageSystem") },
+    { id: "en", label: "English" },
+    { id: "da", label: "Dansk" },
+  ];
+  return (
+    <Field label={t("settings.language")} hint={t("settings.languageHint")}>
+      <div role="radiogroup" aria-label={t("settings.language")} className="flex flex-wrap gap-2">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={language === o.id}
+            onClick={() => setLanguage(o.id)}
+            className={cn(
+              "h-9 rounded-lg border px-3 text-base transition-colors",
+              language === o.id
+                ? "border-accent text-fg ring-2 ring-accent-soft"
+                : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </Field>
   );
 }
 
 function AboutSection() {
   const [info, setInfo] = useState<PingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<AppMetrics | null>(null);
   useEffect(() => {
     let alive = true;
     commands
       .ping("Oxide")
       .then((r) => alive && setInfo(r))
       .catch((e: unknown) => alive && setError(String(e)));
+    commands
+      .appMetrics()
+      .then((m) => alive && setMetrics(m))
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -321,6 +379,17 @@ function AboutSection() {
               ? "Backend not reachable (browser preview)"
               : "Checking backend…"}
         </p>
+        {metrics && (metrics.startupMs !== null || metrics.memoryBytes !== null) && (
+          <p className="text-sm text-fg-subtle" data-testid="about-metrics">
+            {[
+              metrics.startupMs !== null && `Started in ${(metrics.startupMs / 1000).toFixed(1)} s`,
+              metrics.memoryBytes !== null &&
+                `${Math.round(metrics.memoryBytes / (1024 * 1024))} MB in use (Oxide itself; the window’s web view counts separately)`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        )}
         <p className="mt-4 max-w-md text-base text-fg-muted">
           A desktop AI assistant written in Rust on Tauri. Fonts: Inter, Source Serif 4 and
           JetBrains Mono (SIL Open Font License); KaTeX fonts for math (SIL OFL). Icons: Lucide

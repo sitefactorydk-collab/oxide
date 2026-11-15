@@ -30,6 +30,7 @@ use crate::oauth::{self, OAuthSession, TokenStore};
 use crate::process::{self, ProcessSpec};
 use crate::protocol;
 use crate::transport::{AuthProvider, HttpConfig, HttpTransport, StdioTransport, Transport};
+use crate::trust::{TrustState, TrustStore};
 
 /// Receives everything the UI shows.
 pub trait ManagerSink: Send + Sync + 'static {
@@ -63,6 +64,9 @@ pub struct ManagerOptions {
     /// Working folder of local servers (default: the home folder). Extension servers run in
     /// their own folder.
     pub cwd: Option<PathBuf>,
+    /// Where trusted local commands are remembered (see [`crate::trust`]). `None` trusts
+    /// every command (tests).
+    pub trust_file: Option<PathBuf>,
 }
 
 impl Default for ManagerOptions {
@@ -74,6 +78,7 @@ impl Default for ManagerOptions {
             ask_timeout: Duration::from_secs(600),
             watch_every: Duration::from_secs(1),
             cwd: None,
+            trust_file: None,
         }
     }
 }
@@ -131,6 +136,7 @@ struct Inner {
     runtime: Mutex<Option<tokio::runtime::Handle>>,
     /// Servers of installed desktop extensions that can run, by name.
     extensions: Mutex<HashMap<String, ExtensionServer>>,
+    trust: TrustStore,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -152,6 +158,7 @@ impl McpManager {
         tokens: Arc<dyn TokenStore>,
         opts: ManagerOptions,
     ) -> Self {
+        let trust = TrustStore::open(opts.trust_file.clone());
         Self {
             inner: Arc::new(Inner {
                 file: ConfigFile::new(config_path),
@@ -170,6 +177,7 @@ impl McpManager {
                 next_gen: AtomicU64::new(1),
                 runtime: Mutex::new(tokio::runtime::Handle::try_current().ok()),
                 extensions: Mutex::new(HashMap::new()),
+                trust,
             }),
         }
     }
@@ -274,7 +282,22 @@ impl McpManager {
     pub fn restart(&self, name: &str) -> Result<(), McpError> {
         let config = self.server_config(name)?;
         self.inner.stop_slot(name);
-        self.inner.start_slot(name, config);
+        self.inner.start_or_hold(name, config);
+        Ok(())
+    }
+
+    /// Trusts a local server's current command line and starts it (from its
+    /// "Trust and start" card).
+    pub fn trust(&self, name: &str) -> Result<(), McpError> {
+        let config = self.server_config(name)?;
+        if self.inner.trust.trust([(name, &config)]) {
+            self.inner.trust.save_soon();
+        }
+        tracing::info!("MCP server {name}: command trusted by the user");
+        if config.enabled {
+            self.inner.stop_slot(name);
+            self.inner.start_slot(name, config);
+        }
         Ok(())
     }
 
@@ -354,6 +377,8 @@ impl McpManager {
     pub async fn save_config_text(&self, text: &str) -> Result<(), McpError> {
         let cfg = self.inner.file.save_text(text).await?;
         *lock(&self.inner.config_error) = None;
+        // Written in Oxide's own editor: the user's commands.
+        self.inner.trust_all(&cfg, None);
         self.inner.apply(cfg);
         Ok(())
     }
@@ -397,7 +422,25 @@ impl McpManager {
                 server.name.trim()
             )));
         }
-        self.edit(|c| c.upsert(&server, old_name.as_deref())).await
+        let name = server.name.trim().to_owned();
+        let mut trusted = None;
+        let trust = &self.inner.trust;
+        self.edit(|c| {
+            c.upsert(&server, old_name.as_deref())?;
+            // Added or edited in Settings: the user's command.
+            if let Some(Ok(saved)) = c.server(&name) {
+                trusted = Some(trust.trust([(name.as_str(), &saved)]));
+            }
+            if let Some(old) = old_name.as_deref().filter(|o| *o != name) {
+                trust.forget(old);
+            }
+            Ok(())
+        })
+        .await?;
+        if trusted.is_some() || old_name.is_some() {
+            trust.save_soon();
+        }
+        Ok(())
     }
 
     pub async fn remove_server(&self, name: &str) -> Result<(), McpError> {
@@ -411,7 +454,11 @@ impl McpManager {
             c.remove(name);
             Ok(())
         })
-        .await
+        .await?;
+        if self.inner.trust.forget(name) {
+            self.inner.trust.save_soon();
+        }
+        Ok(())
     }
 
     /// Turns a server, or an extension's server, on or off.
@@ -484,8 +531,11 @@ impl McpManager {
         let text =
             text.ok_or_else(|| McpError::Config("Claude desktop's config wasn't found".into()))?;
         let mut count = 0;
+        let inner = &self.inner;
         self.edit(|c| {
             count = config::import_into(c, &text, &names)?;
+            // The user picked these from the import list, which shows each command.
+            inner.trust_all(c, Some(&names));
             Ok(())
         })
         .await?;
@@ -640,6 +690,7 @@ impl Inner {
             restarts: 0,
             signed_in: false,
             extension: ext.map(|e| e.display_name),
+            trust_changed: false,
             updated_at: now_ms(),
         }
     }
@@ -650,6 +701,10 @@ impl Inner {
             return;
         }
         *lock(&self.config) = cfg.clone();
+        if self.trust.take_seed() {
+            // First start with the trust file: what is already configured keeps running.
+            self.trust_all(&cfg, None);
+        }
         let entries = self.entries(&cfg);
         let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
         *lock(&self.order) = names.clone();
@@ -680,15 +735,25 @@ impl Inner {
                     });
                 }
                 Ok(config) => {
-                    let same = lock(&self.slots)
+                    let (same, held) = lock(&self.slots)
                         .get(&name)
-                        .is_some_and(|s| s.config.as_ref() == Some(&config));
-                    if same {
+                        .map(|s| {
+                            (
+                                s.config.as_ref() == Some(&config),
+                                s.state.status == McpStatus::NeedsTrust,
+                            )
+                        })
+                        .unwrap_or((false, false));
+                    // A held server whose command has been trusted meanwhile starts now.
+                    let released = held
+                        && config.enabled
+                        && self.trust.state(&name, &config) == TrustState::Trusted;
+                    if same && !released {
                         continue;
                     }
                     self.stop_slot(&name);
                     if config.enabled {
-                        self.start_slot(&name, config);
+                        self.start_or_hold(&name, config);
                     } else {
                         let generation = self.ensure_slot(&name, Some(&config));
                         let blank = self.blank_state(&name, Some(&config));
@@ -773,6 +838,50 @@ impl Inner {
             s.task = None;
             s.client = None;
         }
+    }
+
+    /// Trusts the config's local servers (those in `only`, if given) and saves the list.
+    fn trust_all(&self, cfg: &OxideConfig, only: Option<&[String]>) {
+        let servers: Vec<(String, McpServerConfig)> = cfg
+            .servers()
+            .into_iter()
+            .filter(|(n, _)| only.is_none_or(|o| o.iter().any(|x| x == n)))
+            .filter_map(|(n, c)| c.ok().map(|c| (n, c)))
+            .collect();
+        if self
+            .trust
+            .trust(servers.iter().map(|(n, c)| (n.as_str(), c)))
+        {
+            self.trust.save_soon();
+        }
+    }
+
+    /// Starts a server, unless it is a local command the user hasn't trusted yet: then it
+    /// waits in `NeedsTrust`.
+    fn start_or_hold(self: &Arc<Self>, name: &str, config: McpServerConfig) {
+        let from_extension = lock(&self.extensions).contains_key(name)
+            && !lock(&self.config).has_server(name);
+        let state = if from_extension {
+            TrustState::Trusted
+        } else {
+            self.trust.state(name, &config)
+        };
+        if state == TrustState::Trusted {
+            self.start_slot(name, config);
+            return;
+        }
+        tracing::info!("MCP server {name} waits until its command is trusted");
+        let generation = self.ensure_slot(name, Some(&config));
+        let blank = self.blank_state(name, Some(&config));
+        self.update(name, generation, |s| {
+            let restarts = s.state.restarts;
+            s.config = Some(config.clone());
+            s.state = blank;
+            s.state.restarts = restarts;
+            s.state.status = McpStatus::NeedsTrust;
+            s.state.trust_changed = state == TrustState::Changed;
+            s.lists = McpServerLists::default();
+        });
     }
 
     fn start_slot(self: &Arc<Self>, name: &str, config: McpServerConfig) {

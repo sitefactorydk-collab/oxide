@@ -409,4 +409,48 @@ mod tests {
             "{got:?}"
         );
     }
+
+    /// Random and mutated frames: the reader never panics, never returns more than its
+    /// limit, and stops at the first error (Phase 18 fuzzing).
+    #[tokio::test]
+    async fn random_and_mutated_frames_never_panic() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x0_51de);
+        let max = 4_096;
+        for round in 0..4_000 {
+            let mut bytes: Vec<u8> = if round % 2 == 0 {
+                // Pure noise.
+                (0..rng.gen_range(0..300)).map(|_| rng.r#gen()).collect()
+            } else {
+                // Valid frames with a few bits flipped and a random cut.
+                let mut b = Vec::new();
+                for _ in 0..rng.gen_range(1..4) {
+                    let op = [OP_TEXT, OP_CONT, OP_PING, OP_CLOSE, OP_BINARY][rng.gen_range(0..5)];
+                    let n = rng.gen_range(0..6_000);
+                    let payload: Vec<u8> = (0..n).map(|_| rng.gen_range(b'a'..=b'z')).collect();
+                    let mask = if rng.gen_bool(0.9) { Some(rng.r#gen()) } else { None };
+                    b.extend(encode(op, &payload, mask));
+                }
+                for _ in 0..rng.gen_range(0..4) {
+                    let at = rng.gen_range(0..b.len());
+                    b[at] ^= 1 << rng.gen_range(0..8);
+                }
+                let cut = rng.gen_range(0..=b.len());
+                b.truncate(cut);
+                b
+            };
+            // Huge declared lengths must not allocate their size.
+            if round % 97 == 0 {
+                bytes = vec![0x81, 0xFF, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 1, 2, 3, 4];
+            }
+            let got = read_all(bytes, true, max).await;
+            for (k, m) in got.iter().enumerate() {
+                match m {
+                    Ok(Message::Text(t)) => assert!(t.len() <= max),
+                    Ok(_) => {}
+                    Err(_) => assert_eq!(k, got.len() - 1, "reading stops at an error"),
+                }
+            }
+        }
+    }
 }

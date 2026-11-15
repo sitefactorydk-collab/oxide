@@ -52,6 +52,32 @@ fn extra_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// How much memory Oxide's own process uses (resident set / working set), in bytes, where
+/// the system says. The web view's processes aren't included.
+pub fn own_memory_bytes() -> Option<u64> {
+    #[cfg(windows)]
+    {
+        windows::own_working_set()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+        let kb: u64 = line
+            .trim_start_matches("VmRSS:")
+            .trim()
+            .trim_end_matches("kB")
+            .trim()
+            .parse()
+            .ok()?;
+        Some(kb * 1024)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
+}
+
 pub fn home_dir() -> Option<PathBuf> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os(var)
@@ -264,6 +290,13 @@ pub fn spawn(spec: &ProcessSpec) -> Result<Spawned, McpError> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn own_memory_is_reported() {
+        let bytes = super::own_memory_bytes().expect("memory");
+        assert!(bytes > 1024 * 1024, "{bytes}");
+    }
+
     use super::*;
 
     fn exts() -> Vec<String> {

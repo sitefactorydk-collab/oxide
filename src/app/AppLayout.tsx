@@ -1,4 +1,6 @@
 import { matchPath, useLocation, useNavigate } from "react-router";
+import { useEffect } from "react";
+import { commands } from "@/bindings";
 import { Toaster } from "@/components/ui/Toaster";
 import { useBrowserEvents } from "@/features/browser/queries";
 import { useChromeEvents } from "@/features/chrome/queries";
@@ -18,6 +20,7 @@ import {
   type SettingsLocationState,
 } from "@/features/settings/useOpenSettings";
 import { ShortcutsDialog } from "@/features/shortcuts/ShortcutsDialog";
+import { useDocumentLanguage } from "@/i18n";
 import { useUi } from "@/stores/ui";
 import { PageRoutes } from "./PageRoutes";
 import { Sidebar } from "./shell/Sidebar";
@@ -44,6 +47,11 @@ export function AppLayout() {
   useScheduleEvents();
   useUpdateEvents();
   useDesktopActions();
+  useDocumentLanguage();
+  // The first screen is drawn: Oxide logs its start-up time (Settings → About shows it).
+  useEffect(() => {
+    void commands.appReady().catch(() => {});
+  }, []);
 
   const settingsOpen = isSettingsPath(location.pathname);
   const settingsSection = settingsOpen ? location.pathname.split("/")[2] : undefined;

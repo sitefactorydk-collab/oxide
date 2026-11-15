@@ -149,7 +149,11 @@ impl AppState {
             parts.sink,
             parts.agent,
             parts.tokens.clone(),
-            ManagerOptions::default(),
+            ManagerOptions {
+                // Local commands added outside Oxide ask before their first start (Phase 18).
+                trust_file: Some(data_dir.join("mcp-trust.json")),
+                ..ManagerOptions::default()
+            },
         );
         let extensions = Extensions::new(data_dir.join("extensions"), mcp.clone(), parts.tokens);
         let skills = Skills::new(data_dir.join("skills"));

@@ -239,6 +239,10 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             quick::hide(app);
         }
         (quick::QUICK_LABEL, WindowEvent::Focused(false)) => quick::on_blur(app),
+        // Dropped files and folders count as chosen by the user (`crate::chosen`).
+        (MAIN_LABEL, WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. })) => {
+            crate::chosen::remember(app, paths);
+        }
         _ => {}
     }
 }

@@ -28,6 +28,8 @@ interface FakeMcp {
   calls: Array<{ server: string; tool: string; arguments: string; token: string | null }>;
   configText: string;
   imported: string[];
+  /** Servers trusted from their "Trust and start" card. */
+  trusted: string[];
 }
 
 let mcp: FakeMcp;
@@ -62,6 +64,7 @@ function state(cfg: McpServerConfig, overrides: Partial<McpServerState> = {}): M
     restarts: 0,
     signedIn: false,
     extension: null,
+    trustChanged: false,
     updatedAt: 1,
     ...overrides,
   };
@@ -192,6 +195,7 @@ export function resetFakeMcp(): void {
     calls: [],
     configText: '{\n  "mcpServers": {}\n}\n',
     imported: [],
+    trusted: [],
   };
 }
 
@@ -205,6 +209,12 @@ export function fakeMcpState(): Readonly<FakeMcp> {
 export function fakeMcpAsk(interaction: McpInteraction): void {
   mcp.asks.push(interaction);
   emit({ type: "ask", interaction });
+}
+
+/** A server waits for the user to trust its command (another program added it). */
+export function fakeMcpNeedsTrust(name: string, changed = false): void {
+  const s = mcp.states.get(name);
+  if (s) setState({ ...s, status: "needsTrust", trustChanged: changed });
 }
 
 export function fakeMcpEmit(e: McpEvent): void {
@@ -257,6 +267,7 @@ export const fakeMcpCommands: Pick<
   | "mcpRemoveServer"
   | "mcpSetEnabled"
   | "mcpRestart"
+  | "mcpTrustServer"
   | "mcpConfig"
   | "mcpSaveConfig"
   | "mcpOpenConfig"
@@ -328,6 +339,13 @@ export const fakeMcpCommands: Pick<
     const s = mcp.states.get(name);
     if (!s) return fail("invalid", `There's no server named "${name}".`);
     setState({ ...s, restarts: s.restarts });
+    return ok(null);
+  },
+  mcpTrustServer: (name) => {
+    const s = mcp.states.get(name);
+    if (!s) return fail("invalid", `There's no server named "${name}".`);
+    mcp.trusted.push(name);
+    setState({ ...s, status: "running", trustChanged: false, error: null });
     return ok(null);
   },
   mcpConfig: () =>

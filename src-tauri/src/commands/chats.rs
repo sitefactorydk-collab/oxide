@@ -1,10 +1,12 @@
 //! Conversations, messages and search.
 
-use oxide_agent::export::{export_file_name, export_json, export_markdown};
+use oxide_agent::export::{
+    MAX_HTML_IMAGE_BYTES, export_file_name, export_html, export_json, export_markdown,
+};
 use oxide_agent::path_to;
 use oxide_core::{
     Attachment, Compaction, ContentBlock, ContextUsage, Conversation, Feedback, GenerateOptions,
-    Message, SearchHit, StartConversation,
+    MediaSource, Message, SearchHit, StartConversation,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -32,6 +34,7 @@ pub async fn get_conversation(state: State<'_, AppState>, id: String) -> CmdResu
 #[tauri::command]
 #[specta::specta]
 pub async fn start_conversation(
+    app: AppHandle,
     state: State<'_, AppState>,
     mut input: StartConversation,
     options: GenerateOptions,
@@ -42,7 +45,7 @@ pub async fn start_conversation(
     // Folders are granted with the chat, so the first reply already has its file tools.
     let mut folders = Vec::new();
     for f in std::mem::take(&mut input.folders) {
-        folders.push(crate::commands::workspace::resolve_folder(f).await?);
+        folders.push(crate::commands::workspace::resolve_folder(app.clone(), f).await?);
     }
     input.folders = folders;
     // Only files Oxide prepared (in its attachments folder) can be sent.
@@ -252,6 +255,8 @@ pub enum ExportFormat {
     Markdown,
     /// Every message and branch as JSON.
     Json,
+    /// The visible thread as one self-contained HTML page, for sharing (Phase 18).
+    Html,
 }
 
 /// Saves a chat to a file the user picks. Markdown exports the thread ending at `leaf_id`
@@ -269,19 +274,37 @@ pub async fn export_conversation(
     let conversation = state.store.get_conversation(&id).await?;
     let messages = state.store.list_messages(&id).await?;
     let now = oxide_store::now_ms();
+    let thread = || {
+        let leaf = leaf_id
+            .clone()
+            .filter(|l| messages.iter().any(|m| &m.id == l))
+            .or_else(|| messages.last().map(|m| m.id.clone()));
+        leaf.and_then(|l| path_to(&messages, &l))
+            .unwrap_or_default()
+    };
     let (text, ext, label) = match format {
-        ExportFormat::Markdown => {
-            let leaf = leaf_id
-                .filter(|l| messages.iter().any(|m| &m.id == l))
-                .or_else(|| messages.last().map(|m| m.id.clone()));
-            let thread = leaf
-                .and_then(|l| path_to(&messages, &l))
-                .unwrap_or_default();
-            (
-                export_markdown(&conversation, &thread, now),
-                "md",
-                "Markdown",
-            )
+        ExportFormat::Markdown => (
+            export_markdown(&conversation, &thread(), now),
+            "md",
+            "Markdown",
+        ),
+        ExportFormat::Html => {
+            let thread = thread();
+            let images = embedded_images(&thread, state.attachments.dir()).await;
+            let html = export_html(&conversation, &thread, now, &|block| match block {
+                ContentBlock::Image {
+                    media_type,
+                    source: MediaSource::Base64 { data },
+                } if data.len() <= MAX_HTML_IMAGE_BYTES * 4 / 3 => {
+                    Some(format!("data:{media_type};base64,{}", data.trim()))
+                }
+                ContentBlock::Image {
+                    source: MediaSource::Path { path },
+                    ..
+                } => images.get(path).cloned(),
+                _ => None,
+            });
+            (html, "html", "Web page")
         }
         ExportFormat::Json => (
             export_json(&conversation, &messages, now).map_err(|e| {
@@ -313,6 +336,45 @@ pub async fn export_conversation(
         CommandError::Invalid(format!("The file couldn't be saved: {e}"))
     })?;
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// `data:` URIs of the thread's image attachments stored as files (only files inside the
+/// attachments folder, at most [`MAX_HTML_IMAGE_BYTES`] each), by path.
+async fn embedded_images(
+    thread: &[oxide_core::Message],
+    attachments: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    use base64::Engine;
+    let root = tokio::fs::canonicalize(attachments).await.ok();
+    let mut out = std::collections::HashMap::new();
+    for block in thread.iter().flat_map(|m| m.content.iter()) {
+        let ContentBlock::Image {
+            media_type,
+            source: MediaSource::Path { path },
+        } = block
+        else {
+            continue;
+        };
+        if out.contains_key(path) || !media_type.starts_with("image/") {
+            continue;
+        }
+        let Ok(real) = tokio::fs::canonicalize(path).await else {
+            continue;
+        };
+        if !root.as_ref().is_some_and(|r| real.starts_with(r)) {
+            tracing::warn!("export: an image outside the attachments folder was left out");
+            continue;
+        }
+        match tokio::fs::metadata(&real).await {
+            Ok(m) if m.len() as usize <= MAX_HTML_IMAGE_BYTES => {}
+            _ => continue,
+        }
+        if let Ok(bytes) = tokio::fs::read(&real).await {
+            let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+            out.insert(path.clone(), format!("data:{media_type};base64,{data}"));
+        }
+    }
+    out
 }
 
 /// Creates a 50-message demo chat (code, math, tables, images) on `model`, for checking

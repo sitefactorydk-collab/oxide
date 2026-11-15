@@ -8,16 +8,25 @@ import type { NewChatState } from "@/features/desktop/keys";
 import { useGenerateOptions } from "@/features/composer/options";
 import { useNewChatModel } from "@/features/models/queries";
 import { errorMessage } from "@/lib/api";
-import { greetingFor } from "@/lib/time";
+import { useT, type MessageKey } from "@/i18n";
 import { useUi } from "@/stores/ui";
 
-const CHIPS: Array<{ label: string; icon: LucideIcon; prompt: string }> = [
-  { label: "Draft", icon: PenLine, prompt: "Help me draft " },
-  { label: "Explain", icon: BookOpen, prompt: "Explain " },
-  { label: "Code", icon: Code, prompt: "Write code that " },
-  { label: "Plan", icon: ListChecks, prompt: "Make a plan for " },
-  { label: "Summarize", icon: ScrollText, prompt: "Summarize " },
+// Prompts stay English: they're the start of a message to a model, not interface text.
+const CHIPS: Array<{ label: MessageKey; icon: LucideIcon; prompt: string }> = [
+  { label: "home.chip.draft", icon: PenLine, prompt: "Help me draft " },
+  { label: "home.chip.explain", icon: BookOpen, prompt: "Explain " },
+  { label: "home.chip.code", icon: Code, prompt: "Write code that " },
+  { label: "home.chip.plan", icon: ListChecks, prompt: "Make a plan for " },
+  { label: "home.chip.summarize", icon: ScrollText, prompt: "Summarize " },
 ];
+
+/** The greeting's key for a local hour (0–23). */
+function greetingKey(hour: number): MessageKey {
+  if (hour >= 5 && hour < 12) return "home.morning";
+  if (hour >= 12 && hour < 18) return "home.afternoon";
+  if (hour >= 18 && hour < 23) return "home.evening";
+  return "home.late";
+}
 
 export function HomePage() {
   const userName = useUi((s) => s.userName);
@@ -33,9 +42,10 @@ export function HomePage() {
     if (incoming !== undefined) setDraft(incoming);
   }, [incoming, location.key]);
   const [hour] = useState(() => new Date().getHours());
+  const t = useT();
 
   const name = userName.trim();
-  const greeting = `${greetingFor(hour)}${name ? `, ${name}` : ""}`;
+  const greeting = `${t(greetingKey(hour))}${name ? `, ${name}` : ""}`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -68,7 +78,7 @@ export function HomePage() {
         />
         {start.error && (
           <p role="alert" className="mt-3 text-center text-danger">
-            Couldn’t start the chat: {errorMessage(start.error)}
+            {t("home.startFailed", { error: errorMessage(start.error) })}
           </p>
         )}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
@@ -80,7 +90,7 @@ export function HomePage() {
               className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-app px-3 text-base text-fg-muted transition-colors hover:bg-hover hover:text-fg"
             >
               <Icon className="size-4" />
-              {label}
+              {t(label)}
             </button>
           ))}
         </div>

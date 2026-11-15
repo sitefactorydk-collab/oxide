@@ -514,3 +514,84 @@ fn origins_and_hosts() {
     assert!(!local_host("127.0.0.1", 5) && !local_host("127.0.0.1.nip.io:5", 5));
     assert!(same_secret("abc", "abc") && !same_secret("abc", "abd") && !same_secret("a", "ab"));
 }
+
+/// Random handshakes, random first messages and random frames from many clients: every
+/// one is refused or closed, nothing panics, and pairing still works afterwards (Phase 18
+/// fuzzing).
+#[tokio::test]
+async fn garbage_from_many_clients_never_breaks_the_bridge() {
+    use rand::{Rng, SeedableRng};
+    use tokio::io::AsyncReadExt;
+    let f = fixture().await;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0xb71d6e);
+    let words = [
+        "GET", "/", "HTTP/1.1", "\r\n", "Host: 127.0.0.1", "Upgrade: websocket",
+        "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version: 13", "Origin: ", TEST_ORIGIN, ":", "\0", "é", "\r\n\r\n",
+    ];
+    // 1. Random request heads over raw TCP.
+    for _ in 0..60 {
+        let mut head = String::new();
+        for _ in 0..rng.gen_range(1..25) {
+            head.push_str(words[rng.gen_range(0..words.len())]);
+            if rng.gen_bool(0.3) {
+                head.push(' ');
+            }
+        }
+        if rng.gen_bool(0.5) {
+            head.push_str("\r\n\r\n");
+        }
+        let Ok(mut s) = TcpStream::connect(("127.0.0.1", f.port)).await else {
+            continue;
+        };
+        let _ = s.write_all(head.as_bytes()).await;
+        let mut buf = vec![0u8; 512];
+        let _ = tokio::time::timeout(Duration::from_millis(300), s.read(&mut buf)).await;
+    }
+    // 2. A good handshake, then random text as the first message.
+    for _ in 0..40 {
+        let mut c = TestClient::connect(f.port, Some(TEST_ORIGIN))
+            .await
+            .expect("connects");
+        let junk: String = match rng.gen_range(0..4) {
+            0 => (0..rng.gen_range(0..200)).map(|_| rng.gen_range(' '..='~')).collect(),
+            1 => json!({"jsonrpc": "2.0", "id": rng.gen_range(0..9), "method": "hello",
+                        "params": {"browserId": "x".repeat(rng.gen_range(0..300)), "token": rng.r#gen::<u64>().to_string(), "protocol": 1}})
+                .to_string(),
+            2 => json!({"jsonrpc": "2.0", "id": 1, "method": "pair",
+                        "params": {"code": "amber amber amber amber amber amber", "protocol": rng.gen_range(-2..4)}})
+                .to_string(),
+            _ => {
+                let method = ["tools/call", "session/stopped", "ping", "x"][rng.gen_range(0..4)];
+                let params = [json!(1), json!({"a": []}), json!(null)][rng.gen_range(0..3)].clone();
+                json!({"jsonrpc": "2.0", "id": null, "method": method, "params": params}).to_string()
+            }
+        };
+        c.send_raw(&junk).await;
+        // Answered with an error or closed; never left hanging past the auth limit.
+        let got = tokio::time::timeout(AUTH_TIMEOUT + Duration::from_secs(2), c.recv()).await;
+        assert!(got.is_ok(), "no answer to {junk}");
+    }
+    // 3. A good handshake, then random binary frames.
+    for _ in 0..30 {
+        let Ok(mut s) = TcpStream::connect(("127.0.0.1", f.port)).await else {
+            continue;
+        };
+        let head = format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: {TEST_ORIGIN}\r\n\r\n",
+            f.port
+        );
+        let _ = s.write_all(head.as_bytes()).await;
+        let noise: Vec<u8> = (0..rng.gen_range(1..2_000)).map(|_| rng.r#gen()).collect();
+        let _ = s.write_all(&noise).await;
+        let mut buf = vec![0u8; 4096];
+        let _ = tokio::time::timeout(Duration::from_millis(300), s.read(&mut buf)).await;
+    }
+    assert!(!f.bridge.connected());
+    assert!(f.bridge.status().paired.is_empty());
+    // Still pairs.
+    let (_c, id, _token) = paired(&f).await;
+    assert!(f.bridge.connected());
+    assert_eq!(f.bridge.status().paired.len(), 1, "{id}");
+}

@@ -15,8 +15,10 @@ import {
   type PythonSettings,
   type SandboxSettings,
   type ShellSettings,
+  type DictationSettings,
   type ThemePref,
   type ToolSettings,
+  type UiLanguage,
   type WebSearchSettings,
 } from "@/bindings";
 import { contextKeys } from "@/features/context/queries";
@@ -29,7 +31,7 @@ export const settingsKeys = { app: ["settings", "app"] as const };
 
 export const DEFAULT_SETTINGS: AppSettings = {
   profile: { name: "" },
-  appearance: { theme: "system", chatFont: "serif" },
+  appearance: { theme: "system", chatFont: "serif", language: "system" },
   models: {
     showUnsupported: false,
     autoTitle: true,
@@ -91,6 +93,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     windows: [],
   },
   updates: { checkAutomatically: true },
+  dictation: { enabled: true, providerId: null, model: "whisper-1", language: "" },
 };
 
 export function useSettings() {
@@ -138,6 +141,7 @@ function cacheForFirstPaint(s: AppSettings) {
     userName: s.profile.name,
     theme: s.appearance.theme,
     chatFont: s.appearance.chatFont,
+    language: s.appearance.language,
   });
 }
 
@@ -160,7 +164,7 @@ export function useSettingsSync(): void {
       const legacy: AppSettings = {
         ...data,
         profile: { name: ui.userName },
-        appearance: { theme: ui.theme, chatFont: ui.chatFont },
+        appearance: { theme: ui.theme, chatFont: ui.chatFont, language: ui.language },
       };
       if (isDefault(data) && !isDefault(legacy)) {
         update(() => legacy);
@@ -182,6 +186,18 @@ export function useSetChatFont() {
   const update = useUpdateSettings();
   return (chatFont: ChatFont) =>
     update((s) => ({ ...s, appearance: { ...s.appearance, chatFont } }));
+}
+
+export function useSetLanguage() {
+  const update = useUpdateSettings();
+  return (language: UiLanguage) =>
+    update((s) => ({ ...s, appearance: { ...s.appearance, language } }));
+}
+
+export function useSetDictationSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<DictationSettings>) =>
+    update((s) => ({ ...s, dictation: { ...s.dictation, ...patch } }));
 }
 
 export function useSetProfileName() {

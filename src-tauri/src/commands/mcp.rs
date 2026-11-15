@@ -21,6 +21,13 @@ use base64::Engine;
 use crate::error::{CmdResult, CommandError};
 use crate::state::AppState;
 
+/// Trusts a local server's command line (it waited in `needsTrust`) and starts it.
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_trust_server(state: State<'_, AppState>, name: String) -> CmdResult<()> {
+    Ok(state.mcp.trust(&name)?)
+}
+
 /// Every configured server and how it's doing, in config order.
 #[tauri::command]
 #[specta::specta]

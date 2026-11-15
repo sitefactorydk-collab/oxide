@@ -108,6 +108,11 @@ export function useRestartMcpServer() {
   return useConfigMutation((name: string) => unwrap(commands.mcpRestart(name)));
 }
 
+/** Trusts a local server's command line (it waited in `needsTrust`) and starts it. */
+export function useTrustMcpServer() {
+  return useConfigMutation((name: string) => unwrap(commands.mcpTrustServer(name)));
+}
+
 export function useSaveMcpConfig() {
   return useConfigMutation((text: string) => unwrap(commands.mcpSaveConfig(text)));
 }

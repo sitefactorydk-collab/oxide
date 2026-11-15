@@ -1,5 +1,6 @@
 //! Per-server logs: the last lines in memory for the log viewer, everything appended to
-//! `<logs dir>/mcp-<name>.log`, and each line forwarded to a listener (the UI).
+//! `<logs dir>/mcp-<name>.log`, and each line forwarded to a listener (the UI). Secrets are
+//! removed from every line first (`oxide_core::redact`).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -46,7 +47,10 @@ impl ServerLog {
     }
 
     pub fn push(&self, source: McpLogSource, level: Option<&str>, text: &str) {
-        let text = text.trim_end();
+        // Servers print what they like (tokens in URLs, keys in errors): keep secrets out of
+        // the viewer and the file.
+        let text = oxide_core::redact::redact_secrets(text.trim_end());
+        let text = text.as_ref();
         let text: String = if text.chars().count() > MAX_LINE_CHARS {
             let mut t: String = text.chars().take(MAX_LINE_CHARS).collect();
             t.push('…');

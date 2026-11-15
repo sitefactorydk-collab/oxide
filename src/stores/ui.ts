@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { ChatFont, Effort, ThemePref } from "@/bindings";
+import type { ChatFont, Effort, ThemePref, UiLanguage } from "@/bindings";
 import { safeLocalStorage } from "@/lib/storage";
 
-export type { ChatFont, ThemePref };
+export type { ChatFont, ThemePref, UiLanguage };
 
 export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 420;
@@ -24,6 +24,8 @@ interface UiData {
   userName: string;
   theme: ThemePref;
   chatFont: ChatFont;
+  /** Interface language (Phase 18). */
+  language: UiLanguage;
   /** Phase 1 kept the cached values above as the only copy; they're imported once. */
   settingsMigrated: boolean;
   sidebarOpen: boolean;
@@ -65,6 +67,7 @@ export const defaultUiData: UiData = {
   userName: "",
   theme: "system",
   chatFont: "serif",
+  language: "system",
   settingsMigrated: false,
   sidebarOpen: true,
   sidebarWidth: SIDEBAR_DEFAULT,
@@ -104,6 +107,7 @@ export const useUi = create<UiState>()(
         userName: s.userName,
         theme: s.theme,
         chatFont: s.chatFont,
+        language: s.language,
         settingsMigrated: s.settingsMigrated,
         sidebarOpen: s.sidebarOpen,
         sidebarWidth: s.sidebarWidth,

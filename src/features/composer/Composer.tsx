@@ -14,12 +14,14 @@ import { AttachmentChips } from "@/features/attachments/AttachmentChips";
 import { limitsSummary } from "@/features/attachments/limits";
 import { useAttachments } from "@/features/attachments/useAttachments";
 import { ContextMeter } from "@/features/context/ContextMeter";
+import { DictationButton } from "@/features/dictation/DictationButton";
 import { findListing, findModel } from "@/features/models/models";
 import { useModels } from "@/features/models/queries";
 import { isExtensionFile, useExtensionDrop } from "@/features/extensions/store";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { useFolderControls } from "@/features/workspace/folders";
 import { FolderChips } from "@/features/workspace/FolderChips";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { inTauri } from "@/lib/platform";
 import { EffortMenu, ThinkingToggle } from "./ReasoningControls";
@@ -143,16 +145,20 @@ export function Composer({
     });
   };
 
-  const sendLabel = files.busy ? "Preparing files…" : "Send";
+  const t = useT();
+  const sendLabel = files.busy ? "Preparing files…" : t("composer.send");
   const textarea = (
     <textarea
       ref={textareaRef}
-      aria-label="Message"
+      aria-label={t("composer.message")}
       aria-describedby="composer-hint"
       rows={variant === "home" ? 2 : 1}
       value={value}
       autoFocus={autoFocus}
-      placeholder={placeholder ?? (variant === "home" ? "What should we work on?" : "Reply…")}
+      placeholder={
+        placeholder ??
+        (variant === "home" ? t("composer.homePlaceholder") : t("composer.replyPlaceholder"))
+      }
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
@@ -164,14 +170,14 @@ export function Composer({
   );
 
   const sendButton = streaming ? (
-    <IconButton label="Stop" onClick={onStop} className="text-fg">
+    <IconButton label={t("composer.stop")} onClick={onStop} className="text-fg">
       <span className="size-3 rounded-[3px] bg-current" />
     </IconButton>
   ) : (
     <Tooltip label={sendLabel} shortcut={files.busy ? undefined : "Enter"}>
       <button
         type="button"
-        aria-label="Send"
+        aria-label={t("composer.send")}
         disabled={!canSend}
         onClick={submit}
         className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-35"
@@ -179,6 +185,15 @@ export function Composer({
         <ArrowUp className="size-[18px]" strokeWidth={2.25} />
       </button>
     </Tooltip>
+  );
+
+  const mic = (
+    <DictationButton
+      onText={(text) => {
+        onChange(value.trim() ? `${value.trimEnd()} ${text}` : text);
+        textareaRef.current?.focus();
+      }}
+    />
   );
 
   const tools = (
@@ -223,12 +238,14 @@ export function Composer({
               {tools}
               <div className="flex-1" />
               <ModelPicker value={modelId} onChange={onModelChange} />
+              {mic}
               {sendButton}
             </div>
           </>
         ) : (
           <div className="flex items-end gap-2 pl-1">
             <div className="min-w-0 flex-1">{textarea}</div>
+            {mic}
             {sendButton}
           </div>
         )}

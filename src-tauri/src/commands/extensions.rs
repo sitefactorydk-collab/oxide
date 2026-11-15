@@ -63,10 +63,14 @@ pub async fn pick_paths(app: AppHandle, kind: PickKind, multiple: bool) -> CmdRe
     let picked = rx
         .await
         .map_err(|_| CommandError::Internal("the picker closed unexpectedly".into()))?;
-    Ok(picked
+    let paths: Vec<PathBuf> = picked
         .unwrap_or_default()
         .into_iter()
         .filter_map(|p| p.into_path().ok())
+        .collect();
+    crate::chosen::remember(&app, &paths);
+    Ok(paths
+        .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect())
 }
@@ -83,10 +87,13 @@ pub async fn list_extensions(state: State<'_, AppState>) -> CmdResult<Vec<Extens
 #[tauri::command]
 #[specta::specta]
 pub async fn preview_extension(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> CmdResult<ExtensionPreview> {
-    Ok(state.extensions.preview(&PathBuf::from(path)).await?)
+    let path = PathBuf::from(path);
+    crate::chosen::ensure_chosen(&app, &path, "open this file as a desktop extension").await?;
+    Ok(state.extensions.preview(&path).await?)
 }
 
 /// Installs (or updates) an opened bundle with the form's settings.
@@ -208,7 +215,13 @@ pub async fn update_skill(
 /// Adds a skill from a folder or a zip (`.zip`, `.skill`) on disk.
 #[tauri::command]
 #[specta::specta]
-pub async fn add_skill(state: State<'_, AppState>, path: String) -> CmdResult<Skill> {
+pub async fn add_skill(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> CmdResult<Skill> {
+    crate::chosen::ensure_chosen(&app, std::path::Path::new(&path), "add a skill from here")
+        .await?;
     skills_blocking(&state, move |s| {
         let p = PathBuf::from(&path);
         if p.is_dir() {

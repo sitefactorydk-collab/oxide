@@ -19,6 +19,7 @@ pub mod openai;
 pub mod probe;
 mod provider;
 pub mod sse;
+pub mod transcribe;
 mod stream;
 mod types;
 

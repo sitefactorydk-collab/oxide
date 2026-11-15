@@ -4,6 +4,7 @@ import {
   FileDown,
   FolderInput,
   FolderMinus,
+  Globe,
   Link,
   Pencil,
   Star,
@@ -80,6 +81,10 @@ export function ChatMenuItems({
           <MenuItem onSelect={() => onExport("markdown")}>
             <FileDown />
             Export as Markdown
+          </MenuItem>
+          <MenuItem onSelect={() => onExport("html")}>
+            <Globe />
+            Export as web page
           </MenuItem>
           <MenuItem onSelect={() => onExport("json")}>
             <Braces />

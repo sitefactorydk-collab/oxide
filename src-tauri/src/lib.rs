@@ -7,11 +7,13 @@
 #[cfg(test)]
 mod acl;
 mod artifact_frame;
+mod chosen;
 mod commands;
 mod computer;
 mod desktop;
 mod error;
 mod events;
+mod logging;
 mod mcp_bridge;
 mod state;
 mod updater;
@@ -22,7 +24,6 @@ use std::sync::Arc;
 use specta_typescript::BigIntExportBehavior;
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands, collect_events};
-use tracing_subscriber::EnvFilter;
 
 /// Where generated TypeScript bindings are written, relative to `src-tauri/`.
 const BINDINGS_PATH: &str = "../src/bindings/index.ts";
@@ -34,9 +35,9 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions, mcp,
-        memory, models, projects, providers, python, sandbox, schedule, settings, system, tools,
-        updates, workspace,
+        artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions,
+        insights, mcp, memory, models, projects, providers, python, sandbox, schedule, settings,
+        system, tools, updates, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -98,6 +99,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             mcp::mcp_remove_server,
             mcp::mcp_set_enabled,
             mcp::mcp_restart,
+            mcp::mcp_trust_server,
             mcp::mcp_config,
             mcp::mcp_save_config,
             mcp::mcp_open_config,
@@ -201,6 +203,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             updates::update_status,
             updates::check_for_update,
             updates::install_update,
+            // Usage, start-up and memory, dictation (Phase 18)
+            insights::usage_report,
+            insights::app_ready,
+            insights::app_metrics,
+            insights::transcribe_audio,
             // System
             system::open_external,
             // Desktop integration
@@ -281,16 +288,9 @@ fn setup_deep_links(app: &tauri::AppHandle) {
     }
 }
 
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,oxide=debug,oxide_lib=debug"));
-    // Ignore the error if a subscriber is already set (e.g. in tests).
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-}
-
 /// Starts the Oxide desktop app.
 pub fn run() -> anyhow::Result<()> {
-    init_tracing();
+    logging::init();
 
     // Keep the bindings in sync on every debug run.
     #[cfg(debug_assertions)]
@@ -359,6 +359,7 @@ pub fn run() -> anyhow::Result<()> {
         .setup(move |app| {
             builder.mount_events(app);
             app.manage(desktop::DesktopState::default());
+            app.manage(chosen::ChosenPaths::default());
             app.manage(commands::data::LastExport::default());
             app.manage(updater::Updates::new(app.handle()));
             let dirs = state::AppDirs {
@@ -369,6 +370,7 @@ pub fn run() -> anyhow::Result<()> {
             };
             // What an earlier "Delete all" couldn't remove goes before anything opens.
             oxide_agent::data::finish_pending_delete(&dirs.data_dirs());
+            logging::open_file(&dirs.logs);
             let service = app.config().identifier.clone();
             let sink = Arc::new(events::TauriSink::new(app.handle().clone()));
             let handle = app.handle().clone();

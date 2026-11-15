@@ -30,10 +30,14 @@ pub async fn pick_files(app: AppHandle) -> CmdResult<Vec<String>> {
     let picked = rx
         .await
         .map_err(|_| CommandError::Internal("the file picker closed unexpectedly".into()))?;
-    Ok(picked
+    let paths: Vec<std::path::PathBuf> = picked
         .unwrap_or_default()
         .into_iter()
         .filter_map(|p| p.into_path().ok())
+        .collect();
+    crate::chosen::remember(&app, &paths);
+    Ok(paths
+        .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect())
 }

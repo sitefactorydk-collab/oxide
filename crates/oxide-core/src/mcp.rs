@@ -57,6 +57,9 @@ pub enum McpStatus {
     NeedsAuth,
     /// Stopped by Oxide (e.g. while quitting).
     Stopped,
+    /// A local command Oxide hasn't run before (or whose command line changed): it waits
+    /// until the user trusts it (Phase 18).
+    NeedsTrust,
 }
 
 /// Which generation of the protocol a server speaks.
@@ -109,6 +112,9 @@ pub struct McpServerState {
     /// The desktop extension this server comes from (its display name). Such servers are
     /// managed in Settings → Extensions, not edited as config entries.
     pub extension: Option<String>,
+    /// With [`McpStatus::NeedsTrust`]: an earlier command line of this server was trusted
+    /// and it has changed since.
+    pub trust_changed: bool,
     pub updated_at: Timestamp,
 }
 

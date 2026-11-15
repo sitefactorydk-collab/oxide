@@ -7,6 +7,7 @@ import {
   LogOut,
   Plus,
   RotateCw,
+  ShieldCheck,
 } from "lucide-react";
 import { useId, useState } from "react";
 import type { McpServerConfig, McpServerState, McpTransport } from "@/bindings";
@@ -34,6 +35,7 @@ import {
   useRestartMcpServer,
   useSaveMcpServer,
   useSetMcpEnabled,
+  useTrustMcpServer,
 } from "./queries";
 import { formatPairs, parseArgs, parsePairs } from "./schema";
 import { ServerDetails } from "./ServerDetails";
@@ -113,6 +115,7 @@ function ServerCard({ server }: { server: McpServerState }) {
   const [editing, setEditing] = useState(false);
   const setEnabled = useSetMcpEnabled();
   const restart = useRestartMcpServer();
+  const trust = useTrustMcpServer();
   const signIn = useMcpSignIn();
   const signOut = useMcpSignOut();
   const enabled = server.status !== "disabled";
@@ -182,6 +185,22 @@ function ServerCard({ server }: { server: McpServerState }) {
               {server.error && server.status !== "running" && (
                 <p className="mt-1.5 text-sm text-danger">{server.error}</p>
               )}
+              {server.status === "needsTrust" && (
+                <div
+                  role="note"
+                  className="mt-2 rounded-lg border border-line bg-sunken px-3 py-2 text-sm text-fg-muted"
+                >
+                  <p className="font-medium text-fg">
+                    {server.trustChanged
+                      ? "This server’s command changed since you last allowed it."
+                      : "Oxide hasn’t run this command before."}
+                  </p>
+                  <p className="mt-0.5">
+                    It was added or changed outside Oxide’s settings. A local server runs with your
+                    rights, so start it only if you trust the command above.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {server.status === "needsAuth" && (
@@ -196,7 +215,19 @@ function ServerCard({ server }: { server: McpServerState }) {
                   {signIn.isPending ? "Waiting for the browser…" : "Sign in"}
                 </Button>
               )}
-              {enabled && server.status !== "needsAuth" && (
+              {server.status === "needsTrust" && (
+                <Button
+                  primary
+                  disabled={trust.isPending}
+                  onClick={() =>
+                    void run(trust.mutateAsync(server.name), `Started ${server.name}.`)
+                  }
+                >
+                  <ShieldCheck />
+                  Trust and start
+                </Button>
+              )}
+              {enabled && server.status !== "needsAuth" && server.status !== "needsTrust" && (
                 <Button
                   label={`Restart ${server.name}`}
                   disabled={restart.isPending}

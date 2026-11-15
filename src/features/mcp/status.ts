@@ -7,6 +7,7 @@ export const STATUS_LABEL: Record<McpStatus, string> = {
   error: "Error",
   needsAuth: "Sign-in needed",
   stopped: "Stopped",
+  needsTrust: "Waiting for your OK",
 };
 
 /** "6 tools · 1 resource · 2 prompts" (only what the server has). */

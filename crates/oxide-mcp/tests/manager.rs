@@ -62,6 +62,11 @@ struct Setup {
 }
 
 async fn setup(config: Value) -> Setup {
+    setup_with(config, false).await
+}
+
+/// `trust`: remember trusted commands in `<dir>/mcp-trust.json` (seeded at the first start).
+async fn setup_with(config: Value, trust: bool) -> Setup {
     let dir = tempfile::tempdir().expect("tmp");
     let path = dir.path().join(CONFIG_FILE_NAME);
     std::fs::write(&path, config.to_string()).expect("write");
@@ -82,6 +87,7 @@ async fn setup(config: Value) -> Setup {
             ask_timeout: Duration::from_secs(10),
             watch_every: Duration::from_millis(50),
             cwd: None,
+            trust_file: trust.then(|| dir.path().join("mcp-trust.json")),
         },
     );
     manager.start().await.expect("starts");
@@ -343,4 +349,53 @@ async fn restart_works_from_a_thread_outside_the_runtime() {
         m.logs("modern")
     );
     m.shutdown().await;
+}
+
+#[tokio::test]
+async fn new_or_changed_local_commands_wait_until_trusted() {
+    // The first start trusts what is already configured (an upgrade keeps working).
+    let s = setup_with(json!({"mcpServers": {"old": mock_entry("modern")}}), true).await;
+    let m = &s.manager;
+    assert!(wait_status(m, "old", McpStatus::Running).await, "{:?}", m.state("old"));
+
+    // Another program adds a server to the file: it waits.
+    std::fs::write(
+        &s.path,
+        json!({"mcpServers": {"old": mock_entry("modern"), "added": mock_entry("legacy")}})
+            .to_string(),
+    )
+    .expect("write");
+    assert!(wait_status(m, "added", McpStatus::NeedsTrust).await, "{:?}", m.state("added"));
+    let st = m.state("added").expect("state");
+    assert!(!st.trust_changed);
+    assert!(st.summary.contains("legacy"));
+    // A restart doesn't get around it.
+    m.restart("added").expect("restart");
+    assert!(wait_status(m, "added", McpStatus::NeedsTrust).await);
+
+    // The user trusts it: it starts, and stays trusted across a restart of Oxide.
+    m.trust("added").expect("trust");
+    assert!(wait_status(m, "added", McpStatus::Running).await, "{:?}", m.state("added"));
+
+    // Its command changes behind Oxide's back: it stops and asks again, marked as changed.
+    std::fs::write(
+        &s.path,
+        json!({"mcpServers": {"old": mock_entry("modern"), "added": {"command": MOCK, "args": ["legacy"], "env": {"X": "1"}}}})
+            .to_string(),
+    )
+    .expect("write");
+    assert!(wait_status(m, "added", McpStatus::NeedsTrust).await);
+    assert!(m.state("added").expect("state").trust_changed);
+
+    // Saved from Settings: trusted as saved.
+    let mut cfg = m.server_config("added").expect("config");
+    cfg.name = "added".into();
+    m.save_server(cfg, Some("added".into())).await.expect("save");
+    assert!(wait_status(m, "added", McpStatus::Running).await, "{:?}", m.state("added"));
+    m.shutdown().await;
+
+    // The trust file holds fingerprints only (no env values).
+    let text = std::fs::read_to_string(s._dir.path().join("mcp-trust.json")).expect("file");
+    assert!(text.contains("\"added\""));
+    assert!(!text.contains("legacy"));
 }

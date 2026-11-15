@@ -142,6 +142,8 @@ pub async fn delete_all_data(
     // Start at login off and the shortcuts back to their defaults, before the settings go.
     crate::desktop::apply_settings(&app, &oxide_core::DesktopSettings::default());
     crate::desktop::apply_computer(&app, false);
+    // The log file is in a folder about to be emptied (Windows can't delete an open file).
+    crate::logging::close_file();
     let done = DeleteAll {
         store: &state.store,
         secrets: &state.secrets,

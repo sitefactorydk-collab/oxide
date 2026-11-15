@@ -22,10 +22,12 @@ pub mod model;
 pub mod project;
 pub mod provider;
 pub mod python;
+pub mod redact;
 pub mod sandbox;
 pub mod schedule;
 pub mod settings;
 pub mod tools;
+pub mod usage;
 pub mod workspace;
 
 pub use artifact::{
@@ -90,10 +92,11 @@ pub use schedule::{
     TaskInput, TaskRun, TaskSchedule,
 };
 pub use settings::{
-    AppSettings, AppearanceSettings, ChatFont, DesktopSettings, MemorySettings,
+    AppSettings, AppearanceSettings, ChatFont, DesktopSettings, DictationSettings, MemorySettings,
     ModelImagesOverride, ModelSettings, ProfileSettings, ProjectSettings, ShellSettings, ThemePref,
-    ToolSettings, WebSearchProvider, WebSearchSettings,
+    ToolSettings, UiLanguage, WebSearchProvider, WebSearchSettings,
 };
+pub use usage::{UsageByModel, UsageByProvider, UsageDay, UsageRecord, UsageReport, UsageTotals};
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,
     WebSearchTest,

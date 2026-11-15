@@ -1,7 +1,9 @@
 //! Secret storage for API keys.
 //!
 //! [`KeyringSecrets`] keeps secrets in the OS credential store (Windows Credential Manager,
-//! macOS Keychain, Linux kernel keyring). [`MemorySecrets`] is for tests. Secret values are
+//! macOS Keychain; on Linux the Secret Service — GNOME Keyring, KWallet — when the app is
+//! built with the `secret-service` feature and one is running, else the kernel keyring, which
+//! forgets keys at reboot). [`MemorySecrets`] is for tests. Secret values are
 //! wrapped in [`Secret`], whose `Debug` output is redacted so they can't end up in logs.
 
 use std::collections::HashMap;
@@ -61,7 +63,67 @@ impl KeyringSecrets {
     }
 
     fn entry(&self, name: &str) -> Result<keyring::Entry, SecretError> {
+        #[cfg(all(target_os = "linux", feature = "secret-service"))]
+        if !linux::secret_service_works(&self.service) {
+            return linux::keyutils_entry(&self.service, name);
+        }
         keyring::Entry::new(&self.service, name).map_err(map_keyring)
+    }
+}
+
+/// Linux with the Secret Service (Phase 18): keys live there; the kernel keyring is the
+/// fallback when no Secret Service answers (a bare window manager, a headless session), and
+/// keys an older Oxide left in the kernel keyring move over when first read.
+#[cfg(all(target_os = "linux", feature = "secret-service"))]
+mod linux {
+    use std::sync::OnceLock;
+
+    use super::{SecretError, map_keyring};
+
+    static WORKS: OnceLock<bool> = OnceLock::new();
+
+    /// Whether the Secret Service answers (asked once per run).
+    pub fn secret_service_works(service: &str) -> bool {
+        *WORKS.get_or_init(|| {
+            let probe = keyring::Entry::new(service, "oxide-keychain-probe")
+                .and_then(|e| e.get_password().map(|_| ()));
+            match probe {
+                Ok(()) | Err(keyring::Error::NoEntry) => {
+                    tracing::info!("keys are kept in the Secret Service");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "the Secret Service isn't available ({e}); keys are kept in the kernel \
+                         keyring, which forgets them at reboot"
+                    );
+                    false
+                }
+            }
+        })
+    }
+
+    pub fn keyutils_entry(service: &str, name: &str) -> Result<keyring::Entry, SecretError> {
+        let cred = keyring::keyutils::KeyutilsCredential::new_with_target(None, service, name)
+            .map_err(map_keyring)?;
+        Ok(keyring::Entry::new_with_credential(Box::new(cred)))
+    }
+
+    /// A key an older Oxide kept in the kernel keyring, removed from there.
+    pub fn take_from_keyutils(service: &str, name: &str) -> Option<String> {
+        let entry = keyutils_entry(service, name).ok()?;
+        let value = entry.get_password().ok()?;
+        if let Err(e) = entry.delete_credential() {
+            tracing::debug!("couldn't remove an old kernel-keyring entry: {e}");
+        }
+        Some(value)
+    }
+
+    /// Removes the kernel keyring's copy too (ignoring errors).
+    pub fn delete_from_keyutils(service: &str, name: &str) {
+        if let Ok(entry) = keyutils_entry(service, name) {
+            let _ = entry.delete_credential();
+        }
     }
 }
 
@@ -85,12 +147,27 @@ impl SecretStore for KeyringSecrets {
     fn get(&self, name: &str) -> Result<Option<Secret>, SecretError> {
         match self.entry(name)?.get_password() {
             Ok(v) => Ok(Some(Secret::new(v))),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => {
+                #[cfg(all(target_os = "linux", feature = "secret-service"))]
+                if linux::secret_service_works(&self.service)
+                    && let Some(old) = linux::take_from_keyutils(&self.service, name)
+                {
+                    let old = Secret::new(old);
+                    self.set(name, &old)?;
+                    tracing::info!("moved a key from the kernel keyring to the Secret Service");
+                    return Ok(Some(old));
+                }
+                Ok(None)
+            }
             Err(e) => Err(map_keyring(e)),
         }
     }
 
     fn delete(&self, name: &str) -> Result<(), SecretError> {
+        #[cfg(all(target_os = "linux", feature = "secret-service"))]
+        if linux::secret_service_works(&self.service) {
+            linux::delete_from_keyutils(&self.service, name);
+        }
         match self.entry(name)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(map_keyring(e)),

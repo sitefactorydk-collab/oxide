@@ -1,7 +1,7 @@
 //! Message repository. Messages form a tree per conversation (`parent_id`).
 
 use oxide_core::message::plain_text;
-use oxide_core::{ContentBlock, Feedback, Message, Role, StopReason, Usage};
+use oxide_core::{ContentBlock, Feedback, Message, Role, StopReason, Usage, UsageRecord};
 use sqlx::SqliteConnection;
 
 use crate::conversations::map_fk;
@@ -112,6 +112,27 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Message::try_from).collect()
+    }
+
+    /// Every saved assistant reply's model and token counts since `since` (all when `None`),
+    /// for Settings → Usage. Unreadable usage counts as unreported.
+    pub async fn usage_records(&self, since: Option<i64>) -> Result<Vec<UsageRecord>> {
+        let rows: Vec<(String, Option<String>, i64, Option<String>)> = sqlx::query_as(
+            "SELECT conversation_id, model, created_at, usage FROM messages \
+             WHERE role = 'assistant' AND created_at >= ? ORDER BY created_at",
+        )
+        .bind(since.unwrap_or(i64::MIN))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(conversation_id, model, created_at, usage)| UsageRecord {
+                conversation_id,
+                model: model.unwrap_or_default(),
+                created_at,
+                usage: usage.and_then(|u| serde_json::from_str::<Usage>(&u).ok()),
+            })
+            .collect())
     }
 
     pub async fn get_message(&self, id: &str) -> Result<Message> {
@@ -322,6 +343,38 @@ mod tests {
             .map(|m| m.id)
             .collect();
         assert_eq!(ids, vec![root.id, reply.id]);
+    }
+
+    #[tokio::test]
+    async fn usage_records_list_replies_with_their_counts() {
+        let s = store().await;
+        let (cid, root) = chat(&s).await;
+        s.add_reply(NewReply {
+            id: new_id(),
+            conversation_id: cid.clone(),
+            parent_id: root.id.clone(),
+            content: vec![ContentBlock::text("hi")],
+            model: "anthropic/claude-x".into(),
+            stop_reason: StopReason::EndTurn,
+            usage: Some(Usage {
+                input_tokens: 12,
+                output_tokens: 3,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            }),
+        })
+        .await
+        .expect("reply");
+        s.add_message(&cid, Some(&root.id), Role::Assistant, vec![], None)
+            .await
+            .expect("reply without usage");
+        let all = s.usage_records(None).await.expect("records");
+        assert_eq!(all.len(), 2, "user messages aren't counted");
+        assert_eq!(all[0].model, "anthropic/claude-x");
+        assert_eq!(all[0].usage.map(|u| u.input_tokens), Some(12));
+        assert_eq!(all[1].usage, None);
+        let none = s.usage_records(Some(now_ms() + 60_000)).await.expect("records");
+        assert!(none.is_empty());
     }
 
     #[tokio::test]

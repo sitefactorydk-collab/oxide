@@ -9,14 +9,22 @@ use crate::error::{CmdResult, CommandError};
 use crate::state::AppState;
 
 /// Checks a folder the user picked and returns its resolved path (also before the chat
-/// exists, for the new-chat composer).
+/// exists, for the new-chat composer). A folder that wasn't picked or dropped in this
+/// session is confirmed in a native dialog first (`crate::chosen`).
 #[tauri::command]
 #[specta::specta]
-pub async fn resolve_folder(path: String) -> CmdResult<String> {
-    tokio::task::spawn_blocking(move || resolve_grant(&path))
+pub async fn resolve_folder(app: AppHandle, path: String) -> CmdResult<String> {
+    let resolved = tokio::task::spawn_blocking(move || resolve_grant(&path))
         .await
         .map_err(|e| CommandError::Internal(e.to_string()))?
-        .map_err(CommandError::Invalid)
+        .map_err(CommandError::Invalid)?;
+    crate::chosen::ensure_chosen(
+        &app,
+        std::path::Path::new(&resolved),
+        "give a chat's models access to this folder",
+    )
+    .await?;
+    Ok(resolved)
 }
 
 /// A chat's folders and whether it may delete for good.
@@ -33,11 +41,12 @@ pub async fn chat_workspace(
 #[tauri::command]
 #[specta::specta]
 pub async fn add_chat_folder(
+    app: AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
     path: String,
 ) -> CmdResult<ChatWorkspace> {
-    let resolved = resolve_folder(path).await?;
+    let resolved = resolve_folder(app, path).await?;
     Ok(state
         .store
         .add_chat_folder(&conversation_id, &resolved)

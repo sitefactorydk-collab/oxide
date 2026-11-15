@@ -27,6 +27,7 @@ pub mod process;
 pub mod protocol;
 mod sse;
 pub mod transport;
+pub mod trust;
 
 pub use client::{ConnectOptions, McpClient, ServerInfo};
 pub use error::McpError;

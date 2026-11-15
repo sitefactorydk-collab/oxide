@@ -36,11 +36,79 @@ pub struct ProfileSettings {
     pub name: String,
 }
 
+/// The language of Oxide's own interface (Phase 18). Model replies follow the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum UiLanguage {
+    /// The system's language when Oxide has it, else English.
+    #[default]
+    System,
+    En,
+    Da,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppearanceSettings {
     pub theme: ThemePref,
     pub chat_font: ChatFont,
+    pub language: UiLanguage,
+}
+
+/// Default transcription model for dictation.
+pub const DEFAULT_DICTATION_MODEL: &str = "whisper-1";
+
+/// Settings → Voice: dictation in the composer through an OpenAI-compatible
+/// `/audio/transcriptions` endpoint (Phase 18).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DictationSettings {
+    /// Show the microphone button in the composer.
+    pub enabled: bool,
+    /// The endpoint (a configured provider of an OpenAI-compatible kind). `None`: not set up.
+    pub provider_id: Option<String>,
+    /// The transcription model (`whisper-1`, `gpt-4o-mini-transcribe`,
+    /// `whisper-large-v3-turbo`, …).
+    pub model: String,
+    /// ISO-639-1 language of the speech (`da`, `en`); empty lets the model detect it.
+    pub language: String,
+}
+
+impl Default for DictationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider_id: None,
+            model: DEFAULT_DICTATION_MODEL.into(),
+            language: String::new(),
+        }
+    }
+}
+
+impl DictationSettings {
+    pub fn normalized(mut self) -> Self {
+        self.provider_id = self
+            .provider_id
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty() && !p.contains('/'));
+        self.model = self.model.trim().chars().take(200).collect();
+        if self.model.is_empty() {
+            self.model = DEFAULT_DICTATION_MODEL.into();
+        }
+        let lang: String = self
+            .language
+            .trim()
+            .to_ascii_lowercase()
+            .chars()
+            .take(8)
+            .collect();
+        self.language = if lang.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+            lang
+        } else {
+            String::new()
+        };
+        self
+    }
 }
 
 /// Default extended-thinking budget, in tokens (for models that take a budget).
@@ -283,6 +351,8 @@ pub struct AppSettings {
     pub context: ContextSettings,
     /// Settings → About → Updates.
     pub updates: crate::data::UpdateSettings,
+    /// Settings → Voice (dictation).
+    pub dictation: DictationSettings,
 }
 
 impl AppSettings {
@@ -351,6 +421,7 @@ impl AppSettings {
         self.chrome = self.chrome.normalized();
         self.computer = self.computer.normalized();
         self.context = self.context.normalized();
+        self.dictation = self.dictation.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());
@@ -398,6 +469,29 @@ mod tests {
         let s = s.normalized();
         assert_eq!(s.shell.timeout_secs, 1);
         assert_eq!(s.shell.allowlist, vec!["git status".to_owned()]);
+    }
+
+    #[test]
+    fn language_and_dictation_default_and_are_cleaned() {
+        let s: AppSettings = serde_json::from_str(r#"{"appearance":{"language":"da"}}"#)
+            .expect("parses");
+        assert_eq!(s.appearance.language, UiLanguage::Da);
+        assert!(s.dictation.enabled);
+        assert_eq!(s.dictation.model, DEFAULT_DICTATION_MODEL);
+        let mut s = AppSettings::default();
+        s.dictation.provider_id = Some(" openai ".into());
+        s.dictation.model = "  ".into();
+        s.dictation.language = " DA ".into();
+        let d = s.normalized().dictation;
+        assert_eq!(d.provider_id.as_deref(), Some("openai"));
+        assert_eq!(d.model, DEFAULT_DICTATION_MODEL);
+        assert_eq!(d.language, "da");
+        let mut s = AppSettings::default();
+        s.dictation.provider_id = Some("a/b".into());
+        s.dictation.language = "d a".into();
+        let d = s.normalized().dictation;
+        assert_eq!(d.provider_id, None);
+        assert_eq!(d.language, "");
     }
 
     #[test]

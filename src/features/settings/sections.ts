@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  BarChart3,
   Box,
   Brain,
   Compass,
@@ -7,6 +8,7 @@ import {
   Globe,
   Info,
   KeyRound,
+  Mic,
   MonitorSmartphone,
   PanelTop,
   Palette,
@@ -65,6 +67,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Globe,
     blurb:
       "The service Oxide’s web search tool uses. Anthropic models can use Anthropic’s own search instead. Keys live in the system keychain.",
+  },
+  {
+    id: "voice",
+    label: "Voice",
+    icon: Mic,
+    blurb:
+      "Dictation: talk instead of typing. Speech goes to an OpenAI-compatible speech-to-text endpoint you pick.",
   },
   {
     id: "desktop",
@@ -126,6 +135,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Brain,
     blurb:
       "What Oxide remembers across chats (off by default), and how much project knowledge goes into a chat in full.",
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    icon: BarChart3,
+    blurb: "Tokens your chats used, per provider, model and day, as the providers reported them.",
   },
   {
     id: "data",

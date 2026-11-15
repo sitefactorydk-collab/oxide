@@ -1,8 +1,8 @@
-//! Windows Job Objects.
+//! Windows Job Objects, and Oxide's own memory use.
 //!
 //! `unsafe` is allowed in this module only: it wraps four Win32 calls
 //! (`CreateJobObjectW`, `SetInformationJobObject`, `AssignProcessToJobObject`,
-//! `TerminateJobObject`) and `CloseHandle`. A job with `KILL_ON_JOB_CLOSE` ends every process
+//! `TerminateJobObject`), `CloseHandle`, and `K32GetProcessMemoryInfo` for Settings → About. A job with `KILL_ON_JOB_CLOSE` ends every process
 //! a server started (e.g. the `node.exe` behind `npx.cmd`) when Oxide stops it, and also when
 //! Oxide itself exits or crashes, because Windows closes the job handle then.
 #![allow(unsafe_code)]
@@ -82,4 +82,20 @@ impl Drop for Job {
             CloseHandle(self.0);
         }
     }
+}
+
+/// The working set of Oxide's own process, in bytes (WebView2 runs in processes of its own).
+pub fn own_working_set() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: PROCESS_MEMORY_COUNTERS is plain data; all-zero is a valid value.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    counters.cb = size;
+    // SAFETY: GetCurrentProcess returns a pseudo handle that needs no closing; the counters
+    // pointer is valid for `size` bytes for the duration of the call.
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) };
+    (ok != 0).then_some(counters.WorkingSetSize as u64)
 }

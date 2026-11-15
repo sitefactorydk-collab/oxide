@@ -27,6 +27,12 @@ keyring = { workspace = true, features = ["apple-native"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { workspace = true, features = ["linux-native"] }
 
+[features]
+# Linux: keep keys in the Secret Service (GNOME Keyring, KWallet) over D-Bus, with the kernel
+# keyring as the fallback (Phase 18). The app turns it on; it needs libdbus-1 (`libdbus-1-dev`
+# to build). Off, Linux uses the kernel keyring only (the library crates' tests).
+secret-service = ["keyring/sync-secret-service", "keyring/crypto-rust"]
+
 [dev-dependencies]
 tempfile.workspace = true
 

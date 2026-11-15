@@ -26,7 +26,8 @@ import {
 } from "@/components/ui/Menu";
 import { useSetTheme } from "@/features/settings/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
-import { displayName, initials } from "@/lib/profile";
+import { useT } from "@/i18n";
+import { initials } from "@/lib/profile";
 import { useUi, type ThemePref } from "@/stores/ui";
 
 export function Avatar({ name, className = "size-7" }: { name: string; className?: string }) {
@@ -47,19 +48,21 @@ export function ProfileMenu() {
   const setTheme = useSetTheme();
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
   const openSettings = useOpenSettings();
+  const t = useT();
+  const shown = userName.trim() || t("profile.you");
 
   return (
     <MenuRoot>
       <MenuTrigger asChild>
         <button
           type="button"
-          aria-label="Profile and settings"
+          aria-label={t("profile.menu")}
           className="flex h-11 w-full items-center gap-2.5 rounded-lg px-2 text-left hover:bg-hover data-[state=open]:bg-hover"
         >
           <Avatar name={userName} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-md text-fg">{displayName(userName)}</span>
-            <span className="block text-xs text-fg-subtle">Local profile</span>
+            <span className="block truncate text-md text-fg">{shown}</span>
+            <span className="block text-xs text-fg-subtle">{t("profile.local")}</span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-fg-subtle" />
         </button>
@@ -69,50 +72,50 @@ export function ProfileMenu() {
         align="start"
         className="w-[var(--radix-dropdown-menu-trigger-width)]"
       >
-        <MenuLabel>{displayName(userName)}</MenuLabel>
+        <MenuLabel>{shown}</MenuLabel>
         <MenuItem shortcut={shortcutText("settings")} onSelect={() => openSettings("general")}>
           <Settings />
-          Settings
+          {t("menu.settings")}
         </MenuItem>
         <MenuSub>
           <MenuSubTrigger>
             <Palette />
-            Appearance
+            {t("menu.appearance")}
           </MenuSubTrigger>
           <MenuSubContent>
             <MenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as ThemePref)}>
               <MenuRadioItem value="light">
                 <Sun />
-                Light
+                {t("menu.light")}
               </MenuRadioItem>
               <MenuRadioItem value="dark">
                 <Moon />
-                Dark
+                {t("menu.dark")}
               </MenuRadioItem>
               <MenuRadioItem value="system">
                 <Monitor />
-                Match system
+                {t("menu.system")}
               </MenuRadioItem>
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem onSelect={() => openSettings("appearance")}>
-              More appearance settings…
+              {t("menu.moreAppearance")}
             </MenuItem>
           </MenuSubContent>
         </MenuSub>
         <MenuSub>
           <MenuSubTrigger>
             <CircleHelp />
-            Help
+            {t("menu.help")}
           </MenuSubTrigger>
           <MenuSubContent>
             <MenuItem shortcut={shortcutText("shortcuts")} onSelect={() => setShortcutsOpen(true)}>
               <Keyboard />
-              Keyboard shortcuts
+              {t("menu.shortcuts")}
             </MenuItem>
             <MenuItem onSelect={() => openSettings("about")}>
               <Info />
-              About Oxide
+              {t("menu.about")}
             </MenuItem>
           </MenuSubContent>
         </MenuSub>

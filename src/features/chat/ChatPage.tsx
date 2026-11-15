@@ -1,13 +1,5 @@
 import { AlertCircle, ArrowDown, RotateCcw } from "lucide-react";
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import type { Attachment, Compaction, Feedback, Message } from "@/bindings";
 import { ArtifactPanel } from "@/features/artifacts/ArtifactPanel";
@@ -32,6 +24,7 @@ import { SessionPanel } from "@/features/workspace/SessionPanel";
 import { useSessionPanel } from "@/features/workspace/store";
 import { errorMessage } from "@/lib/api";
 import { useBranches } from "./branches";
+import { useMessageWindow } from "./messageWindow";
 import { AssistantMessage, LiveReplyView, UserMessage, type Versions } from "./Messages";
 import { useStreams } from "./streams";
 import { activeThread, newestLeafUnder, siblingsOf } from "./thread";
@@ -129,6 +122,7 @@ function ChatView({ id }: { id: string }) {
     [messages, liveParent, pickedLeaf],
   );
   const leaf = thread[thread.length - 1];
+  const win = useMessageWindow(thread.length, scroll.scrollRef);
 
   // Where the transcript shows "Conversation compacted": after a message, or inside a reply.
   const dividers = useMemo(() => {
@@ -206,6 +200,7 @@ function ChatView({ id }: { id: string }) {
     );
   }
 
+  const visible = thread.slice(win.start);
   let lastAssistantIdx = -1;
   thread.forEach((m, i) => {
     if (m.role === "assistant") lastAssistantIdx = i;
@@ -222,7 +217,10 @@ function ChatView({ id }: { id: string }) {
       <div className="relative flex min-w-0 flex-1 flex-col">
         <div
           ref={scroll.scrollRef}
-          onScroll={scroll.onScroll}
+          onScroll={() => {
+            scroll.onScroll();
+            win.onScroll();
+          }}
           className="min-h-0 flex-1 overflow-y-auto"
         >
           <div
@@ -238,32 +236,47 @@ function ChatView({ id }: { id: string }) {
                 Couldn’t load messages: {errorMessage(messagesQuery.error)}
               </p>
             )}
-            {thread.map((m, i) => (
-              <Fragment key={m.id}>
-                {m.role === "user" ? (
-                  <UserMessage
-                    message={m}
-                    versions={versions.get(m.id) ?? null}
-                    onSelectVersion={handlers.selectVersion}
-                    onEdit={handlers.edit}
-                  />
-                ) : (
-                  <AssistantMessage
-                    message={m}
-                    isLast={!isLive && i === lastAssistantIdx}
-                    canRetry={!isLive}
-                    versions={versions.get(m.id) ?? null}
-                    onSelectVersion={handlers.selectVersion}
-                    onRetry={handlers.retry}
-                    onRate={handlers.rate}
-                    compactions={dividers.inside.get(m.id) ?? NO_COMPACTIONS}
-                  />
-                )}
-                {dividers.after.get(m.id)?.map((c) => (
-                  <CompactionDivider key={c.id} compaction={c} />
-                ))}
-              </Fragment>
-            ))}
+            {win.hidden > 0 && (
+              <button
+                type="button"
+                onClick={win.showEarlier}
+                className="self-center rounded-full border border-line px-3 py-1 text-sm text-fg-muted hover:bg-hover hover:text-fg"
+              >
+                Show earlier messages ({win.hidden})
+              </button>
+            )}
+            {visible.map((m, j) => {
+              const i = win.start + j;
+              return (
+                <div
+                  key={m.id}
+                  className="flex flex-col gap-6 [contain-intrinsic-size:auto_240px] [content-visibility:auto]"
+                >
+                  {m.role === "user" ? (
+                    <UserMessage
+                      message={m}
+                      versions={versions.get(m.id) ?? null}
+                      onSelectVersion={handlers.selectVersion}
+                      onEdit={handlers.edit}
+                    />
+                  ) : (
+                    <AssistantMessage
+                      message={m}
+                      isLast={!isLive && i === lastAssistantIdx}
+                      canRetry={!isLive}
+                      versions={versions.get(m.id) ?? null}
+                      onSelectVersion={handlers.selectVersion}
+                      onRetry={handlers.retry}
+                      onRate={handlers.rate}
+                      compactions={dividers.inside.get(m.id) ?? NO_COMPACTIONS}
+                    />
+                  )}
+                  {dividers.after.get(m.id)?.map((c) => (
+                    <CompactionDivider key={c.id} compaction={c} />
+                  ))}
+                </div>
+              );
+            })}
             <LiveReplyView conversationId={id} />
             {!isLive && <OrphanApprovals conversationId={id} />}
             {!isLive && failure && leaf && (

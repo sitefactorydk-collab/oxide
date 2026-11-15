@@ -955,6 +955,74 @@ mod tests {
         assert!(s.resolve(&evil.join("x").to_string_lossy()).is_err());
     }
 
+    /// Thousands of generated paths (dots, separators, absolute paths, names of the grant and
+    /// of a sibling, links, odd characters): whatever resolves lies inside the grant, and no
+    /// write, move or delete through them touches anything outside (Phase 18 fuzzing).
+    #[test]
+    fn generated_paths_never_leave_the_grant() {
+        let (_t, root, outside) = setup();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("link")).expect("link");
+        let s = sandbox(&[&root], true);
+        let real_root = fs::canonicalize(&root).expect("real");
+        let real_outside = fs::canonicalize(&outside).expect("real");
+        let parent = root.parent().expect("parent").to_string_lossy().into_owned();
+        let parts: Vec<String> = vec![
+            "..".into(), ".".into(), "sub".into(), "a.txt".into(), "work".into(),
+            "secret".into(), "key.txt".into(), "link".into(), "new".into(), "".into(),
+            "...".into(), "~".into(), "%2e%2e".into(), "work-evil".into(), "æ ø".into(),
+            "a\\..\\..".into(), "con".into(), " ".into(),
+            root.to_string_lossy().into_owned(), outside.to_string_lossy().into_owned(), parent,
+        ];
+        // A small deterministic generator (no extra dependency).
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        for _ in 0..3_000 {
+            let count = 1 + next(5);
+            let mut path = String::new();
+            for k in 0..count {
+                if k > 0 {
+                    path.push(if next(4) == 0 { '\\' } else { '/' });
+                }
+                path.push_str(&parts[next(parts.len())]);
+            }
+            if let Ok(p) = s.resolve(&path) {
+                assert!(p.starts_with(&real_root), "{path} → {}", p.display());
+                assert!(!p.starts_with(&real_outside), "{path} → {}", p.display());
+                assert!(
+                    !p.components().any(|c| c == Component::ParentDir),
+                    "{path} → {}",
+                    p.display()
+                );
+            }
+            // Writes and deletes through generated paths stay inside too.
+            match next(3) {
+                0 => {
+                    let _ = s.run(FileOp::Write, &json!({"path": path, "content": "x"}));
+                }
+                1 => {
+                    let _ = s.run(FileOp::Move, &json!({"from": "new", "to": path}));
+                }
+                _ => {
+                    let _ = s.run(FileOp::Delete, &json!({"path": path}));
+                }
+            }
+        }
+        // The folder outside is exactly as it was.
+        let names: Vec<String> = fs::read_dir(&outside)
+            .expect("outside")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["key.txt".to_owned()]);
+        assert_eq!(fs::read_to_string(outside.join("key.txt")).expect("key"), "top secret");
+        assert!(root.exists(), "the grant itself is never removed");
+    }
+
     #[cfg(unix)]
     #[test]
     fn links_out_of_the_grant_are_refused() {

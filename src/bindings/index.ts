@@ -385,6 +385,14 @@ async mcpRestart(name: string) : Promise<Result<null, CommandError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async mcpTrustServer(name: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_trust_server", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpConfig() : Promise<Result<McpConfigStatus, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_config") };
@@ -1364,6 +1372,28 @@ async installUpdate() : Promise<Result<null, CommandError>> {
 /**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
+async usageReport(days: number, offsetMinutes: number) : Promise<Result<UsageReport, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_report", { days, offsetMinutes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async appReady() : Promise<void> {
+    await TAURI_INVOKE("app_ready");
+},
+async appMetrics() : Promise<AppMetrics> {
+    return await TAURI_INVOKE("app_metrics");
+},
+async transcribeAudio(audio: string, mime: string) : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_audio", { audio, mime }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_external", { url }) };
@@ -1715,8 +1745,21 @@ context: ContextSettings;
 /**
  * Settings → About → Updates.
  */
-updates: UpdateSettings }
-export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont }
+updates: UpdateSettings; 
+/**
+ * Settings → Voice (dictation).
+ */
+dictation: DictationSettings }
+export type AppMetrics = { 
+/**
+ * From the process start to the main window's first screen (`None` until it reports).
+ */
+startupMs: number | null; 
+/**
+ * Oxide's own process (the web view's processes aren't included), where the system says.
+ */
+memoryBytes: number | null }
+export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont; language: UiLanguage }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
  */
@@ -2532,6 +2575,28 @@ export type DesktopAction =
  */
 export type DesktopRequest = DesktopAction
 /**
+ * Settings → Voice: dictation in the composer through an OpenAI-compatible
+ * `/audio/transcriptions` endpoint (Phase 18).
+ */
+export type DictationSettings = { 
+/**
+ * Show the microphone button in the composer.
+ */
+enabled: boolean; 
+/**
+ * The endpoint (a configured provider of an OpenAI-compatible kind). `None`: not set up.
+ */
+providerId: string | null; 
+/**
+ * The transcription model (`whisper-1`, `gpt-4o-mini-transcribe`,
+ * `whisper-large-v3-turbo`, …).
+ */
+model: string; 
+/**
+ * ISO-639-1 language of the speech (`da`, `en`); empty lets the model detect it.
+ */
+language: string }
+/**
  * Tray, quick entry, start at login and notifications (Settings → Desktop).
  */
 export type DesktopSettings = { 
@@ -2632,7 +2697,11 @@ export type ExportFormat =
 /**
  * Every message and branch as JSON.
  */
-"json"
+"json" | 
+/**
+ * The visible thread as one self-contained HTML page, for sharing (Phase 18).
+ */
+"html"
 /**
  * An installed extension.
  */
@@ -3085,7 +3154,12 @@ signedIn: boolean;
  * The desktop extension this server comes from (its display name). Such servers are
  * managed in Settings → Extensions, not edited as config entries.
  */
-extension: string | null; updatedAt: number }
+extension: string | null; 
+/**
+ * With [`McpStatus::NeedsTrust`]: an earlier command line of this server was trusted
+ * and it has changed since.
+ */
+trustChanged: boolean; updatedAt: number }
 /**
  * Where a server is in its life cycle.
  */
@@ -3109,7 +3183,12 @@ export type McpStatus =
 /**
  * Stopped by Oxide (e.g. while quitting).
  */
-"stopped"
+"stopped" | 
+/**
+ * A local command Oxide hasn't run before (or whose command line changed): it waits
+ * until the user trusts it (Phase 18).
+ */
+"needsTrust"
 export type McpTool = { server: string; name: string; title: string | null; description: string | null; 
 /**
  * JSON Schema of the arguments, as a JSON string.
@@ -4026,6 +4105,60 @@ export type TaskStatus = "pending" | "inProgress" | "done"
  */
 export type TestProvider = { kind: ProviderKind; baseUrl: string; apiKey: string | null; providerId: string | null }
 export type ThemePref = "system" | "light" | "dark"
+/**
+ * The language of Oxide's own interface (Phase 18). Model replies follow the user.
+ */
+export type UiLanguage = 
+/**
+ * The system's language when Oxide has it, else English.
+ */
+"system" | "en" | "da"
+export type UsageByModel = { providerId: string; 
+/**
+ * The provider's model id.
+ */
+model: string; totals: UsageTotals }
+export type UsageByProvider = { 
+/**
+ * Endpoint id (`anthropic`, `lmstudio`, a custom endpoint's id), or `""` if unknown.
+ */
+providerId: string; totals: UsageTotals }
+export type UsageDay = { 
+/**
+ * Local date, `YYYY-MM-DD`.
+ */
+day: string; totals: UsageTotals }
+export type UsageReport = { 
+/**
+ * Start of the range (`None`: everything saved).
+ */
+since: number | null; totals: UsageTotals; 
+/**
+ * Chats with at least one counted reply.
+ */
+chats: number; 
+/**
+ * Replies whose provider reported no token counts.
+ */
+unreported: number; 
+/**
+ * Most tokens first.
+ */
+byProvider: UsageByProvider[]; 
+/**
+ * Most tokens first.
+ */
+byModel: UsageByModel[]; 
+/**
+ * Every day of the range, oldest first (at most [`MAX_USAGE_DAYS`]; for "all time", from
+ * the first reply).
+ */
+days: UsageDay[] }
+export type UsageTotals = { 
+/**
+ * Replies counted (with or without token counts).
+ */
+replies: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
 /**
  * How a model is asked to think before answering.
  */

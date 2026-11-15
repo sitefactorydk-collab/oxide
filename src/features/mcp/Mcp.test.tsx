@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { fakeMcpAsk, fakeMcpState } from "@/test/fakeMcp";
+import { fakeMcpAsk, fakeMcpNeedsTrust, fakeMcpState } from "@/test/fakeMcp";
 import { renderApp } from "@/test/renderApp";
 
 const card = async (name: string) => screen.findByRole("region", { name });
@@ -14,6 +14,22 @@ describe("Settings → Connectors", () => {
     const docs = await card("docs");
     expect(within(docs).getByTestId("mcp-status")).toHaveTextContent("Sign-in needed");
     expect(within(docs).getByText("Sign in to connect.")).toBeInTheDocument();
+  });
+
+  it("holds a command added outside Oxide until it is trusted", async () => {
+    renderApp("/settings/connectors");
+    const everything = await card("everything");
+    act(() => fakeMcpNeedsTrust("everything", true));
+    expect(within(everything).getByTestId("mcp-status")).toHaveTextContent("Waiting for your OK");
+    expect(within(everything).getByRole("note")).toHaveTextContent(
+      "command changed since you last allowed it",
+    );
+    expect(within(everything).queryByRole("button", { name: "Restart everything" })).toBeNull();
+    fireEvent.click(within(everything).getByRole("button", { name: "Trust and start" }));
+    await waitFor(() =>
+      expect(within(everything).getByTestId("mcp-status")).toHaveTextContent("Running"),
+    );
+    expect(fakeMcpState().trusted).toEqual(["everything"]);
   });
 
   it("signs in to a remote server", async () => {

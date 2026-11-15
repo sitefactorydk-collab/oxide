@@ -19,7 +19,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 oxide-core.workspace = true
-oxide-store.workspace = true
+# The Secret Service on Linux (Phase 18).
+oxide-store = { workspace = true, features = ["secret-service"] }
 oxide-llm.workspace = true
 oxide-agent.workspace = true
 oxide-mcp.workspace = true
