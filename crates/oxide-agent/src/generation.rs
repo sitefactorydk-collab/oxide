@@ -3,7 +3,7 @@
 //! [`Generation`] resolves the endpoint of each kind of generation (a provider from Settings →
 //! Providers or a custom URL, with an optional key of its own in the keychain), tests it, lists
 //! its models, and runs the chat tools `generate_image`, `generate_video` and
-//! `generate_audio`. Results are stored with the attachments, so they show in the transcript
+//! `generate_music`. Results are stored with the attachments, so they show in the transcript
 //! and can be downloaded.
 
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use oxide_core::{
 };
 use oxide_llm::Endpoint;
 use oxide_llm::generation::{
-    self as gen_api, ImageRequest, InputImage, SpeechRequest, VideoPolling, VideoRequest,
+    self as gen_api, ImageRequest, InputImage, MusicRequest, VideoPolling, VideoRequest,
     VideoState, VideoStatus,
 };
 use oxide_store::{Secret, SecretStore, Store};
@@ -32,7 +32,7 @@ fn kind_name(kind: GenerationKind) -> &'static str {
     match kind {
         GenerationKind::Image => "image",
         GenerationKind::Video => "video",
-        GenerationKind::Audio => "audio",
+        GenerationKind::Music => "music",
     }
 }
 
@@ -190,7 +190,7 @@ impl Generation {
                     ids.len()
                 ),
             },
-            Err(e) => fail(format!("Couldn't reach the endpoint: {e}")),
+            Err(e) => fail(format!("The test failed: {e}")),
         }
     }
 
@@ -217,7 +217,7 @@ impl Generation {
                 self.video(&endpoint, &model, input, references, progress)
                     .await
             }
-            GenerationKind::Audio => self.audio(&endpoint, &model, input, settings).await,
+            GenerationKind::Music => self.music(&endpoint, &model, input, progress).await,
         }
     }
 
@@ -377,27 +377,38 @@ impl Generation {
         }
     }
 
-    async fn audio(
+    async fn music(
         &self,
         endpoint: &Endpoint,
         model: &str,
         input: &Value,
-        settings: &GenerationSettings,
+        progress: &(dyn Fn(ToolProgress) + Send + Sync),
     ) -> ToolOutput {
-        let Some(text) = str_arg(input, "text") else {
-            return ToolOutput::error("generate_audio needs the \"text\" to read aloud.");
+        let Some(prompt) = str_arg(input, "style").or_else(|| str_arg(input, "prompt")) else {
+            return ToolOutput::error(
+                "generate_music needs a \"style\": comma-separated genre and mood tags.",
+            );
         };
-        let req = SpeechRequest {
+        let duration = input
+            .get("duration_seconds")
+            .and_then(Value::as_f64)
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .map(|d| d.round().clamp(5.0, 240.0) as u32);
+        let req = MusicRequest {
             model: model.to_owned(),
-            input: text,
-            voice: str_arg(input, "voice").unwrap_or_else(|| settings.voice.clone()),
-            format: settings.audio_format.clone(),
-            instructions: str_arg(input, "instructions"),
-            speed: input.get("speed").and_then(Value::as_f64).map(|s| s as f32),
+            prompt,
+            lyrics: str_arg(input, "lyrics"),
+            duration,
+            seed: input.get("seed").and_then(Value::as_i64),
         };
-        let file = match gen_api::generate_speech(endpoint, &req).await {
+        // The answer comes in one piece, possibly after a queue: say what is happening.
+        progress(ToolProgress {
+            percent: None,
+            note: "Making the music".into(),
+        });
+        let file = match gen_api::generate_music(endpoint, &req).await {
             Ok(f) => f,
-            Err(e) => return ToolOutput::error(format!("The audio couldn't be made: {e}")),
+            Err(e) => return ToolOutput::error(format!("The music couldn't be made: {e}")),
         };
         let ext = match file.media_type.as_str() {
             "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
@@ -408,19 +419,26 @@ impl Generation {
         };
         let path = match self.attachments.save_media(ext, &file.bytes).await {
             Ok(p) => p,
-            Err(e) => return ToolOutput::error(format!("The audio couldn't be stored: {e}")),
+            Err(e) => return ToolOutput::error(format!("The music couldn't be stored: {e}")),
         };
+        let kind = if req.lyrics.is_some() {
+            "a song"
+        } else {
+            "an instrumental"
+        };
+        let length = duration
+            .map(|d| format!(" of {d} seconds"))
+            .unwrap_or_default();
         ToolOutput {
             content: vec![
                 ContentBlock::text(format!(
-                    "Read the text aloud with {model}, voice {} ({}). The user gets a player \
-                     and a download button; you can't hear it yourself.",
-                    req.voice,
+                    "Made {kind}{length} with {model} ({}). The user gets a player and a \
+                     download button; you can't hear it yourself.",
                     format_bytes(file.bytes.len() as u64)
                 )),
                 ContentBlock::Document {
                     media_type: file.media_type,
-                    name: format!("generated-speech.{ext}"),
+                    name: format!("generated-music.{ext}"),
                     source: MediaSource::Path { path },
                 },
             ],
@@ -489,9 +507,9 @@ pub fn tool_entry(kind: GenerationKind, settings: &GenerationSettings) -> ToolEn
         GenerationKind::Video => (
             format!(
                 "Make a short video from a description with {model}. Use it when the user asks \
-                 for a video or animation. It takes from one to several minutes, and the user \
-                 sees its progress. Each call costs money, often a lot: make one video per \
-                 request. To start from an image in the chat, set use_attached_image."
+                 for a video or animation. It takes from one minute to a quarter of an hour (a \
+                 local GPU is slow), and the user sees its progress. Each call costs money or \
+                 GPU time, often a lot: make one video per request. To start from an image in the chat, set use_attached_image."
             ),
             json!({
                 "type": "object",
@@ -504,7 +522,7 @@ pub fn tool_entry(kind: GenerationKind, settings: &GenerationSettings) -> ToolEn
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 60,
-                        "description": "Length in seconds, as the user asked. Leave out for the model's default."
+                        "description": "Length in seconds, as the user asked. Leave out for the model's default. Local models often make only a few seconds (e.g. 1-5)."
                     },
                     "size": {
                         "type": "string",
@@ -519,36 +537,37 @@ pub fn tool_entry(kind: GenerationKind, settings: &GenerationSettings) -> ToolEn
                 "additionalProperties": false
             }),
         ),
-        GenerationKind::Audio => (
+        GenerationKind::Music => (
             format!(
-                "Read text aloud (text to speech) with {model}. Use it when the user asks to \
-                 hear something, to have text read aloud or narrated, or for a voice-over. The \
-                 user gets an audio player. Pass the exact words to speak, at most 4096 \
-                 characters per call; split longer text over several calls."
+                "Make music (a song with vocals, or an instrumental) with {model}. Use it when \
+                 the user asks for a song, a jingle, a melody, background music or a soundtrack. \
+                 The user gets an audio player. It takes from a few seconds to several minutes \
+                 (the server may be busy). Write the style as comma-separated tags, and for a \
+                 song write the lyrics yourself unless the user gave them."
             ),
             json!({
                 "type": "object",
                 "properties": {
-                    "text": {
+                    "style": {
                         "type": "string",
-                        "description": "The exact words to speak."
+                        "description": "Comma-separated style tags: genre, mood, instruments, vocal type, tempo. E.g. \"danish indie folk, acoustic guitar, warm male vocals, 90 bpm\"."
                     },
-                    "voice": {
+                    "lyrics": {
                         "type": "string",
-                        "description": format!("A voice name the model knows. Leave out for the default ({}).", settings.voice)
+                        "description": "The words to sing, with section markers on their own lines: [verse], [chorus], [bridge]. Leave out for an instrumental."
                     },
-                    "instructions": {
-                        "type": "string",
-                        "description": "How to speak: tone, pace, accent, emotion (not every model uses it)."
+                    "duration_seconds": {
+                        "type": "integer",
+                        "minimum": 5,
+                        "maximum": 240,
+                        "description": "Length in seconds (default 30). Fit it to the lyrics."
                     },
-                    "speed": {
-                        "type": "number",
-                        "minimum": 0.25,
-                        "maximum": 4.0,
-                        "description": "1.0 is normal speed."
+                    "seed": {
+                        "type": "integer",
+                        "description": "Repeat a seed to get the same result again. Usually leave out."
                     }
                 },
-                "required": ["text"],
+                "required": ["style"],
                 "additionalProperties": false
             }),
         ),
@@ -566,7 +585,9 @@ pub fn tool_entry(kind: GenerationKind, settings: &GenerationSettings) -> ToolEn
 
 /// What a generation call is about, for "Used in this chat".
 pub fn label(input: &Value) -> Option<String> {
-    let text = str_arg(input, "prompt").or_else(|| str_arg(input, "text"))?;
+    let text = str_arg(input, "prompt")
+        .or_else(|| str_arg(input, "style"))
+        .or_else(|| str_arg(input, "text"))?;
     let line = text.lines().next().unwrap_or("").trim();
     let mut out: String = line.chars().take(80).collect();
     if line.chars().count() > 80 {
@@ -774,7 +795,7 @@ pub(crate) mod tests {
             .expect("anthropic");
         let err = g
             .endpoint(
-                GenerationKind::Audio,
+                GenerationKind::Music,
                 &GenerationEndpoint {
                     provider_id: Some(a.id),
                     base_url: String::new(),
@@ -784,12 +805,12 @@ pub(crate) mod tests {
             .await
             .expect_err("anthropic");
         assert!(
-            err.contains("Anthropic's API doesn't do audio generation"),
+            err.contains("Anthropic's API doesn't do music generation"),
             "{err}"
         );
         let err = g
             .endpoint(
-                GenerationKind::Audio,
+                GenerationKind::Music,
                 &GenerationEndpoint {
                     provider_id: Some("gone".into()),
                     base_url: String::new(),
@@ -816,6 +837,11 @@ pub(crate) mod tests {
                 br#"{"data":[{"id":"tts-1"}]}"#.to_vec(),
             ),
             ("404 Not Found", "text/plain", b"nope".to_vec()),
+            (
+                "401 Unauthorized",
+                "application/json",
+                br#"{"error":{"message":"bad key"}}"#.to_vec(),
+            ),
         ])
         .await;
         g.set_key(GenerationKind::Image, Some("sk-own"))
@@ -832,8 +858,11 @@ pub(crate) mod tests {
             t.ok && t.message.contains("isn't among the 1 models"),
             "{t:?}"
         );
+        // No model list (comfy-bridge): reachable, but the name can't be checked.
         let t = g.test(GenerationKind::Image, &custom(&base, "x")).await;
-        assert!(!t.ok, "{t:?}");
+        assert!(t.ok && t.message.contains("lists no models"), "{t:?}");
+        let t = g.test(GenerationKind::Image, &custom(&base, "x")).await;
+        assert!(!t.ok && t.message.contains("key was rejected"), "{t:?}");
         let t = g.test(GenerationKind::Image, &custom(&base, " ")).await;
         assert!(!t.ok && t.message.contains("model"), "{t:?}");
         let heads = seen.lock().await.clone();
@@ -854,7 +883,12 @@ pub(crate) mod tests {
                 "application/json",
                 format!(r#"{{"data":[{{"b64_json":"{PNG_1X1}"}}]}}"#).into_bytes(),
             ),
-            ("200 OK", "audio/mpeg", b"ID3-mp3".to_vec()),
+            (
+                "200 OK",
+                "application/json",
+                // `SUQzLW1wMw==` is "ID3-mp3".
+                br#"   {"data":[{"format":"mp3","b64_json":"SUQzLW1wMw=="}]}"#.to_vec(),
+            ),
             (
                 "200 OK",
                 "application/json",
@@ -870,9 +904,8 @@ pub(crate) mod tests {
         .await;
         let s = GenerationSettings {
             image: custom(&base, "gpt-image-2"),
-            audio: custom(&base, "tts-1"),
+            music: custom(&base, "ace-step"),
             video: custom(&base, "sora-2"),
-            ..GenerationSettings::default()
         };
         let ticks = std::sync::Mutex::new(Vec::new());
         let progress = |p: ToolProgress| ticks.lock().expect("lock").push(p);
@@ -897,8 +930,8 @@ pub(crate) mod tests {
 
         let out = g
             .run(
-                GenerationKind::Audio,
-                &json!({"text": "Hello", "voice": "nova"}),
+                GenerationKind::Music,
+                &json!({"style": "lo-fi, piano", "lyrics": "[verse]\nHello", "duration_seconds": 20}),
                 &s,
                 Vec::new(),
                 &progress,
@@ -942,18 +975,24 @@ pub(crate) mod tests {
                 )
         );
         let ticks = ticks.lock().expect("lock").clone();
-        assert_eq!(ticks.first().map(|t| t.note.as_str()), Some("Queued"));
+        let notes: Vec<&str> = ticks.iter().map(|t| t.note.as_str()).collect();
+        assert_eq!(notes.first(), Some(&"Making the music"));
+        assert_eq!(notes.get(1), Some(&"Queued"));
         assert_eq!(ticks.last().and_then(|t| t.percent), Some(100));
         let heads = seen.lock().await.clone();
         assert!(heads[0].starts_with("POST /v1/images/generations"));
-        assert!(heads[1].starts_with("POST /v1/audio/speech"));
+        assert!(heads[1].starts_with("POST /v1/music/generations"));
         assert!(heads[2].starts_with("POST /v1/videos "));
     }
 
     #[tokio::test]
     async fn failures_are_tool_errors() {
         let (g, _dir) = fixture().await;
-        let (base, _) = serve(vec![("404 Not Found", "text/plain", b"Not Found".to_vec())]).await;
+        let (base, _) = serve(vec![
+            ("404 Not Found", "text/plain", b"Not Found".to_vec()),
+            ("404 Not Found", "text/plain", b"Not Found".to_vec()),
+        ])
+        .await;
         let s = GenerationSettings {
             video: custom(&base, "v"),
             ..GenerationSettings::default()
@@ -971,7 +1010,7 @@ pub(crate) mod tests {
         assert_eq!(
             out.content,
             vec![ContentBlock::text(
-                "The video couldn't be made: this endpoint doesn't offer video generation (/videos)"
+                "The video couldn't be made: this endpoint doesn't offer video generation (/videos or /videos/generations)"
             )]
         );
         let out = g
@@ -986,7 +1025,7 @@ pub(crate) mod tests {
         for k in [
             GenerationKind::Image,
             GenerationKind::Video,
-            GenerationKind::Audio,
+            GenerationKind::Music,
         ] {
             let e = tool_entry(k, &s);
             assert_eq!(e.api_name, k.tool());

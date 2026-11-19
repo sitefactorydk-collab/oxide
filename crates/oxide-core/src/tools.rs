@@ -89,7 +89,7 @@ pub enum ToolUsageKind {
     /// Computer use: the screen seen, the mouse and keyboard used (the label is the action
     /// or the app).
     Computer,
-    /// `generate_image`, `generate_video`, `generate_audio` (Phase 19).
+    /// `generate_image`, `generate_video`, `generate_music` (Phase 19).
     Generation,
 }
 

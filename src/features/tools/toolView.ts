@@ -206,7 +206,7 @@ export const CHROME_TOOL_VERBS: Record<string, [string, string]> = {
 export const GENERATION_TOOL_VERBS: Record<string, [string, string]> = {
   generate_image: ["Making an image", "Made an image"],
   generate_video: ["Making a video", "Made a video"],
-  generate_audio: ["Reading aloud", "Read aloud"],
+  generate_music: ["Making music", "Made music"],
 };
 
 /** Whether a call is one of the generation tools. */
@@ -270,7 +270,7 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
   };
   if (call.tool === "web_search") return str("query") ?? "";
   if (isGenerationCall(call)) {
-    const text = str("prompt") ?? str("text") ?? "";
+    const text = str("prompt") ?? str("style") ?? str("text") ?? "";
     const line = text.split("\n")[0] ?? "";
     return line.length > 80 ? `${line.slice(0, 80)}…` : line;
   }

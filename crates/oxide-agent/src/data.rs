@@ -340,8 +340,9 @@ pub fn secret_names(provider_ids: &[String], mcp_servers: &[String]) -> Vec<Stri
             .iter()
             .map(|k| k.secret_name()),
     );
-    // The first Phase 19 build also had a Text endpoint with a key of its own.
+    // Earlier Phase 19 builds also had Text and Audio (speech) endpoints with keys of their own.
     names.push("generation:text".to_owned());
+    names.push("generation:audio".to_owned());
     names.sort();
     names.dedup();
     names

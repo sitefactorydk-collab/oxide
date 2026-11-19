@@ -17,7 +17,7 @@ describe("Settings → Media generation", () => {
     expect(screen.getByRole("region", { name: "Video generation" })).toHaveTextContent(
       "Not set up",
     );
-    expect(screen.getByRole("region", { name: "Audio generation" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Audio generation" })).not.toBeInTheDocument();
     expect(within(image).getByRole("button", { expanded: true })).toHaveTextContent("Not set up");
 
     // Anthropic can't generate media, so it isn't offered.
@@ -53,23 +53,19 @@ describe("Settings → Media generation", () => {
     );
     expect(fakeGeneration().tests.at(-1)?.endpoint.model).toBe("dall-e-3");
 
-    // The audio group has a voice and a format; a custom URL counts as an endpoint.
-    fireEvent.click(screen.getByRole("button", { name: /Audio generation/ }));
-    const audio = screen.getByRole("region", { name: "Audio generation" });
-    const url = within(audio).getByRole("textbox", { name: "audio custom URL" });
-    fireEvent.change(url, { target: { value: "http://127.0.0.1:8880/v1" } });
+    // The music group (comfy-bridge style): it has a model but no endpoint until a custom URL
+    // is set, which counts as one.
+    fireEvent.click(screen.getByRole("button", { name: /Music generation/ }));
+    const music = screen.getByRole("region", { name: "Music generation" });
+    expect(within(music).getByRole("button", { expanded: true })).toHaveTextContent("Not set up");
+    expect(within(music).getByText(/\/music\/generations/)).toBeInTheDocument();
+    const url = within(music).getByRole("textbox", { name: "music custom URL" });
+    fireEvent.change(url, { target: { value: "http://192.168.8.80:8190/v1" } });
     fireEvent.blur(url);
     await waitFor(() =>
-      expect(fakeState().settings.generation.audio.baseUrl).toBe("http://127.0.0.1:8880/v1"),
+      expect(fakeState().settings.generation.music.baseUrl).toBe("http://192.168.8.80:8190/v1"),
     );
-    fireEvent.change(within(audio).getByRole("combobox", { name: "Audio format" }), {
-      target: { value: "wav" },
-    });
-    await waitFor(() => expect(fakeState().settings.generation.audioFormat).toBe("wav"));
-    const voice = within(audio).getByLabelText("Voice");
-    fireEvent.change(voice, { target: { value: "nova" } });
-    fireEvent.blur(voice);
-    await waitFor(() => expect(fakeState().settings.generation.voice).toBe("nova"));
+    expect(within(music).getByRole("button", { expanded: true })).toHaveTextContent("ace-step");
   });
 });
 
@@ -182,11 +178,11 @@ describe("generation tools in a reply", () => {
     expect(
       callHeadline({
         ...view,
-        tool: "generate_audio",
-        inputJson: '{"text":"Hello"}',
+        tool: "generate_music",
+        inputJson: '{"style":"lo-fi, piano"}',
         status: "running",
       }),
-    ).toEqual({ action: "Reading aloud", detail: "Hello" });
+    ).toEqual({ action: "Making music", detail: "lo-fi, piano" });
     const rows = usageRows([
       {
         toolUseId: "g1",
@@ -200,13 +196,13 @@ describe("generation tools in a reply", () => {
         toolUseId: "g2",
         kind: "generation",
         server: null,
-        tool: "generate_audio",
-        label: "Hello",
+        tool: "generate_music",
+        label: "lo-fi, piano",
         isError: false,
       },
     ] as Parameters<typeof usageRows>[0]);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.title).toBe("Generated media");
-    expect(rows[0]?.details).toEqual(["A red fox", "Hello"]);
+    expect(rows[0]?.details).toEqual(["A red fox", "lo-fi, piano"]);
   });
 });

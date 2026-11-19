@@ -1,4 +1,4 @@
-//! Media generation endpoints (Phase 19): the global defaults for image, video and audio
+//! Media generation endpoints (Phase 19): the global defaults for image, video and music
 //! generation in Settings → Media generation, and the chat tools that use them. Text comes
 //! from the chat models in Settings → Providers and Models.
 //!
@@ -14,18 +14,14 @@ pub const GENERATE_IMAGE: &str = "generate_image";
 /// The chat tool that makes videos.
 pub const GENERATE_VIDEO: &str = "generate_video";
 /// The chat tool that reads text aloud.
-pub const GENERATE_AUDIO: &str = "generate_audio";
+pub const GENERATE_MUSIC: &str = "generate_music";
 /// The "+" menu switch for all three generation tools (a `disabledBuiltins` entry).
 pub const GENERATION_SWITCH: &str = "generation";
 
 /// Default image model (OpenAI's `gpt-image-1` was shut down on 2026-10-23).
 pub const DEFAULT_IMAGE_MODEL: &str = "gpt-image-2";
 /// Default speech model.
-pub const DEFAULT_AUDIO_MODEL: &str = "gpt-4o-mini-tts";
-/// Default voice for speech.
-pub const DEFAULT_VOICE: &str = "alloy";
-/// Audio formats a speech endpoint is asked for (all play in the app).
-pub const AUDIO_FORMATS: [&str; 5] = ["mp3", "wav", "opus", "aac", "flac"];
+pub const DEFAULT_MUSIC_MODEL: &str = "ace-step";
 
 /// A kind of media generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -33,21 +29,21 @@ pub const AUDIO_FORMATS: [&str; 5] = ["mp3", "wav", "opus", "aac", "flac"];
 pub enum GenerationKind {
     Image,
     Video,
-    Audio,
+    Music,
 }
 
 impl GenerationKind {
     pub const ALL: [GenerationKind; 3] = [
         GenerationKind::Image,
         GenerationKind::Video,
-        GenerationKind::Audio,
+        GenerationKind::Music,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             GenerationKind::Image => "image",
             GenerationKind::Video => "video",
-            GenerationKind::Audio => "audio",
+            GenerationKind::Music => "music",
         }
     }
 
@@ -61,7 +57,7 @@ impl GenerationKind {
         match self {
             GenerationKind::Image => GENERATE_IMAGE,
             GenerationKind::Video => GENERATE_VIDEO,
-            GenerationKind::Audio => GENERATE_AUDIO,
+            GenerationKind::Music => GENERATE_MUSIC,
         }
     }
 
@@ -70,7 +66,7 @@ impl GenerationKind {
         match tool {
             GENERATE_IMAGE => Some(GenerationKind::Image),
             GENERATE_VIDEO => Some(GenerationKind::Video),
-            GENERATE_AUDIO => Some(GenerationKind::Audio),
+            GENERATE_MUSIC => Some(GenerationKind::Music),
             _ => None,
         }
     }
@@ -121,17 +117,15 @@ impl GenerationEndpoint {
     }
 }
 
-/// Settings → Media generation. (A `text` entry saved before it was dropped is ignored.)
+/// Settings → Media generation. (Entries saved by earlier builds — `text`, `audio`, `voice`,
+/// `audioFormat` — are ignored.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GenerationSettings {
     pub image: GenerationEndpoint,
     pub video: GenerationEndpoint,
-    pub audio: GenerationEndpoint,
-    /// The voice speech uses unless the model picks another (`alloy`, `nova`, …).
-    pub voice: String,
-    /// The audio format speech is made in (one of [`AUDIO_FORMATS`]).
-    pub audio_format: String,
+    /// Music on `/music/generations` (songs and instrumentals).
+    pub music: GenerationEndpoint,
 }
 
 impl Default for GenerationSettings {
@@ -139,9 +133,7 @@ impl Default for GenerationSettings {
         Self {
             image: GenerationEndpoint::with_model(DEFAULT_IMAGE_MODEL),
             video: GenerationEndpoint::default(),
-            audio: GenerationEndpoint::with_model(DEFAULT_AUDIO_MODEL),
-            voice: DEFAULT_VOICE.into(),
-            audio_format: "mp3".into(),
+            music: GenerationEndpoint::with_model(DEFAULT_MUSIC_MODEL),
         }
     }
 }
@@ -151,26 +143,14 @@ impl GenerationSettings {
         match kind {
             GenerationKind::Image => &self.image,
             GenerationKind::Video => &self.video,
-            GenerationKind::Audio => &self.audio,
+            GenerationKind::Music => &self.music,
         }
     }
 
     pub fn normalized(mut self) -> Self {
         self.image = self.image.normalized();
         self.video = self.video.normalized();
-        self.audio = self.audio.normalized();
-        let voice: String = self.voice.trim().chars().take(64).collect();
-        self.voice = if voice.is_empty() {
-            DEFAULT_VOICE.into()
-        } else {
-            voice
-        };
-        let format = self.audio_format.trim().to_ascii_lowercase();
-        self.audio_format = if AUDIO_FORMATS.contains(&format.as_str()) {
-            format
-        } else {
-            "mp3".into()
-        };
+        self.music = self.music.normalized();
         self
     }
 }
@@ -206,30 +186,26 @@ mod tests {
         s.image.provider_id = Some(" openai ".into());
         s.video.base_url = " https://api.example.com/v1/ ".into();
         s.video.model = " sora-2 ".into();
-        s.audio.base_url = "ftp://nope".into();
-        s.voice = "  ".into();
-        s.audio_format = "PCM".into();
+        s.music.base_url = "ftp://nope".into();
         let s = s.normalized();
         assert_eq!(s.image.provider_id.as_deref(), Some("openai"));
         assert!(s.image.is_set());
         assert_eq!(s.video.base_url, "https://api.example.com/v1");
         assert_eq!(s.video.model, "sora-2");
         assert!(s.video.is_set());
-        assert_eq!(s.audio.base_url, "");
-        assert_eq!(s.voice, DEFAULT_VOICE);
-        assert_eq!(s.audio_format, "mp3");
+        assert_eq!(s.music.base_url, "");
     }
 
     #[test]
     fn settings_round_trip_and_fill_in_missing_fields() {
         let s: GenerationSettings =
-            // `text` was saved by the first Phase 19 build; it is ignored now.
+            // `text`, `audio` and `voice` were saved by earlier Phase 19 builds; they are ignored.
             serde_json::from_str(
-                r#"{"text":{"model":"t"},"video":{"baseUrl":"http://x/v1","model":"v"}}"#,
+                r#"{"text":{"model":"t"},"audio":{"model":"tts-1"},"voice":"nova","video":{"baseUrl":"http://x/v1","model":"v"}}"#,
             )
                 .expect("parses");
         assert_eq!(s.video.model, "v");
-        assert_eq!(s.audio.model, DEFAULT_AUDIO_MODEL);
+        assert_eq!(s.music.model, DEFAULT_MUSIC_MODEL);
         let json = serde_json::to_string(&s).expect("serializes");
         let back: GenerationSettings = serde_json::from_str(&json).expect("parses");
         assert_eq!(back, s);
@@ -242,8 +218,8 @@ mod tests {
         }
         assert_eq!(GenerationKind::Image.secret_name(), "generation:image");
         assert_eq!(
-            serde_json::to_string(&GenerationKind::Audio).expect("json"),
-            "\"audio\""
+            serde_json::to_string(&GenerationKind::Music).expect("json"),
+            "\"music\""
         );
     }
 }

@@ -2972,19 +2972,16 @@ model: string }
 /**
  * A kind of media generation.
  */
-export type GenerationKind = "image" | "video" | "audio"
+export type GenerationKind = "image" | "video" | "music"
 /**
- * Settings → Media generation. (A `text` entry saved before it was dropped is ignored.)
+ * Settings → Media generation. (Entries saved by earlier builds — `text`, `audio`, `voice`,
+ * `audioFormat` — are ignored.)
  */
-export type GenerationSettings = { image: GenerationEndpoint; video: GenerationEndpoint; audio: GenerationEndpoint; 
+export type GenerationSettings = { image: GenerationEndpoint; video: GenerationEndpoint; 
 /**
- * The voice speech uses unless the model picks another (`alloy`, `nova`, …).
+ * Music on `/music/generations` (songs and instrumentals).
  */
-voice: string; 
-/**
- * The audio format speech is made in (one of [`AUDIO_FORMATS`]).
- */
-audioFormat: string }
+music: GenerationEndpoint }
 /**
  * The result of Test in Settings → Media generation.
  */
@@ -4388,7 +4385,7 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  */
 "computer" | 
 /**
- * `generate_image`, `generate_video`, `generate_audio` (Phase 19).
+ * `generate_image`, `generate_video`, `generate_music` (Phase 19).
  */
 "generation"
 /**

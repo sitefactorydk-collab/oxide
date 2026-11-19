@@ -80,7 +80,7 @@ export function PlusMenu({
   const sandboxEnabled = settings.sandbox.enabled;
   const browserEnabled = settings.browser.enabled;
   const g = settings.generation;
-  const generationReady = (["image", "video", "audio"] as const).some(
+  const generationReady = (["image", "video", "music"] as const).some(
     (k) => g[k].model !== "" && (g[k].providerId !== null || g[k].baseUrl !== ""),
   );
   const chromeEnabled = settings.chrome.enabled;
@@ -221,7 +221,7 @@ export function PlusMenu({
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span>Generate media</span>
                 <span className="text-xs leading-4 text-fg-subtle">
-                  Images, video and audio from Settings → Generation; each asks you first
+                  Images, video and music from Settings → Media generation; each asks you first
                 </span>
               </span>
             </MenuCheckboxItem>

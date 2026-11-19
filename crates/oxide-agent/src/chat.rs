@@ -867,13 +867,13 @@ impl ChatService {
             {
                 own.push(python_entry());
             }
-            // Image, video and audio generation: a tool per kind set up in Settings → Media
+            // Image, video and music generation: a tool per kind set up in Settings → Media
             // generation (Phase 19).
             if self.tools.generation().is_some() && chat_tools.allows_builtin(GENERATION_SWITCH) {
                 for kind in [
                     GenerationKind::Image,
                     GenerationKind::Video,
-                    GenerationKind::Audio,
+                    GenerationKind::Music,
                 ] {
                     if settings.generation.endpoint(kind).is_set()
                         && chat_tools.allows_builtin(kind.tool())
@@ -2524,7 +2524,7 @@ impl ChatService {
             .iter()
             .any(|k| input.get(*k).and_then(Value::as_bool) == Some(true));
         let mut references = Vec::new();
-        if wants_images && kind != GenerationKind::Audio {
+        if wants_images && kind != GenerationKind::Music {
             let found = self.recent_images(cid).await;
             if found.is_empty() {
                 return ToolOutput::error(
@@ -7870,8 +7870,8 @@ class Agent:
             base_url: base.clone(),
             model: "gpt-image-2".into(),
         };
-        // Audio is set up too; video isn't, so it isn't offered.
-        settings.generation.audio.base_url = base;
+        // Music is set up too; video isn't, so it isn't offered.
+        settings.generation.music.base_url = base;
         store.save_app_settings(settings).await.expect("saves");
         let (chat, first) = store
             .start_conversation(StartConversation {
@@ -7910,7 +7910,7 @@ class Agent:
             "{offered:?}"
         );
         assert!(
-            offered.contains(&"generate_audio".to_owned()),
+            offered.contains(&"generate_music".to_owned()),
             "{offered:?}"
         );
         assert!(

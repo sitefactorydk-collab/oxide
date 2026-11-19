@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AudioLines, ChevronRight, Film, ImageIcon, type LucideIcon } from "lucide-react";
+import { ChevronRight, Film, ImageIcon, Music, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   commands,
@@ -32,24 +32,8 @@ const SUGGESTED: Record<GenerationKind, string[]> = {
     "imagen-4.0-generate-001",
   ],
   video: ["sora-2", "sora-2-pro"],
-  audio: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd", "playai-tts"],
+  music: ["ace-step"],
 };
-
-const VOICES = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "fable",
-  "nova",
-  "onyx",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
-];
 
 const GROUPS: { kind: GenerationKind; title: string; icon: LucideIcon; hint: string }[] = [
   {
@@ -62,13 +46,13 @@ const GROUPS: { kind: GenerationKind; title: string; icon: LucideIcon; hint: str
     kind: "video",
     title: "Video generation",
     icon: Film,
-    hint: "Used by generate_video in chats. Needs an endpoint with the /videos API (start a job, check it, download the result).",
+    hint: "Used by generate_video in chats. Works with the /videos job API, or with /videos/generations that answers with the finished file.",
   },
   {
-    kind: "audio",
-    title: "Audio generation",
-    icon: AudioLines,
-    hint: "Used by generate_audio in chats to read text aloud: /audio/speech.",
+    kind: "music",
+    title: "Music generation",
+    icon: Music,
+    hint: "Used by generate_music in chats for songs and instrumentals: POST /music/generations (one request, one finished file; it may take minutes when the server is busy).",
   },
 ];
 
@@ -163,8 +147,6 @@ function GroupForm({
   hint: string;
   endpoint: GenerationEndpoint;
 }) {
-  const { data } = useSettings();
-  const g = (data ?? DEFAULT_SETTINGS).generation;
   const set = useSetGenerationSettings();
   const { data: providers } = useProviders();
   const usable = providers.filter((p) => p.kind !== "anthropic");
@@ -272,29 +254,6 @@ function GroupForm({
         </span>
       </div>
       <KeyField kind={kind} />
-      {kind === "audio" && (
-        <div className="flex gap-4">
-          <label className="flex flex-1 flex-col gap-2">
-            <span className="text-md font-medium text-fg">Voice</span>
-            <VoiceInput value={g.voice} onSave={(voice) => set({ voice })} />
-          </label>
-          <label className="flex w-40 flex-col gap-2">
-            <span className="text-md font-medium text-fg">Format</span>
-            <select
-              aria-label="Audio format"
-              value={g.audioFormat}
-              onChange={(e) => set({ audioFormat: e.target.value })}
-              className={input}
-            >
-              {["mp3", "wav", "opus", "aac", "flac"].map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -314,28 +273,6 @@ function GroupForm({
         )}
       </div>
     </div>
-  );
-}
-
-function VoiceInput({ value, onSave }: { value: string; onSave: (v: string) => void }) {
-  const [voice, setVoice] = useState(value);
-  useEffect(() => setVoice(value), [value]);
-  return (
-    <>
-      <input
-        aria-label="Voice"
-        list="generation-voices"
-        value={voice}
-        onChange={(e) => setVoice(e.target.value)}
-        onBlur={() => voice.trim() !== value && onSave(voice.trim())}
-        className={input}
-      />
-      <datalist id="generation-voices">
-        {VOICES.map((v) => (
-          <option key={v} value={v} />
-        ))}
-      </datalist>
-    </>
   );
 }
 

@@ -65,7 +65,7 @@ pub use extension::{
     SkillDetail, SkillFileChange, SkillInput, SkillSavePreview,
 };
 pub use generation::{
-    GENERATE_AUDIO, GENERATE_IMAGE, GENERATE_VIDEO, GENERATION_SWITCH, GenerationEndpoint,
+    GENERATE_IMAGE, GENERATE_MUSIC, GENERATE_VIDEO, GENERATION_SWITCH, GenerationEndpoint,
     GenerationKind, GenerationSettings, GenerationTest, ToolProgress,
 };
 pub use mcp::{

@@ -98,9 +98,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   generation: {
     image: { providerId: null, baseUrl: "", model: "gpt-image-2" },
     video: { providerId: null, baseUrl: "", model: "" },
-    audio: { providerId: null, baseUrl: "", model: "gpt-4o-mini-tts" },
-    voice: "alloy",
-    audioFormat: "mp3",
+    music: { providerId: null, baseUrl: "", model: "ace-step" },
   },
 };
 

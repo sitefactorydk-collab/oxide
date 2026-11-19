@@ -18,7 +18,7 @@ import {
   Shapes,
   Sparkles,
   ShieldCheck,
-  AudioLines,
+  Music,
   Film,
   ImageIcon,
 } from "lucide-react";
@@ -83,8 +83,8 @@ function KindIcon({ call }: { call: ToolCallView }) {
                               : kind === "generation"
                                 ? call.tool === "generate_video"
                                   ? Film
-                                  : call.tool === "generate_audio"
-                                    ? AudioLines
+                                  : call.tool === "generate_music"
+                                    ? Music
                                     : ImageIcon
                                 : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;

@@ -13,6 +13,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 18** — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19, `ff92037`). Every check is green on Windows and every manual check passed. Then the Vitest 5 maintenance step (`a4615c4`, pushed; ESLint 10 waits for plugin support).
 - **Current:** Phase 19 — Generation endpoints & media generation: **partial** (2026-11-19). It is built and tested on the agent side. Every check is green on Windows, and it is committed as `dcd3bdb` (not pushed). The manual exit check is still open. OpenAI's Videos API (Sora) was shut down on 2026-09-24, so the video check needs a `/videos`-compatible gateway.
 - **Phase 19 follow-up (2026-11-19 evening):** at the user's request, the page is renamed **Settings → Media generation** and the Text group is dropped (text comes from Providers and Models). Script: `scripts\win\phase19-media.cmd`, message `logs\commit-msg-phase19-media.txt`.
+- **Phase 19 follow-up 2 (2026-11-19 late evening):** at the user's request, Audio (speech) became **Music generation** on `/music/generations` (the user's local comfy-bridge server). Image was checked in Oxide by the user.
+- **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 are checked and committed together by `scripts\win\phase19-music.cmd` (message `logs\commit-msg-phase19-music.txt`).
 - **Next phase:** finish Phase 19's exit check, then Phase 20 — Utility Apps: runtime and gallery.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -57,10 +59,10 @@ The exit check is still open (see below).
 - `/audio/speech` takes `input` up to 4096 characters, a voice, `response_format` (mp3/opus/aac/flac/wav/pcm), `instructions` and `speed` (0.25–4). `tts-1`, `tts-1-hd` and `gpt-4o-mini-tts` are announced to shut down on 2027-01-06.
 
 Exit criteria:
-- [ ] In a chat on Windows, each of these works against endpoints set in Settings → Media generation:
-  - "make an image of …": a local server if one offers `/images/generations`, else OpenAI;
-  - "make a 5-second video of …": a `/videos`-compatible gateway (see above);
-  - "read this paragraph aloud": a local TTS server or OpenAI.
+- In a chat on Windows, each of these works against endpoints set in Settings → Media generation:
+  - [x] "make an image of …" (checked by the user, 2026-11-19);
+  - [ ] "make a 5-second video of …". Reported as working at 22:22, then corrected by the user: it failed, because their server has no `/videos` job API (see Follow-up 3);
+  - [ ] "make a 30-second song about …" on the user's comfy-bridge server (`http://192.168.8.80:8190/v1`, model `ace-step`). This replaced "read this paragraph aloud"; see the music follow-up below.
 - [ ] Changing a default changes which model and endpoint are used. Check the Request in the tool line and the endpoint's own log.
 
 Done:
@@ -130,6 +132,11 @@ Notes for Phase 20:
   - The kill path is sound: a Job Object with `KILL_ON_JOB_CLOSE`, a non-inheritable job handle, a kill after a 2 s grace period, and std's spawn lock against handle leaks. So the cause is unconfirmed (a scanner, or something in parallel spawning).
   - **Change:** `crates/oxide-mcp/tests/extensions.rs` now runs its three tests one at a time (a shared `tokio::sync::Mutex`). They test install flows, not concurrency.
   - Known issue: if users ever see "the installed version couldn't be replaced" while updating an extension, look here again.
+- **`phase19-music.cmd` (22:45–22:54):** the test failed again with os error 32, even with its tests serialized. Rename retries ran out after about 20 s (the test took 22.6 s).
+- **`scripts\win\ext-diag2.cmd` (23:20):** the whole test binary passed 4 out of 4 times, in about 0.5 s each. A sampler checked every 250 ms and found no test server left running, and Windows' Restart Manager reported no process holding files in the extension folder.
+  - So nothing in Oxide holds the folder. The failure shows up only in the full `cargo test --workspace` run right after a fresh build, when the machine is busiest.
+  - The likely cause is a scan by antivirus (Defender) that lags under load. It is not proven.
+  - **Decision:** re-run, and keep it as a known issue. If it comes back, make updates install into a new folder instead of renaming the old one.
 
 Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl/CSP in a scratch crate) tsc ✅ eslint ✅ prettier ✅. Windows (`phase19.cmd`, third run 13:01–13:06): fmt ✅ prettier ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅; committed `dcd3bdb` (not pushed). Manual exit check: pending.
 
@@ -140,6 +147,46 @@ Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library c
   - Phase 20's per-app text model is a chat model from Providers and Models: the first available one, or the one the app's manifest names.
   - Phase 21's builder model is picked in the builder.
 - Checked: Rust fmt, clippy and tests on Linux; tsc, ESLint and Prettier on the device. The Windows checks and commit run in `scripts\win\phase19-media.cmd`.
+
+**Follow-up 2: Music generation instead of speech (user's request, 2026-11-19 22:15):**
+- The user's audio server is **comfy-bridge**, which is local and custom: `http://192.168.8.80:8190`, with Bearer auth. Its `POST /v1/music/generations` (also `/v1/audio/music`) is **synchronous**: one request returns one finished MP3.
+  - Request: `model` (`ace-step`), `prompt` (style tags), `lyrics` (`[verse]`/`[chorus]`/`[bridge]`; leave out for an instrumental), `duration` (5–240 s, default 30), `seed`, `steps`, `cfg_scale`, `lyrics_strength`.
+  - Reply: `data[0]` with `format`, `url` (works without a key) and `b64_json`.
+  - The server sends a space every 20 s while it works, and a failure after the 200 comes as `{"error":…,"data":[]}`. Requests can wait about 11 min behind a video job.
+- **oxide-llm:**
+  - `generate_music` + `MusicRequest` send `model`, `prompt`, `lyrics`, `duration` (clamped to 5–240) and `seed`, with a 20 min timeout. The tool doesn't expose `steps`, `cfg_scale` or `lyrics_strength`, so the server's defaults apply.
+  - It reads `b64_json`, or downloads `url` without the key.
+  - A 200 with `error` becomes "the endpoint couldn't make the music: …", and 404/405 becomes "doesn't offer music generation".
+  - `list_model_ids` treats 404/405 on `/models` as an empty list, so Test says "Connected. The endpoint lists no models…" instead of failing.
+  - Test's failure text is now "The test failed: …" instead of "Couldn't reach the endpoint", which was wrong for a rejected key.
+  - `generate_speech` stays in the library, unused, for later.
+- **core:**
+  - `GenerationKind::Audio` became `Music` (`"music"`), and `GENERATE_MUSIC` = `generate_music`. `GenerationSettings.music` defaults to the model `ace-step`.
+  - `audio`, `voice` and `audioFormat` are gone; old saved values are ignored. Delete all also removes `generation:audio`.
+- **agent:**
+  - The `generate_music` tool takes `style` (required), `lyrics`, `duration_seconds` and `seed`. Its description tells the model to write lyrics unless the user gave them.
+  - The tool line shows "Making the music" while it waits. The result is an audio player plus Download (`generated-music.mp3`).
+- **Frontend:**
+  - The card is "Music generation", with a music icon and `ace-step` suggested. Voice and format are gone.
+  - The tool line says "Making music" / "Made music" with the style. The "+" menu's text is updated.
+- **Tests:**
+  - llm: `music_is_made_in_one_request` (leading spaces, base64, link, error-in-200, 400, 404, no key on the link) and `a_missing_model_list_is_an_empty_one`.
+  - agent: the three-tools test now makes music, and Test covers 404 and 401.
+  - Vitest: the Music card and its custom URL.
+
+**Follow-up 3: synchronous video (user's correction, 2026-11-19):**
+- Video failed on the user's test server. Oxide sent `POST {base}/videos` (OpenAI's job API), but the server only has **`POST /v1/videos/generations`, which is synchronous**:
+  - comfy-bridge `http://192.168.8.80:8190/v1`, model `wan2.2-5b`, accepts `model`, `prompt`, `duration` (1–5 s), `size`, `seed`, `negative_prompt`, `steps`, and `image` (a data URL or http URL, for image-to-video).
+  - OmniRoute `http://192.168.8.80:20128/v1`, model `openai-compatible-images-generations-comfy-bridge/wan2.2-5b`, passes on only `model`, `prompt` and `duration`.
+  - It replies `data[0]` with `b64_json`, and the bridge adds a `url`. 2 s at 1280x704 takes about 11 min, and the GPU runs one job at a time.
+- **oxide-llm:**
+  - `generate_video` still tries the job API first. On 404/405/501 it sends one `POST /videos/generations` with `model`, `prompt`, `duration` (a number), `size` and `image` (a data URL), and waits up to 30 min.
+  - The reply is read like music, with a shared `sync_file`: leading spaces are skipped, `error` in a 200 is an error, and `b64_json` or `url` is used. The type is `video/mp4` unless the format or download says otherwise.
+  - If both paths are missing: "doesn't offer video generation (/videos or /videos/generations)".
+  - Image requests and music now share `LONG_TIMEOUT` (30 min), since an image can queue behind a video on a local GPU. It replaces `MUSIC_TIMEOUT` (20 min).
+- **agent:** the video tool's description now says it can take up to a quarter of an hour, and that local models often make only 1–5 s.
+- **Frontend:** the Video card's hint names both API shapes.
+- **Tests:** llm `a_video_without_a_job_api_is_made_in_one_request` (404 then base64, 405 then link, error in 200, the body with `duration`, `size` and the data-URL `image`); the missing-endpoint tests expect the new text.
 
 ## Maintenance — Vitest 5 — 2026-11-19
 Between Phase 18 and Phase 19. It closes the last `npm audit` findings, which were dev-only: Vitest ≤ 4.1.10, @vitest/mocker and tinypool (2 critical).

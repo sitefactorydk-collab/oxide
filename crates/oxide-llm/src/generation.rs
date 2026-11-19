@@ -1,6 +1,8 @@
 //! Media generation on the OpenAI-compatible API (Phase 19): images
-//! (`/images/generations`, `/images/edits`), speech (`/audio/speech`) and video (`/videos`:
-//! create, poll the job, download the result).
+//! (`/images/generations`, `/images/edits`), video (`/videos`: create, poll the job, download
+//! the result), music (`/music/generations`, which OpenAI doesn't have: the shape of the
+//! user's comfy-bridge server, synchronous) and speech (`/audio/speech`; not used by a chat
+//! tool since music took its place).
 //!
 //! Shapes follow OpenAI's API reference (checked 2026-11-19). Other servers that speak the
 //! same API (Gemini's and Groq's compatible endpoints, LocalAI, vLLM, gateways) work as far as
@@ -105,6 +107,23 @@ pub struct VideoRequest {
     /// An image the video starts from.
     pub reference: Option<InputImage>,
 }
+
+/// A music request (`/music/generations`).
+#[derive(Debug, Clone, Default)]
+pub struct MusicRequest {
+    pub model: String,
+    /// Style and genre tags, comma-separated.
+    pub prompt: String,
+    /// Lyrics with `[verse]`, `[chorus]`, `[bridge]` markers; `None` for an instrumental.
+    pub lyrics: Option<String>,
+    /// Length in seconds (the comfy-bridge server takes 5–240).
+    pub duration: Option<u32>,
+    pub seed: Option<i64>,
+}
+
+/// How long a synchronous generation (an image, music, or a video on `/videos/generations`) may
+/// take: a local GPU runs one job at a time, and a video alone takes about 11 minutes.
+pub const LONG_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// How often a video job is checked, and for how long.
 #[derive(Debug, Clone, Copy)]
@@ -301,7 +320,8 @@ pub async fn generate_images(
         "/images/generations"
     };
     let url = format!("{}{path}", endpoint.base_url);
-    let http = client()?.post(&url);
+    // A local GPU may first finish another job (a video takes about 11 minutes).
+    let http = client()?.post(&url).timeout(LONG_TIMEOUT);
     let http = if edit {
         let mut form = Multipart::new();
         form.text("model", req.model.trim())
@@ -472,6 +492,108 @@ pub async fn generate_speech(
     })
 }
 
+/// Reads the answer of a synchronous generation (comfy-bridge's shape): leading spaces sent
+/// while it worked, `error` in a 200, and `data[0]` with `b64_json` or `url` and a `format`.
+/// Returns (bytes, the download's content type if any, the format).
+async fn sync_file(
+    endpoint: &Endpoint,
+    text: &str,
+    what: &str,
+) -> Result<(Vec<u8>, String, Option<String>), LlmError> {
+    let v: Value = serde_json::from_str(text.trim())
+        .map_err(|_| LlmError::Decode(format!("the {what} answer isn't JSON")))?;
+    if let Some(e) = v.get("error").filter(|e| !e.is_null()) {
+        let message = e
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| e.to_string());
+        return Err(LlmError::Generation(format!(
+            "the endpoint couldn't make the {what}: {message}"
+        )));
+    }
+    let item = v
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|d| d.first())
+        .cloned()
+        .ok_or_else(|| LlmError::Decode(format!("the endpoint returned no {what}")))?;
+    let format = item
+        .get("format")
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase);
+    let (bytes, mime) = if let Some(b64) = item.get("b64_json").and_then(Value::as_str) {
+        let bytes = STANDARD
+            .decode(b64.trim())
+            .map_err(|_| LlmError::Decode(format!("the {what} isn't valid base64")))?;
+        (bytes, String::new())
+    } else if let Some(link) = item.get("url").and_then(Value::as_str) {
+        download(link, &endpoint.base_url).await?
+    } else {
+        return Err(LlmError::Decode(format!("the endpoint returned no {what}")));
+    };
+    if bytes.is_empty() {
+        return Err(LlmError::Decode(format!(
+            "the endpoint sent an empty {what}"
+        )));
+    }
+    Ok((bytes, mime, format))
+}
+
+/// Makes music. The server answers when the file is done; it may send spaces while it works
+/// (JSON ignores them), and a failure after it began answering comes as 200 with `error`.
+pub async fn generate_music(
+    endpoint: &Endpoint,
+    req: &MusicRequest,
+) -> Result<GeneratedFile, LlmError> {
+    check_endpoint(endpoint, "music")?;
+    if req.prompt.trim().is_empty() {
+        return Err(LlmError::Generation(
+            "the music needs a style (genre and mood tags)".into(),
+        ));
+    }
+    let mut body = Map::new();
+    body.insert("model".into(), json!(req.model.trim()));
+    body.insert("prompt".into(), json!(req.prompt.trim()));
+    optional(&mut body, "lyrics", req.lyrics.as_deref());
+    if let Some(d) = req.duration {
+        body.insert("duration".into(), json!(d.clamp(5, 240)));
+    }
+    if let Some(seed) = req.seed {
+        body.insert("seed".into(), json!(seed));
+    }
+    let url = format!("{}/music/generations", endpoint.base_url);
+    let http = client()?
+        .post(&url)
+        .timeout(LONG_TIMEOUT)
+        .json(&Value::Object(body));
+    let res = send(endpoint, http).await?;
+    let status = res.status().as_u16();
+    let text = res.text().await.map_err(|e| LlmError::Unreachable {
+        url: endpoint.base_url.clone(),
+        reason: describe(&e),
+    })?;
+    if !(200..300).contains(&status) {
+        return Err(failure(
+            status,
+            &text,
+            "music generation",
+            "/music/generations",
+        ));
+    }
+    let (bytes, mime, format) = sync_file(endpoint, &text, "music").await?;
+    let media_type = if mime.starts_with("audio/") {
+        mime
+    } else {
+        audio_media_type(format.as_deref().unwrap_or("mp3")).to_owned()
+    };
+    Ok(GeneratedFile {
+        bytes,
+        media_type,
+        note: None,
+    })
+}
+
 fn video_id(v: &Value) -> Option<String> {
     v.get("id")
         .or_else(|| v.get("task_id"))
@@ -582,6 +704,10 @@ pub async fn generate_video(
     let res = send(endpoint, client()?.post(&url).json(&Value::Object(body))).await?;
     let status = res.status().as_u16();
     let text = res.text().await.unwrap_or_default();
+    if matches!(status, 404 | 405 | 501) {
+        // No job API: try the synchronous `/videos/generations` (comfy-bridge, OmniRoute).
+        return generate_video_sync(endpoint, req, &mut progress).await;
+    }
     if !(200..300).contains(&status) {
         return Err(failure(status, &text, "video generation", "/videos"));
     }
@@ -647,6 +773,71 @@ pub async fn generate_video(
     })
 }
 
+/// A video in one request on `/videos/generations`: `model`, `prompt`, `duration` (seconds),
+/// `size` and `image` (a data URL to start from). The answer comes when the file is done.
+async fn generate_video_sync(
+    endpoint: &Endpoint,
+    req: &VideoRequest,
+    progress: &mut (impl FnMut(&VideoStatus) + Send),
+) -> Result<GeneratedFile, LlmError> {
+    let mut body = Map::new();
+    body.insert("model".into(), json!(req.model.trim()));
+    body.insert("prompt".into(), json!(req.prompt));
+    if let Some(s) = req.seconds {
+        body.insert("duration".into(), json!(s.clamp(1, 120)));
+    }
+    optional(&mut body, "size", req.size.as_deref());
+    if let Some(img) = &req.reference {
+        let url = format!(
+            "data:{};base64,{}",
+            img.media_type,
+            STANDARD.encode(&img.bytes)
+        );
+        body.insert("image".into(), json!(url));
+    }
+    progress(&VideoStatus {
+        id: String::new(),
+        state: VideoState::InProgress,
+        progress: None,
+        error: None,
+        url: None,
+    });
+    let url = format!("{}/videos/generations", endpoint.base_url);
+    let http = client()?
+        .post(&url)
+        .timeout(LONG_TIMEOUT)
+        .json(&Value::Object(body));
+    let res = send(endpoint, http).await?;
+    let status = res.status().as_u16();
+    let text = res.text().await.map_err(|e| LlmError::Unreachable {
+        url: endpoint.base_url.clone(),
+        reason: describe(&e),
+    })?;
+    if !(200..300).contains(&status) {
+        return Err(failure(
+            status,
+            &text,
+            "video generation",
+            "/videos or /videos/generations",
+        ));
+    }
+    let (bytes, mime, format) = sync_file(endpoint, &text, "video").await?;
+    let media_type = if mime.starts_with("video/") {
+        mime
+    } else {
+        match format.as_deref() {
+            Some("webm") => "video/webm".to_owned(),
+            Some("mov") => "video/quicktime".to_owned(),
+            _ => "video/mp4".to_owned(),
+        }
+    };
+    Ok(GeneratedFile {
+        bytes,
+        media_type,
+        note: None,
+    })
+}
+
 /// Every model id an endpoint lists (`GET /models`), sorted. Unlike the chat model list,
 /// image, speech and video models are kept.
 pub async fn list_model_ids(endpoint: &Endpoint) -> Result<Vec<String>, LlmError> {
@@ -659,6 +850,10 @@ pub async fn list_model_ids(endpoint: &Endpoint) -> Result<Vec<String>, LlmError
     .await?;
     let status = res.status().as_u16();
     let text = res.text().await.unwrap_or_default();
+    // Some servers (like comfy-bridge) have no model list: that isn't an error.
+    if matches!(status, 404 | 405) {
+        return Ok(Vec::new());
+    }
     if !(200..300).contains(&status) {
         return Err(failure(status, &text, "a model list", "/models"));
     }
@@ -830,6 +1025,7 @@ mod tests {
             Reply::status("401 Unauthorized", r#"{"error":{"message":"bad key"}}"#),
             Reply::status("405 Method Not Allowed", ""),
             Reply::status("404 Not Found", "{}"),
+            Reply::status("404 Not Found", "Not Found"),
             Reply::status("400 Bad Request", r#"{"error":{"message":"bad size"}}"#),
         ])
         .await;
@@ -869,7 +1065,8 @@ mod tests {
             .expect_err("404");
         assert!(
             err.to_string()
-                .contains("doesn't offer video generation (/videos)")
+                .contains("doesn't offer video generation (/videos or /videos/generations)"),
+            "{err}"
         );
         let err = generate_images(&e, &req).await.expect_err("400");
         assert!(err.to_string().contains("bad size"), "{err}");
@@ -1045,6 +1242,140 @@ mod tests {
             .expect("video");
         assert_eq!(out.bytes, b"mp4-bytes");
         assert_eq!(out.media_type, "video/mp4");
+    }
+
+    #[tokio::test]
+    async fn a_video_without_a_job_api_is_made_in_one_request() {
+        let mp4 = b"\0\0\0\x18ftypmp42fake";
+        let files = serve(vec![Reply::bytes("video/mp4", mp4)]).await;
+        let link = format!("{}/files/bridge/wan_00001.mp4", files.base);
+        let api = serve(vec![
+            Reply::status("404 Not Found", "Not Found"),
+            Reply::json(&format!(
+                "   \n{{\"data\":[{{\"format\":\"mp4\",\"b64_json\":\"{}\"}}]}}",
+                STANDARD.encode(mp4)
+            )),
+            Reply::status("405 Method Not Allowed", ""),
+            Reply::json(&format!(r#"{{"data":[{{"url":"{link}"}}]}}"#)),
+            Reply::status("404 Not Found", "Not Found"),
+            Reply::json(r#" {"error":{"message":"GPU busy"},"data":[]}"#),
+        ])
+        .await;
+        let e = endpoint(&api.base);
+        let req = VideoRequest {
+            model: "wan2.2-5b".into(),
+            prompt: "a fox in snow".into(),
+            seconds: Some(3),
+            size: Some("1280x704".into()),
+            reference: Some(InputImage {
+                bytes: b"\x89PNGx".to_vec(),
+                media_type: "image/png".into(),
+                name: "a.png".into(),
+            }),
+        };
+        let mut states = Vec::new();
+        let out = generate_video(&e, &req, VideoPolling::default(), |s| states.push(s.state))
+            .await
+            .expect("base64");
+        assert_eq!(out.bytes, mp4);
+        assert_eq!(out.media_type, "video/mp4");
+        assert_eq!(states, vec![VideoState::InProgress]);
+        let out = generate_video(&e, &req, VideoPolling::default(), |_| {})
+            .await
+            .expect("link");
+        assert_eq!(out.bytes, mp4);
+        let err = generate_video(&e, &req, VideoPolling::default(), |_| {})
+            .await
+            .expect_err("error in 200");
+        assert_eq!(
+            err.to_string(),
+            "the endpoint couldn't make the video: GPU busy"
+        );
+        let sent = api.requests().await;
+        assert!(sent[0].head.starts_with("POST /v1/videos "));
+        assert!(sent[1].head.starts_with("POST /v1/videos/generations"));
+        let body: Value = serde_json::from_str(&sent[1].body).expect("json");
+        assert_eq!(body["model"], "wan2.2-5b");
+        assert_eq!(body["duration"], 3);
+        assert_eq!(body["size"], "1280x704");
+        assert!(
+            body["image"]
+                .as_str()
+                .is_some_and(|u| u.starts_with("data:image/png;base64,"))
+        );
+    }
+
+    #[tokio::test]
+    async fn music_is_made_in_one_request() {
+        let mp3 = b"ID3\x04fake-mp3";
+        let files = serve(vec![Reply::bytes("audio/mpeg", mp3)]).await;
+        let link = format!("{}/files/bridge/ace_step_00003.mp3", files.base);
+        let api = serve(vec![
+            // comfy-bridge sends spaces while it works, then the JSON.
+            Reply::json(&format!(
+                "     \n {{\"created\":1,\"model\":\"ace-step\",\"data\":[{{\"format\":\"mp3\",\"url\":\"{link}\",\"b64_json\":\"{}\"}}]}}",
+                STANDARD.encode(mp3)
+            )),
+            Reply::json(&format!(r#"{{"data":[{{"format":"mp3","url":"{link}"}}]}}"#)),
+            Reply::json(r#"  {"error":{"message":"CUDA out of memory"},"data":[]}"#),
+            Reply::status("400 Bad Request", r#"{"error":{"message":"prompt is required"}}"#),
+            Reply::status("404 Not Found", "Not Found"),
+        ])
+        .await;
+        let e = endpoint(&api.base);
+        let req = MusicRequest {
+            model: "ace-step".into(),
+            prompt: "danish indie folk, acoustic guitar".into(),
+            lyrics: Some("[verse]\nWinter lights".into()),
+            duration: Some(400),
+            seed: Some(7),
+        };
+        let out = generate_music(&e, &req).await.expect("base64");
+        assert_eq!(out.bytes, mp3);
+        assert_eq!(out.media_type, "audio/mpeg");
+        let out = generate_music(&e, &req).await.expect("link");
+        assert_eq!(out.bytes, mp3);
+        let err = generate_music(&e, &req).await.expect_err("error in 200");
+        assert_eq!(
+            err.to_string(),
+            "the endpoint couldn't make the music: CUDA out of memory"
+        );
+        let err = generate_music(&e, &req).await.expect_err("400");
+        assert!(err.to_string().contains("prompt is required"), "{err}");
+        let err = generate_music(&e, &req).await.expect_err("404");
+        assert_eq!(
+            err.to_string(),
+            "this endpoint doesn't offer music generation (/music/generations)"
+        );
+        let sent = api.requests().await;
+        assert!(sent[0].head.starts_with("POST /v1/music/generations"));
+        assert!(sent[0].head.to_ascii_lowercase().contains("bearer sk-test"));
+        let body: Value = serde_json::from_str(&sent[0].body).expect("json");
+        assert_eq!(body["model"], "ace-step");
+        assert_eq!(body["lyrics"], "[verse]\nWinter lights");
+        assert_eq!(body["duration"], 240);
+        assert_eq!(body["seed"], 7);
+        assert!(body.get("response_format").is_none());
+        assert!(
+            !files.requests().await[0]
+                .head
+                .to_ascii_lowercase()
+                .contains("authorization")
+        );
+        let blank = MusicRequest {
+            prompt: " ".into(),
+            ..req
+        };
+        assert!(generate_music(&e, &blank).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_missing_model_list_is_an_empty_one() {
+        let server = serve(vec![Reply::status("404 Not Found", "Not Found")]).await;
+        let ids = list_model_ids(&endpoint(&server.base))
+            .await
+            .expect("empty");
+        assert!(ids.is_empty());
     }
 
     #[tokio::test]
