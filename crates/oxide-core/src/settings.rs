@@ -473,8 +473,8 @@ mod tests {
 
     #[test]
     fn language_and_dictation_default_and_are_cleaned() {
-        let s: AppSettings = serde_json::from_str(r#"{"appearance":{"language":"da"}}"#)
-            .expect("parses");
+        let s: AppSettings =
+            serde_json::from_str(r#"{"appearance":{"language":"da"}}"#).expect("parses");
         assert_eq!(s.appearance.language, UiLanguage::Da);
         assert!(s.dictation.enabled);
         assert_eq!(s.dictation.model, DEFAULT_DICTATION_MODEL);

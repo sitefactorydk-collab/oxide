@@ -20,7 +20,10 @@ describe("Settings → Connectors", () => {
     renderApp("/settings/connectors");
     const everything = await card("everything");
     act(() => fakeMcpNeedsTrust("everything", true));
-    expect(within(everything).getByTestId("mcp-status")).toHaveTextContent("Waiting for your OK");
+    // TanStack Query hands cache updates to components on a timer, so wait for it.
+    await waitFor(() =>
+      expect(within(everything).getByTestId("mcp-status")).toHaveTextContent("Waiting for your OK"),
+    );
     expect(within(everything).getByRole("note")).toHaveTextContent(
       "command changed since you last allowed it",
     );

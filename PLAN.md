@@ -45,6 +45,13 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Computer use | `oxide-computer`: xcap screens, enigo input, Win32 + UI Automation for the app under the pointer and the focused field. Claude gets Anthropic's own computer tool (version per model); other models one `computer` function with the same input. Each chat asks once, then per app; a top bar with Stop and Ctrl+Alt+Esc stop it. **Windows only for now** (Phase 16) |
 | Packaging & updates | `tauri build` per platform (`tauri.<os>.conf.json` pick the targets): NSIS + MSI (WebView2 download bootstrapper), a universal `.dmg` (ad hoc signed unless Apple secrets are set), AppImage + `.deb` + `.rpm`. The `uv` sidecar and the built Chrome extension (`bundle.resources`) ship in every installer. `tauri-plugin-updater` with minisign-signed bundles; the public key is committed, the update URL is compiled in by the release workflow (`OXIDE_UPDATE_URL`), so local builds don't update. GitHub Actions: `ci.yml` (checks on 3 OSes), `release.yml` (tauri-action → draft release + `latest.json` + extension zip). See `docs/RELEASING.md` (Phase 17) |
 | IPC permissions | Oxide's commands are declared to Tauri (`AppManifest`, read from `collect_commands!` by `build.rs`), so each window may call only what its capability lists: the main window every command, quick entry five, the computer-use bar two; no `core:default`, no plugin calls from the frontend, no remote origins (artifact frames get no IPC) (Phase 17) |
+| Secrets on Linux | The Secret Service (`keyring`'s `sync-secret-service` + `crypto-rust`, behind `oxide-store`'s `secret-service` feature, which `src-tauri` enables), with kernel keyutils as the fallback. Old keyutils keys move over when read (Phase 18) |
+| MCP command trust | A local server's command line (command, args, env) must be trusted before it runs. A SHA-256 fingerprint per server name is kept in `<data>/mcp-trust.json`, outside the config. Saves in Settings, the import and extensions are trusted as they are saved; anything else waits in `needsTrust` for **Trust and start** (Phase 18) |
+| Logging | `tracing` to stderr and `<logs>/oxide.log` through a redacting writer (`oxide_core::redact`); the file starts over past 5 MB (Phase 18) |
+| Paths from the window | Commands that grant folders or install from disk accept only paths from Oxide's pickers or drops (`src-tauri/src/chosen.rs`); others need a native confirmation (Phase 18). See `docs/SECURITY.md` |
+| i18n | Own small `src/i18n` (`useT`, flat keys, `en.ts`/`da.ts` with matching key sets), language in `appearance.language` (system/en/da). Danish covers the shell; other text is English until translated (Phase 18) |
+| Dictation | Provider speech-to-text through an OpenAI-compatible `/audio/transcriptions` endpoint chosen in Settings → Voice (MediaRecorder in the web view, base64 to `transcribe_audio`), not local `whisper-rs` (Phase 18) |
+| Long chats | A message window (newest 40 mounted, older ones on scrolling up) plus `content-visibility: auto`, not a virtualized list (Phase 18) |
 | Location | `C:\AI Apps\Oxide` |
 
 ### Repository layout (target)
@@ -447,6 +454,8 @@ Requested by the user after Phase 14: today models can only read skills (`load_s
 - **Stretch:** voice dictation (local `whisper-rs` or provider STT), a usage dashboard (tokens per provider), and conversation sharing via export to HTML.
 
 **Exit:** every checklist in this plan is ticked, and known issues are triaged in `PROGRESS.md`.
+
+*Done 2026-11-19* (see PROGRESS.md). Deviations: a message window instead of a virtualized list; provider speech-to-text instead of `whisper-rs`; start-up time to be measured on the next release build. Remaining `npm audit` findings (Vitest/tinypool, dev-only) are closed by upgrading Vitest to 5 before Phase 19.
 
 ### Phase 19 — Generation endpoints & media generation (OpenAI-compatible)
 Requested by the user after Phase 17 (planning for Utility Apps): Oxide must generate images, video and audio, with global default models per kind of generation. **Decided with the user (2026-11-14): every generation endpoint speaks the OpenAI-compatible API** — OpenAI itself, Gemini's and Groq's compatible endpoints, and most local setups (LM Studio, Strata, LocalAI, vLLM, …). Anthropic's and Google's own APIs come later. Chats keep their existing providers.

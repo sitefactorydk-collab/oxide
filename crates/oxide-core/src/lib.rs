@@ -96,11 +96,11 @@ pub use settings::{
     ModelImagesOverride, ModelSettings, ProfileSettings, ProjectSettings, ShellSettings, ThemePref,
     ToolSettings, UiLanguage, WebSearchProvider, WebSearchSettings,
 };
-pub use usage::{UsageByModel, UsageByProvider, UsageDay, UsageRecord, UsageReport, UsageTotals};
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,
     WebSearchTest,
 };
+pub use usage::{UsageByModel, UsageByProvider, UsageDay, UsageRecord, UsageReport, UsageTotals};
 pub use workspace::{ChatFolder, ChatWorkspace, TaskItem, TaskList, TaskStatus};
 
 /// Product name shown in the UI and window titles.

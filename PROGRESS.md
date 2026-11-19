@@ -9,8 +9,9 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 14c** — Models create and edit skills: done (`b9d8faf`, 2026-11-13 08:42, every check green on Windows; all exit checks passed by hand at 08:54)
 - **Phase 15** — Scheduled tasks: done (`68ee955`, follow-up `d7c34cd`; every check green on Windows; all exit checks passed by hand on 2026-11-13 11:13)
 - **Phase 16** — Computer use: closed by the user on 2026-11-13 (`898553d`, follow-ups `ef0098f`, `9046b25`, `6afc299`, `7af87f7`; every check green on Windows). The exit check was **not fully passed**: with the local Strata `swift-iq2_xs` the model opened Notepad and typed the text but never managed the Save dialog (its clicking isn't precise enough); the check with Claude and the Ctrl+Alt+Esc check by hand weren't done (Stop from the app worked). See Phase 16's notes.
-- **Last completed:** Phase 17 — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`; CI green on Windows, macOS and Ubuntu; releases v0.1.0 and v0.1.1 published from the (now public) repo `sitefactorydk-collab/oxide`; the clean-Windows check and the in-app update 0.1.0 → 0.1.1 passed in Windows Sandbox. The macOS (MacBook) and Linux (Docker, `scripts\win\test-linux.cmd`) installer checks were deferred by the user.
-- **Next phase:** Phase 18 — Hardening & polish
+- **Phase 17** — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`. CI is green on Windows, macOS and Ubuntu. Releases v0.1.0 and v0.1.1 were published from the public repo `sitefactorydk-collab/oxide`. The macOS and Linux installer checks were deferred by the user.
+- **Last completed:** Phase 18 — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19). Every check is green on Windows and every manual check passed. Commit: "phase 18: hardening & polish" (`phase18-close.cmd`).
+- **Next phase:** before Phase 19, upgrade Vitest to 5 and ESLint to 10 as their own step (it closes the remaining `npm audit` findings). Then Phase 19 — Generation endpoints & media generation.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -38,6 +39,156 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Docker in the cloud container** (Phase 12b): `dockerd` runs there (start it with `nohup dockerd &`), but Docker Hub isn't reachable. Make a stand-in command image with `tar -c --one-file-system … / | docker import - oxide-test:local` and build a stand-in file server image from it; then run the ignored real-Docker tests with `OXIDE_SANDBOX_IMAGE` / `OXIDE_SANDBOX_FILES_IMAGE`. The harness `~/oxide-linux` has `oxide-sandbox` as a member.
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 18 — Hardening & polish (+ usage dashboard, HTML export, dictation) — 2026-11-15/19
+Status: **done**. Every check is green on Windows (`phase18.cmd`, 2026-11-19 08:25–08:38), and the user passed every manual check (08:54). Committed by `scripts\win\phase18-close.cmd` (message `logs\commit-msg-phase18.txt`).
+
+The phase was built in two sessions. The first paused at the usage limit, and its work in progress was committed by accident in `490ddf1` (`commit.cmd` runs `git add -A`), which turned CI #7 red at `cargo fmt --check`; this phase's commit fixes that. Between the sessions the project moved to a new PC (user folder `C:\Users\mo`).
+
+The scope was agreed with the user: hardening plus all three stretch items. Dictation goes through an OpenAI-compatible `/audio/transcriptions` endpoint. Danish covers the scaffolding and the main shell only.
+
+Exit criteria:
+- [x] Security review: path sandbox fuzzing, IPC review (chosen paths, capabilities), bridge fuzzing, MCP trust prompts, secret redaction in logs, Linux Secret Service. Written up in `docs/SECURITY.md`.
+- [x] Performance:
+  - Long chats mount only the newest 40 messages, plus `content-visibility`.
+  - Start-up time and memory are logged and shown in About.
+  - The 50-message demo chat scrolls smoothly (by hand).
+- [x] i18n scaffolding: English and Danish (by hand: the Danish shell).
+- [x] Stretch items, all checked by hand:
+  - the usage dashboard (Settings → Usage);
+  - export as a web page, which opens in a browser with its images;
+  - dictation with a cloud endpoint.
+- [x] Known issues triaged (below), and `npm audit` triaged.
+
+Manual checks (Windows, 2026-11-19, by the user, all OK): the trust card for a server added by editing `oxide_config.json` (Trust and start), the Danish shell, Settings → Usage, HTML export in a browser, dictation, About's numbers, and the demo chat's scrolling.
+
+Done:
+- **core:**
+  - `redact.rs`: secret redaction of key prefixes, Bearer/Basic credentials, JWTs and secret-named pairs.
+  - `usage.rs`: `UsageReport` by provider, model and local day.
+  - Settings `appearance.language` (`UiLanguage` system|en|da) and `dictation` (`DictationSettings`).
+  - `McpStatus::NeedsTrust` and `McpServerState.trustChanged`.
+- **mcp:**
+  - `trust.rs`: a SHA-256 fingerprint of command, args and env per server name, kept in `<data>/mcp-trust.json`. The first start seeds the servers already configured.
+  - The manager holds new or changed stdio commands in `NeedsTrust`; `McpManager::trust` releases them.
+  - Saves in Settings, the import and the editor trust as they save; extensions are trusted on install.
+  - ServerLog lines are redacted.
+  - `process::own_memory_bytes()` (Windows `K32GetProcessMemoryInfo`, Linux `VmRSS`).
+- **store:**
+  - Linux Secret Service behind the feature `secret-service` (`sync-secret-service` + `crypto-rust`), which src-tauri enables. keyutils is the fallback, and old keyutils keys migrate when read.
+  - `usage_records()`.
+- **llm:** `transcribe.rs` (multipart written by hand).
+- **agent:**
+  - `markdown_html.rs` (safe Markdown → HTML).
+  - `export_html`: a self-contained page with a CSP meta tag and `data:` images.
+  - The fuzz test `generated_paths_never_leave_the_grant`.
+- **bridge:** fuzz tests for WebSocket frames (random and mutated frames), and 130 garbage clients after which pairing still works.
+- **src-tauri:**
+  - `logging.rs`: a redacting writer to stderr and `<logs>/oxide.log`, closed before Delete all.
+  - `chosen.rs`: paths from pickers and drops. `resolve_folder`, `preview_extension` and `add_skill` confirm any other path in a native dialog.
+  - Commands `mcp_trust_server`, `usage_report`, `app_ready`, `app_metrics`, `transcribe_audio`, and `ExportFormat::Html`. Capabilities updated, and the acl tests pass.
+- **Frontend:**
+  - `src/i18n` (en/da, `useT`, the `html lang` attribute).
+  - Sidebar, profile menu, Home, composer and the Settings nav are translated. Appearance → Language.
+  - Connectors' "Trust and start" card.
+  - Settings → Voice and the composer mic (`features/dictation`).
+  - Settings → Usage (`features/usage`).
+  - About's start-up time and memory.
+  - The chat menu's "Export as web page".
+  - `features/chat/messageWindow.ts`.
+- **Second session:**
+  - The 4 Vitest failures on the new PC were fixed. Two were test timing or modal issues (the MCP status update arrives on TanStack Query's timer; Settings is a modal over the sidebar). One was a jsdom gap (`Blob.arrayBuffer()` is missing; dictation now reads with `FileReader`). One was a real bug: the mic opened Settings → Voice when clicked before settings had loaded, and it is now disabled until they load.
+  - The bindings are regenerated. They differed from the hand edits only in doc comments and order.
+- **Tests:**
+  - Rust: redaction, usage, trust, transcribe, markdown_html/export_html, the fuzz tests, `chosen`, logging, and `new_or_changed_local_commands_wait_until_trusted`.
+  - Vitest: `features/usage/Phase18.test.tsx` (language, usage, About, dictation), the Mcp trust test, ChatPhase4 additions, `messageWindow.test.ts`.
+
+Deviations from PLAN.md (and why):
+- **A message window instead of a virtualized list:**
+  - The newest 40 messages are mounted, and older ones on scrolling up, with `content-visibility: auto`.
+  - Real virtualization fights streaming, variable heights and scroll anchoring.
+  - The demo chat scrolls smoothly.
+- **Start-up under 1.5 s is not measured on a release build yet:**
+  - The dev build logged 10.3 s, which includes Vite's first compile and an unoptimized binary.
+  - Measure it on the next installed release (About shows it, and `oxide.log` logs it).
+- **Dictation uses provider speech-to-text** (OpenAI-compatible `/audio/transcriptions`), not local `whisper-rs`:
+  - It needs no native build or model download.
+  - A local Whisper server works through the same endpoint.
+- **Danish covers the shell only** (sidebar, menus, Home, composer, Settings nav). Settings pages stay English, as agreed.
+- **Extensions are trusted on install.** Their install dialog is the confirmation, so they don't get a second trust card.
+
+npm audit (15 findings: 5 low, 8 moderate, 2 critical; `logs\npm-audit.txt`):
+- **KaTeX < 0.18.2** (low, GHSA-238p-pmpm-9mq7). It ships in the app, but needs an existing prototype pollution to matter, and Oxide doesn't set `trust`. **Fixed:** `katex` is pinned to `0.18.10` with an `overrides` entry, so mermaid and rehype-katex use it too. 0.18.11 slipped in breaking changes.
+- **minimatch 7–11** (moderate, dev-only, via typescript-eslint). **Fixed** by `npm audit fix` in `phase18-close.cmd`.
+- **Vitest ≤ 4.1.10, @vitest/mocker, tinypool ≤ 2.1.1** (2 critical, 2 moderate). Dev-only test tooling, never shipped, and only reachable through worker options Oxide controls. **Deferred:** the fix is Vitest 5, a major upgrade. Do it as its own step before Phase 19 (see below).
+- After the close-out (`logs\npm-audit-after.txt`): 3 findings are left, all in the deferred Vitest/tinypool group. `npm ls katex` shows 0.18.10 everywhere. The first close-out run (08:58) didn't commit because `npm audit fix` exits 1 while findings remain; that step is now informational.
+
+Known issues triage (every "Known issues" list in this file and the unchecked boxes, 2026-11-19):
+- **Fixed by this phase:**
+  - The Linux keychain (now the Secret Service).
+  - MCP servers start without a trust prompt (Phase 5) and extensions are not covered by it (Phase 10). Both are now handled by the trust card, and extensions by their install dialog.
+  - "`src/bindings/index.ts` edited by hand" (Phases 2–17). The bindings are regenerated, and the hand edits matched.
+- **Superseded by later phases** (no action):
+  - Phase 0's placeholder icon.
+  - Phase 1's mock data and placeholder controls.
+  - Phase 2's "no replies yet", the unused `enabled` flag, and model picker notes.
+  - Phase 3's tool calls not run and the Phase 4 work that was still open.
+  - Phase 5's tools not given to models and the web search placeholder.
+  - Phase 9's `menu.rs` built only on macOS (built by CI since Phase 17).
+  - Phase 10's "Vitest runs only on Windows" (CI runs it on 3 systems).
+- **Accepted** (by design or a platform limit; documented where users see it):
+  - Scheduled tasks run only while Oxide runs. DST skips an hour once a year. "Ask me" runs wait without a timeout.
+  - Unix grandchildren may survive a timeout (Phases 11 and 12).
+  - Elevated windows ignore input (UIPI). Key combos follow the keyboard layout. The UI Automation timeout counts as "not sensitive", and this is logged.
+  - The `.deb`/`.rpm` packages only check for updates. Linux needs Ubuntu 24.04+.
+  - The identifier `dev.oxide.app` stays (changing it moves data and keys).
+  - WebView2's EBWebView folder isn't deleted (the window clears its own storage).
+  - WebView2 injects `__TAURI_INTERNALS__` into the artifact frame. It has no IPC rights (opaque origin, no capability).
+  - `web_fetch` can reach local addresses (every fetch is shown). The allowlist is a prefix check, so chained commands always ask.
+  - Pairings are bound to the extension id. Edge is used for the real-extension test.
+  - Search is prefix matching. Token counts are estimates. Phase 13b's Strata context-window default.
+  - Browser-Use needs capable models. CDP mode's open-debugging warning. Docker `cp` name limits and the non-root image user. A changed sandbox image replaces the container.
+  - Python is limited to the locked packages. Skill scripts aren't run. A switched-off skill can't be read before saving.
+  - Act warnings in Vitest output. Alt+Space takes over Windows' window menu. Dev-build notification and start-at-login quirks.
+  - npm 12's blocked postinstall (Vite works).
+- **Open, carried forward** (none blocks a release):
+  - Phase 16's computer-use exit check with Claude, the Ctrl+Alt+Esc check by hand, and the safety spot checks. The local model's accuracy was accepted by the user. Also: re-check the foreground app before each typed piece, and numbered UI Automation marks for weak models.
+  - Phase 17's macOS (`.dmg` on the MacBook) and Linux (`scripts\win\test-linux.cmd`) installer checks (deferred by the user). Code signing, when certificates exist.
+  - Phase 4:
+    - Orphaned attachment files when a chat is deleted. Delete all removes everything; per-chat sweeping is still open.
+    - LM Studio thinking is untested.
+    - OpenAI `xhigh`/`minimal` reasoning levels.
+    - Footnote ids can repeat across messages.
+    - Attachments can't be changed while editing a message.
+  - Phase 3: a reply streaming during a window reload isn't shown live again (Phase 6 likewise).
+  - Phase 6:
+    - Anthropic `redacted_thinking` isn't stored.
+    - There is no UI for the per-chat "Allow always" list.
+  - Phase 7: the memory pass uses the chat model on local servers. The minute in the system prompt changes the cache key.
+  - Phase 8:
+    - React artifacts can import only react, react-dom and lucide.
+    - HTML artifact errors aren't reported back.
+    - Artifacts from regenerated branches stay listed.
+  - Phase 11: `read_file` reads text only. Moves across drives fail.
+  - Phase 13b: exports don't include compactions.
+  - Phase 14: the Web Store build. A running Chrome action finishes after Stop.
+  - Phase 5: the first `npx -y` start may exceed the 20 s probe.
+  - Phase 10: malformed tool arguments from small local models.
+  - Phase 0: ESLint 9 → 10 (with its plugins). Do it together with Vitest 5.
+  - The unchecked optional boxes: Phase 13's "My own Chrome" (CDP) check, Phase 6's web search with a service, and Phase 3's OpenAI and LM Studio runs. Covered by tests and later use; no action.
+- **New in this phase:**
+  - The trust file is per data folder. Delete all forgets it, and the next start trusts what is configured then.
+  - The Danish translation covers the shell only.
+  - The release start-up time is unmeasured.
+  - Dictation needs a cloud or local endpoint.
+
+Notes for Phase 19:
+- Before starting: upgrade Vitest to 5 and ESLint to 10 in one step (its own script and commit), then re-run `npm audit`.
+- Generated bindings are now committed as generated. Keep regenerating them (`npm run bindings`) instead of editing by hand.
+- New user-facing strings go through `useT` with keys in both `src/i18n/en.ts` and `da.ts` (a test checks that the key sets match).
+- Generation tools that call endpoints should log through `tracing`, which is redacted, and never put keys in URLs.
+
+Verified: fmt ✅ clippy ✅ cargo test ✅ (Windows, every crate and src-tauri, the acl tests included) typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (`phase18.cmd`, 2026-11-19). Manual checks ✅ (by the user).
 
 ## Planning — Phases 19–22 added (Utility Apps) — 2026-11-14
 After Phase 17 the user proposed **Utility Apps**: a sidebar item after Projects with a gallery of AI utility apps that can be used, cloned, modified and created in Oxide, modelled on their Google AI Studio app AI-Toolkit (`github.com/sitefactorydk-collab/AI-Toolkit`: 14 webmaster/SEO/content/CMS tools, React 19 + an Express proxy to Gemini, with “Generation endpoints” settings for text, image, video and audio). The user's answers: apps are **small web apps** (React/TS in a sandboxed frame), a **chosen few** of the 14 are ported first and the rest later, apps may do **everything a chat can** with **ask once per app**, Oxide gains **image, video and audio generation** with global default models per kind (Settings → Generation, like AI Studio's) and **per-app overrides**, creating/editing works **like AI Studio's build mode** (chat + Preview/Code switch), export/import of one file is enough for sharing now, and the work starts **after Phase 18**. PLAN.md got **Phase 19** (generation endpoints & media generation), **Phase 20** (Utility Apps runtime and gallery; built-ins: Meta Tag Generator, Readability & Tone Analyzer, HTML Table from Image, SVG Creator — changeable), **Phase 21** (builder) and **Phase 22** (the remaining tools).
@@ -82,7 +233,7 @@ Known issues / TODO carried forward:
 - Installers aren't code-signed; the `dev.oxide.app` identifier ends in `.app` (Tauri warns; changing it moves data and keychain entries).
 - The `.deb`/`.rpm` don't update themselves (only check); AppImage, Windows and macOS do.
 - WebView2's localStorage folder (`%LOCALAPPDATA%\dev.oxide.app\EBWebView`) isn't deleted by “Delete all” (the window clears its own storage instead).
-- `npm run bindings` regenerates `src/bindings/index.ts` (edited by hand for this phase).
+- `npm run bindings` regenerates `src/bindings/index.ts` (edited by hand for this phase). *Resolved in Phase 18: regenerated.*
 
 Notes for Phase 18:
 - Still to do from Phase 17: the MacBook check of the `.dmg` (steps in this chat's notes: right-click → Open / Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine`) and the Linux packages (`scripts\win\test-linux.cmd` with Docker Desktop; files in `release-test\`).

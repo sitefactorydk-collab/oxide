@@ -26,14 +26,16 @@ describe("interface language", () => {
     renderApp("/settings/appearance");
     const group = await screen.findByRole("radiogroup", { name: "Language" });
     fireEvent.click(within(group).getByRole("radio", { name: "Dansk" }));
+    // Settings is a modal (the shell behind it is hidden from the accessibility tree).
+    expect(
+      await screen.findByRole("navigation", { name: "Afsnit i indstillinger" }),
+    ).toHaveTextContent("Udseende");
+    expect(document.documentElement.lang).toBe("da");
+    await waitFor(() => expect(fakeState().settings.appearance.language).toBe("da"));
+    fireEvent.click(screen.getByRole("button", { name: "Luk indstillinger" }));
     const sidebar = await screen.findByRole("complementary", { name: "Sidepanel" });
     expect(within(sidebar).getByRole("link", { name: /Ny chat/ })).toBeInTheDocument();
     expect(within(sidebar).getByText("Projekter")).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Afsnit i indstillinger" })).toHaveTextContent(
-      "Udseende",
-    );
-    expect(document.documentElement.lang).toBe("da");
-    await waitFor(() => expect(fakeState().settings.appearance.language).toBe("da"));
   });
 });
 
@@ -94,12 +96,19 @@ describe("dictation", () => {
     return track;
   }
 
+  /** The mic stays disabled until settings load (it can't tell yet whether one is set up). */
+  async function dictateButton() {
+    const button = await screen.findByRole("button", { name: "Dictate" });
+    await waitFor(() => expect(button).toBeEnabled());
+    return button;
+  }
+
   it("records, transcribes and adds the text to the message", async () => {
     const track = stubMicrophone();
     renderApp("/new", { backend: { settings: { dictation: { providerId: "openai" } } } });
     const box = await screen.findByRole("textbox", { name: "Message" });
     fireEvent.change(box, { target: { value: "Note:" } });
-    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    fireEvent.click(await dictateButton());
     const stop = await screen.findByRole("button", { name: "Stop dictation" });
     await act(async () => {
       fireEvent.click(stop);
@@ -114,7 +123,7 @@ describe("dictation", () => {
     stubMicrophone();
     renderApp("/new", { backend: { settings: { dictation: { providerId: "openai" } } } });
     setFakeTranscript({ error: "Dictation failed: bad key" });
-    fireEvent.click(await screen.findByRole("button", { name: "Dictate" }));
+    fireEvent.click(await dictateButton());
     const stop = await screen.findByRole("button", { name: "Stop dictation" });
     await act(async () => {
       fireEvent.click(stop);
@@ -124,7 +133,7 @@ describe("dictation", () => {
 
   it("points to Settings → Voice when no endpoint is set up", async () => {
     const { location } = renderApp("/new");
-    fireEvent.click(await screen.findByRole("button", { name: "Dictate" }));
+    fireEvent.click(await dictateButton());
     expect(
       await screen.findByRole("combobox", { name: "Speech-to-text endpoint" }),
     ).toBeInTheDocument();

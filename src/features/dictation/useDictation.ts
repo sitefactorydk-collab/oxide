@@ -13,14 +13,17 @@ export function pickMime(isSupported: (m: string) => boolean): string {
   return candidates.find((m) => isSupported(m)) ?? "";
 }
 
-async function toBase64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  const step = 0x8000;
-  for (let i = 0; i < bytes.length; i += step) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + step));
-  }
-  return btoa(binary);
+/** The recording as base64. FileReader rather than `Blob.arrayBuffer()`, which jsdom lacks. */
+function toBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      resolve(url.slice(url.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Oxide couldn’t read the recording."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 /**

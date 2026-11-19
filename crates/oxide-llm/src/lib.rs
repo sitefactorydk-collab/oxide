@@ -19,8 +19,8 @@ pub mod openai;
 pub mod probe;
 mod provider;
 pub mod sse;
-pub mod transcribe;
 mod stream;
+pub mod transcribe;
 mod types;
 
 #[cfg(test)]

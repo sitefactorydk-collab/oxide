@@ -525,9 +525,21 @@ async fn garbage_from_many_clients_never_breaks_the_bridge() {
     let f = fixture().await;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0xb71d6e);
     let words = [
-        "GET", "/", "HTTP/1.1", "\r\n", "Host: 127.0.0.1", "Upgrade: websocket",
-        "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-        "Sec-WebSocket-Version: 13", "Origin: ", TEST_ORIGIN, ":", "\0", "é", "\r\n\r\n",
+        "GET",
+        "/",
+        "HTTP/1.1",
+        "\r\n",
+        "Host: 127.0.0.1",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version: 13",
+        "Origin: ",
+        TEST_ORIGIN,
+        ":",
+        "\0",
+        "é",
+        "\r\n\r\n",
     ];
     // 1. Random request heads over raw TCP.
     for _ in 0..60 {

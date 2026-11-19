@@ -264,7 +264,10 @@ fn redact_named(text: &str) -> Cow<'_, str> {
                 {
                     end += 1;
                     while end < bytes.len()
-                        && !matches!(bytes[end], b' ' | b'\t' | b'\r' | b'\n' | b'&' | b',' | b'"')
+                        && !matches!(
+                            bytes[end],
+                            b' ' | b'\t' | b'\r' | b'\n' | b'&' | b',' | b'"'
+                        )
                     {
                         end += 1;
                     }
@@ -314,7 +317,10 @@ mod tests {
         let s = "MCP server filesystem started in 120 ms (pid 4411); see https://example.com/a:b";
         assert!(matches!(redact_secrets(s), Cow::Borrowed(_)));
         assert_eq!(r("C:\\Users\\info\\AppData"), "C:\\Users\\info\\AppData");
-        assert_eq!(r("tokens: 1234, max_tokens=4096"), "tokens: 1234, max_tokens=4096");
+        assert_eq!(
+            r("tokens: 1234, max_tokens=4096"),
+            "tokens: 1234, max_tokens=4096"
+        );
         assert_eq!(r("skip-this sk-short"), "skip-this sk-short");
     }
 
@@ -365,8 +371,18 @@ mod tests {
     #[test]
     fn never_panics_on_odd_input() {
         for s in [
-            "", "=", ":", "token=", "token=\"", "\"token\":", "Bearer ", "eyJ.", "sk-", "æøå token=æøå",
-            "password: \"\\", "🔑 api_key=🔑🔑🔑",
+            "",
+            "=",
+            ":",
+            "token=",
+            "token=\"",
+            "\"token\":",
+            "Bearer ",
+            "eyJ.",
+            "sk-",
+            "æøå token=æøå",
+            "password: \"\\",
+            "🔑 api_key=🔑🔑🔑",
         ] {
             let _ = r(s);
         }

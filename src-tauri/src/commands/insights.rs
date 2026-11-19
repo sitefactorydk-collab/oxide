@@ -36,7 +36,10 @@ static READY_MS: OnceLock<u32> = OnceLock::new();
 #[tauri::command]
 #[specta::specta]
 pub fn app_ready() {
-    let ms = crate::logging::started().elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+    let ms = crate::logging::started()
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u32::MAX)) as u32;
     if READY_MS.set(ms).is_ok() {
         tracing::info!(
             "start-up: first screen after {ms} ms (target 1500 ms){}",

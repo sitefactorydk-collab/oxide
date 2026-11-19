@@ -92,7 +92,9 @@ impl TrustStore {
                     Ok(f) => servers = f.servers,
                     Err(e) => {
                         // A damaged file trusts nothing: every server asks again.
-                        tracing::warn!("MCP trust file can't be read ({e}); servers will ask again");
+                        tracing::warn!(
+                            "MCP trust file can't be read ({e}); servers will ask again"
+                        );
                     }
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => seed = true,
@@ -123,7 +125,10 @@ impl TrustStore {
     }
 
     /// Trusts these servers' current command lines. Returns whether anything changed.
-    pub fn trust<'a>(&self, configs: impl IntoIterator<Item = (&'a str, &'a McpServerConfig)>) -> bool {
+    pub fn trust<'a>(
+        &self,
+        configs: impl IntoIterator<Item = (&'a str, &'a McpServerConfig)>,
+    ) -> bool {
         if self.path.is_none() {
             return false;
         }
@@ -209,7 +214,11 @@ mod tests {
         let a = stdio("npx", &["-y", "server"]);
         let mut b = a.clone();
         b.args = vec!["-y server".into()];
-        assert_ne!(fingerprint(&a), fingerprint(&b), "argument boundaries count");
+        assert_ne!(
+            fingerprint(&a),
+            fingerprint(&b),
+            "argument boundaries count"
+        );
         let mut c = a.clone();
         c.env.insert("NODE_OPTIONS".into(), "--require x.js".into());
         assert_ne!(fingerprint(&a), fingerprint(&c));

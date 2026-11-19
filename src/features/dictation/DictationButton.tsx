@@ -32,6 +32,8 @@ export function DictationButton({ onText }: { onText: (text: string) => void }) 
     <IconButton
       label={recording ? t("composer.stopDictation") : t("composer.dictate")}
       active={recording}
+      // Until settings load we can't tell whether an endpoint is set up.
+      disabled={!settings}
       onClick={() => {
         if (recording) {
           dictation.stop();

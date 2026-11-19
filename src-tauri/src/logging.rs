@@ -111,7 +111,9 @@ mod tests {
         open_file(&dir);
         {
             let mut w = Redacting.make_writer();
-            let _ = w.write_all(b"provider said: invalid x-api-key: sk-ant-api03-abcdefghijklmnopqrstu\n");
+            let _ = w.write_all(
+                b"provider said: invalid x-api-key: sk-ant-api03-abcdefghijklmnopqrstu\n",
+            );
         }
         *lock() = None;
         let text = std::fs::read_to_string(dir.join("oxide.log")).expect("log");

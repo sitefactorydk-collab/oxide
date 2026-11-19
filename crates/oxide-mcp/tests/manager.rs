@@ -356,7 +356,11 @@ async fn new_or_changed_local_commands_wait_until_trusted() {
     // The first start trusts what is already configured (an upgrade keeps working).
     let s = setup_with(json!({"mcpServers": {"old": mock_entry("modern")}}), true).await;
     let m = &s.manager;
-    assert!(wait_status(m, "old", McpStatus::Running).await, "{:?}", m.state("old"));
+    assert!(
+        wait_status(m, "old", McpStatus::Running).await,
+        "{:?}",
+        m.state("old")
+    );
 
     // Another program adds a server to the file: it waits.
     std::fs::write(
@@ -365,7 +369,11 @@ async fn new_or_changed_local_commands_wait_until_trusted() {
             .to_string(),
     )
     .expect("write");
-    assert!(wait_status(m, "added", McpStatus::NeedsTrust).await, "{:?}", m.state("added"));
+    assert!(
+        wait_status(m, "added", McpStatus::NeedsTrust).await,
+        "{:?}",
+        m.state("added")
+    );
     let st = m.state("added").expect("state");
     assert!(!st.trust_changed);
     assert!(st.summary.contains("legacy"));
@@ -375,7 +383,11 @@ async fn new_or_changed_local_commands_wait_until_trusted() {
 
     // The user trusts it: it starts, and stays trusted across a restart of Oxide.
     m.trust("added").expect("trust");
-    assert!(wait_status(m, "added", McpStatus::Running).await, "{:?}", m.state("added"));
+    assert!(
+        wait_status(m, "added", McpStatus::Running).await,
+        "{:?}",
+        m.state("added")
+    );
 
     // Its command changes behind Oxide's back: it stops and asks again, marked as changed.
     std::fs::write(
@@ -390,8 +402,14 @@ async fn new_or_changed_local_commands_wait_until_trusted() {
     // Saved from Settings: trusted as saved.
     let mut cfg = m.server_config("added").expect("config");
     cfg.name = "added".into();
-    m.save_server(cfg, Some("added".into())).await.expect("save");
-    assert!(wait_status(m, "added", McpStatus::Running).await, "{:?}", m.state("added"));
+    m.save_server(cfg, Some("added".into()))
+        .await
+        .expect("save");
+    assert!(
+        wait_status(m, "added", McpStatus::Running).await,
+        "{:?}",
+        m.state("added")
+    );
     m.shutdown().await;
 
     // The trust file holds fingerprints only (no env values).

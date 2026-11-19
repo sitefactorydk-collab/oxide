@@ -15,7 +15,10 @@ async fn resolve_folders(
 ) -> CmdResult<TaskInput> {
     crate::chosen::remember(
         app,
-        &kept.iter().map(std::path::PathBuf::from).collect::<Vec<_>>(),
+        &kept
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>(),
     );
     let mut folders = Vec::new();
     for f in std::mem::take(&mut input.folders) {

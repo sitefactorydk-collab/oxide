@@ -305,7 +305,9 @@ mod tests {
                 vec![
                     ContentBlock::Image {
                         media_type: "image/png".into(),
-                        source: MediaSource::Base64 { data: "iVBO".into() },
+                        source: MediaSource::Base64 {
+                            data: "iVBO".into(),
+                        },
                     },
                     ContentBlock::text("What is <b>this</b>?"),
                 ],

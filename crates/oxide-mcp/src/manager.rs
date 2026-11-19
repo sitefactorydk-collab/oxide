@@ -859,8 +859,8 @@ impl Inner {
     /// Starts a server, unless it is a local command the user hasn't trusted yet: then it
     /// waits in `NeedsTrust`.
     fn start_or_hold(self: &Arc<Self>, name: &str, config: McpServerConfig) {
-        let from_extension = lock(&self.extensions).contains_key(name)
-            && !lock(&self.config).has_server(name);
+        let from_extension =
+            lock(&self.extensions).contains_key(name) && !lock(&self.config).has_server(name);
         let state = if from_extension {
             TrustState::Trusted
         } else {

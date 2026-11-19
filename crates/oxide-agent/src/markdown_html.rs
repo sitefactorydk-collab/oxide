@@ -148,7 +148,9 @@ fn render_inline(chars: &[char], out: &mut String, depth: u32) {
                 && let Some(end) = find_seq(chars, start + 1, &m)
                 && !chars[end - 1].is_whitespace()
                 && !(mark.starts_with('_')
-                    && chars.get(end + m.len()).is_some_and(|x| x.is_alphanumeric()))
+                    && chars
+                        .get(end + m.len())
+                        .is_some_and(|x| x.is_alphanumeric()))
             {
                 flush(&mut text, out);
                 out.push_str(&format!("<{tag}>"));
@@ -202,7 +204,10 @@ fn find_bracket(chars: &[char], open: usize) -> Option<usize> {
 
 fn is_rule(line: &str) -> bool {
     let t: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    t.len() >= 3 && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*') || t.chars().all(|c| c == '_'))
+    t.len() >= 3
+        && (t.chars().all(|c| c == '-')
+            || t.chars().all(|c| c == '*')
+            || t.chars().all(|c| c == '_'))
 }
 
 /// A list item's marker: (indent, ordered, content start).
@@ -288,10 +293,7 @@ fn render_blocks(lines: &[&str], out: &mut String, depth: u32) {
             if lang.is_empty() {
                 out.push_str("<pre><code>");
             } else {
-                out.push_str(&format!(
-                    "<pre><code class=\"language-{}\">",
-                    escape(&lang)
-                ));
+                out.push_str(&format!("<pre><code class=\"language-{}\">", escape(&lang)));
             }
             out.push_str(&escape(&code.join("\n")));
             out.push_str("</code></pre>\n");
@@ -316,7 +318,9 @@ fn render_blocks(lines: &[&str], out: &mut String, depth: u32) {
             flush_para(&mut para, out);
             let mut inner: Vec<&str> = Vec::new();
             while i < lines.len() && lines[i].trim_start().starts_with('>') {
-                let l = lines[i].trim_start()[1..].strip_prefix(' ').unwrap_or(&lines[i].trim_start()[1..]);
+                let l = lines[i].trim_start()[1..]
+                    .strip_prefix(' ')
+                    .unwrap_or(&lines[i].trim_start()[1..]);
                 inner.push(l);
                 i += 1;
             }
@@ -368,9 +372,9 @@ fn render_blocks(lines: &[&str], out: &mut String, depth: u32) {
                     let l = lines[i];
                     let lind = l.len() - l.trim_start().len();
                     if l.trim().is_empty() {
-                        let next_deeper = lines
-                            .get(i + 1)
-                            .is_some_and(|n| n.len() - n.trim_start().len() > indent && !n.trim().is_empty());
+                        let next_deeper = lines.get(i + 1).is_some_and(|n| {
+                            n.len() - n.trim_start().len() > indent && !n.trim().is_empty()
+                        });
                         if next_deeper {
                             item.push("");
                             i += 1;
@@ -379,7 +383,10 @@ fn render_blocks(lines: &[&str], out: &mut String, depth: u32) {
                         break;
                     }
                     if lind > indent {
-                        item.push(l.get(indent.min(lind) + 2.min(lind - indent)..).unwrap_or(l.trim_start()));
+                        item.push(
+                            l.get(indent.min(lind) + 2.min(lind - indent)..)
+                                .unwrap_or(l.trim_start()),
+                        );
                         i += 1;
                     } else if list_marker(l).is_none() && !l.trim_start().starts_with('#') {
                         item.push(l.trim_start());
@@ -409,7 +416,10 @@ fn render_blocks(lines: &[&str], out: &mut String, depth: u32) {
                 // Skip blank lines between items of the same list.
                 while i < lines.len()
                     && lines[i].trim().is_empty()
-                    && lines.get(i + 1).and_then(|n| list_marker(n)).is_some_and(|(ind, ord, _)| ind == indent && ord == ordered)
+                    && lines
+                        .get(i + 1)
+                        .and_then(|n| list_marker(n))
+                        .is_some_and(|(ind, ord, _)| ind == indent && ord == ordered)
                 {
                     i += 1;
                 }
@@ -430,7 +440,10 @@ mod tests {
     #[test]
     fn inline_marks_and_escaping() {
         assert_eq!(inline("a <b> & \"c\""), "a &lt;b&gt; &amp; &quot;c&quot;");
-        assert_eq!(inline("**bold** and *it* and `x<y`"), "<strong>bold</strong> and <em>it</em> and <code>x&lt;y</code>");
+        assert_eq!(
+            inline("**bold** and *it* and `x<y`"),
+            "<strong>bold</strong> and <em>it</em> and <code>x&lt;y</code>"
+        );
         assert_eq!(inline("snake_case_name stays"), "snake_case_name stays");
         assert_eq!(inline("~~gone~~"), "<del>gone</del>");
         assert_eq!(inline("2 * 3 * 4"), "2 * 3 * 4");
@@ -449,12 +462,24 @@ mod tests {
         let md = "# Title\n\nSome *text*\nover lines.\n\n```rust\nfn main() { println!(\"<hi>\"); }\n```\n\n> quoted\n> more\n\n- one\n- two\n  - nested\n- three\n\n1. first\n2. second\n\n| A | B |\n|---|:-:|\n| 1 | **2** |\n\n---\nend";
         let html = render(md);
         assert!(html.contains("<h1>Title</h1>"), "{html}");
-        assert!(html.contains("<p>Some <em>text</em>\nover lines.</p>"), "{html}");
+        assert!(
+            html.contains("<p>Some <em>text</em>\nover lines.</p>"),
+            "{html}"
+        );
         assert!(html.contains("<pre><code class=\"language-rust\">fn main() { println!(&quot;&lt;hi&gt;&quot;); }</code></pre>"), "{html}");
-        assert!(html.contains("<blockquote>\n<p>quoted\nmore</p>\n</blockquote>"), "{html}");
+        assert!(
+            html.contains("<blockquote>\n<p>quoted\nmore</p>\n</blockquote>"),
+            "{html}"
+        );
         assert!(html.contains("<ul>\n<li>one</li>\n<li>two<ul>\n<li>nested</li>\n</ul>\n</li>\n<li>three</li>\n</ul>"), "{html}");
-        assert!(html.contains("<ol>\n<li>first</li>\n<li>second</li>\n</ol>"), "{html}");
-        assert!(html.contains("<thead><tr><th>A</th><th>B</th></tr></thead>"), "{html}");
+        assert!(
+            html.contains("<ol>\n<li>first</li>\n<li>second</li>\n</ol>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<thead><tr><th>A</th><th>B</th></tr></thead>"),
+            "{html}"
+        );
         assert!(html.contains("<td><strong>2</strong></td>"), "{html}");
         assert!(html.contains("<hr>"), "{html}");
         assert!(html.ends_with("<p>end</p>\n"), "{html}");
@@ -462,7 +487,9 @@ mod tests {
 
     #[test]
     fn hostile_input_stays_text() {
-        let html = render("<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n```\n</code></pre><script>\n```");
+        let html = render(
+            "<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n```\n</code></pre><script>\n```",
+        );
         assert!(!html.contains("<script>"), "{html}");
         assert!(!html.contains("<img"), "{html}");
         // Deep nesting and odd input don't panic.

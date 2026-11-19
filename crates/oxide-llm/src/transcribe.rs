@@ -6,8 +6,8 @@ use std::time::Duration;
 use oxide_core::ProviderKind;
 use serde_json::Value;
 
-use crate::LlmError;
 use crate::Endpoint;
+use crate::LlmError;
 use crate::http::{USER_AGENT, describe, status_error};
 
 /// Largest recording sent (OpenAI's limit is 25 MB).
@@ -23,7 +23,12 @@ pub struct Recording<'a> {
 }
 
 fn file_name(mime: &str) -> &'static str {
-    let base = mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     match base.as_str() {
         "audio/ogg" | "audio/opus" => "speech.ogg",
         "audio/wav" | "audio/x-wav" | "audio/wave" => "speech.wav",
@@ -152,7 +157,12 @@ mod tests {
     #[tokio::test]
     async fn sends_a_multipart_request_and_reads_the_text() {
         let server = serve(vec![Reply::json(r#"{"text": " Hej med dig "}"#)]).await;
-        let endpoint = Endpoint::new("groq", ProviderKind::OpenAi, &server.base, Some("gsk_x".into()));
+        let endpoint = Endpoint::new(
+            "groq",
+            ProviderKind::OpenAi,
+            &server.base,
+            Some("gsk_x".into()),
+        );
         let audio = b"\x1aE\xdf\xa3fake-webm".to_vec();
         let text = transcribe(
             &endpoint,
@@ -167,12 +177,26 @@ mod tests {
         .expect("text");
         assert_eq!(text, "Hej med dig");
         let req = &server.requests().await[0];
-        assert!(req.head.starts_with("POST /v1/audio/transcriptions"), "{}", req.head);
-        assert!(req.head.to_ascii_lowercase().contains("authorization: bearer gsk_x"));
+        assert!(
+            req.head.starts_with("POST /v1/audio/transcriptions"),
+            "{}",
+            req.head
+        );
+        assert!(
+            req.head
+                .to_ascii_lowercase()
+                .contains("authorization: bearer gsk_x")
+        );
         assert!(req.head.contains("multipart/form-data; boundary=oxide-"));
-        assert!(req.body.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n"));
+        assert!(
+            req.body
+                .contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n")
+        );
         assert!(req.body.contains("name=\"language\"\r\n\r\nda\r\n"));
-        assert!(req.body.contains("filename=\"speech.webm\"\r\nContent-Type: audio/webm;codecs=opus"));
+        assert!(
+            req.body
+                .contains("filename=\"speech.webm\"\r\nContent-Type: audio/webm;codecs=opus")
+        );
     }
 
     #[tokio::test]
@@ -190,15 +214,26 @@ mod tests {
         let err = transcribe(&endpoint, "whisper-1", rec(), None)
             .await
             .expect_err("404");
-        assert!(err.to_string().contains("doesn't offer speech-to-text"), "{err}");
+        assert!(
+            err.to_string().contains("doesn't offer speech-to-text"),
+            "{err}"
+        );
         let err = transcribe(&endpoint, "whisper-1", rec(), None)
             .await
             .expect_err("401");
         assert!(err.to_string().to_lowercase().contains("key"), "{err}");
 
-        let anthropic = Endpoint::new("a", ProviderKind::Anthropic, "https://x/v1", Some("k".into()));
+        let anthropic = Endpoint::new(
+            "a",
+            ProviderKind::Anthropic,
+            "https://x/v1",
+            Some("k".into()),
+        );
         assert!(transcribe(&anthropic, "m", rec(), None).await.is_err());
-        let empty = Recording { bytes: b"", mime: "audio/wav" };
+        let empty = Recording {
+            bytes: b"",
+            mime: "audio/wav",
+        };
         assert!(transcribe(&endpoint, "m", empty, None).await.is_err());
     }
 }

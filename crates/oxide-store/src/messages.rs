@@ -373,7 +373,10 @@ mod tests {
         assert_eq!(all[0].model, "anthropic/claude-x");
         assert_eq!(all[0].usage.map(|u| u.input_tokens), Some(12));
         assert_eq!(all[1].usage, None);
-        let none = s.usage_records(Some(now_ms() + 60_000)).await.expect("records");
+        let none = s
+            .usage_records(Some(now_ms() + 60_000))
+            .await
+            .expect("records");
         assert!(none.is_empty());
     }
 
