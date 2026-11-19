@@ -11,7 +11,7 @@ pub struct Reply {
     status: String,
     content_type: &'static str,
     headers: Vec<(String, String)>,
-    body: String,
+    body: Vec<u8>,
     /// Stream the body without a content length (closing the connection ends it).
     streamed: bool,
 }
@@ -22,7 +22,7 @@ impl Reply {
             status: "200 OK".into(),
             content_type: "text/event-stream",
             headers: Vec::new(),
-            body: body.into(),
+            body: body.as_bytes().to_vec(),
             streamed: true,
         }
     }
@@ -36,7 +36,18 @@ impl Reply {
             status: status.into(),
             content_type: "application/json",
             headers: Vec::new(),
-            body: body.into(),
+            body: body.as_bytes().to_vec(),
+            streamed: false,
+        }
+    }
+
+    /// A binary body (audio, video, images).
+    pub fn bytes(content_type: &'static str, body: &[u8]) -> Self {
+        Self {
+            status: "200 OK".into(),
+            content_type,
+            headers: Vec::new(),
+            body: body.to_vec(),
             streamed: false,
         }
     }
@@ -137,12 +148,12 @@ async fn write_reply(sock: &mut TcpStream, reply: &Reply) {
     sock.write_all(head.as_bytes()).await.ok();
     if reply.streamed {
         // Send in small pieces so clients see events split across chunks.
-        for piece in reply.body.as_bytes().chunks(37) {
+        for piece in reply.body.chunks(37) {
             sock.write_all(piece).await.ok();
             sock.flush().await.ok();
         }
     } else {
-        sock.write_all(reply.body.as_bytes()).await.ok();
+        sock.write_all(&reply.body).await.ok();
     }
     sock.shutdown().await.ok();
 }

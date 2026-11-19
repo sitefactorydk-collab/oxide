@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_agent::{
-    AttachmentStore, ChatService, ComputerUse, EventSink, McpTools, ModelRegistry, Scheduler,
-    SchedulerSink, Skills, Tools,
+    AttachmentStore, ChatService, ComputerUse, EventSink, Generation, McpTools, ModelRegistry,
+    Scheduler, SchedulerSink, Skills, Tools,
 };
 use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
@@ -44,6 +44,8 @@ pub struct AppState {
     pub computer_bar: Arc<crate::computer::TauriComputerSink>,
     /// Oxide's data, config and log folders (Settings → Data).
     pub dirs: oxide_agent::data::DataDirs,
+    /// Generation endpoints and the generation tools (Phase 19).
+    pub generation: Generation,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -179,6 +181,8 @@ impl AppState {
             }
             Err(e) => tracing::warn!("settings: {e}"),
         }
+        // Image, video and audio generation (Phase 19).
+        let generation = Generation::new(store.clone(), secrets.clone(), attachments.clone());
         // Models get the running MCP servers' tools plus Oxide's web tools.
         let tools = Tools::new(
             Some(Arc::new(mcp.clone()) as Arc<dyn McpTools>),
@@ -189,7 +193,8 @@ impl AppState {
         .with_python(python.clone())
         .with_sandboxes(sandboxes.clone())
         .with_browser(browser.clone())
-        .with_chrome(chrome.clone());
+        .with_chrome(chrome.clone())
+        .with_generation(generation.clone());
         // Computer use: the real screen, mouse and keyboard, where Oxide can control them.
         let computer = oxide_computer::Desktop::supported().then(|| {
             ComputerUse::new(
@@ -228,6 +233,7 @@ impl AppState {
             computer,
             computer_bar,
             dirs: dirs.data_dirs(),
+            generation,
         })
     }
 }

@@ -27,6 +27,7 @@ pub mod data;
 pub mod demo;
 mod error;
 pub mod export;
+pub mod generation;
 pub mod knowledge;
 pub mod markdown_html;
 pub mod memory;
@@ -45,6 +46,7 @@ pub use context::{
     PromptContext, build_messages, plan_request, reply_turns, request_messages, system_prompt,
 };
 pub use error::AgentError;
+pub use generation::Generation;
 pub use registry::{Connector, ModelRegistry};
 pub use sampling::run_sampling;
 pub use scheduler::{Scheduler, SchedulerSink};

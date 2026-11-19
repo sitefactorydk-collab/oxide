@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generation-models"
+description = "Enables the generation_models command without any pre-configured scope."
+commands.allow = ["generation_models"]
+
+[[permission]]
+identifier = "deny-generation-models"
+description = "Denies the generation_models command without any pre-configured scope."
+commands.deny = ["generation_models"]

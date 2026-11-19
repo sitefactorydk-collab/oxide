@@ -16,6 +16,7 @@ import {
   type SandboxSettings,
   type ShellSettings,
   type DictationSettings,
+  type GenerationSettings,
   type ThemePref,
   type ToolSettings,
   type UiLanguage,
@@ -94,6 +95,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   updates: { checkAutomatically: true },
   dictation: { enabled: true, providerId: null, model: "whisper-1", language: "" },
+  generation: {
+    text: { providerId: null, baseUrl: "", model: "" },
+    image: { providerId: null, baseUrl: "", model: "gpt-image-2" },
+    video: { providerId: null, baseUrl: "", model: "" },
+    audio: { providerId: null, baseUrl: "", model: "gpt-4o-mini-tts" },
+    voice: "alloy",
+    audioFormat: "mp3",
+  },
 };
 
 export function useSettings() {
@@ -198,6 +207,12 @@ export function useSetDictationSettings() {
   const update = useUpdateSettings();
   return (patch: Partial<DictationSettings>) =>
     update((s) => ({ ...s, dictation: { ...s.dictation, ...patch } }));
+}
+
+export function useSetGenerationSettings() {
+  const update = useUpdateSettings();
+  return (patch: Partial<GenerationSettings>) =>
+    update((s) => ({ ...s, generation: { ...s.generation, ...patch } }));
 }
 
 export function useSetProfileName() {

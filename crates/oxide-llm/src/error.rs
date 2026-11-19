@@ -22,6 +22,9 @@ pub enum LlmError {
     /// The reply broke off part-way (a stream error event or a dropped connection).
     #[error("{0}")]
     Stream(String),
+    /// A generation that can't be done here, or that the endpoint gave up on (Phase 19).
+    #[error("{0}")]
+    Generation(String),
 }
 
 impl LlmError {

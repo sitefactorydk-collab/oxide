@@ -105,6 +105,9 @@ pub enum Builtin {
     SandboxCopyIn,
     /// A copy from the sandbox into a shared folder (run by the chat service).
     SandboxCopyOut,
+    /// Image, video or audio generation (Phase 19; run by the chat service, which shows
+    /// progress and finds reference images).
+    Generate(oxide_core::GenerationKind),
 }
 
 impl Builtin {
@@ -123,6 +126,7 @@ impl Builtin {
             Builtin::SandboxExec => oxide_core::sandbox::SANDBOX_EXEC,
             Builtin::SandboxCopyIn => oxide_core::sandbox::SANDBOX_COPY_IN,
             Builtin::SandboxCopyOut => oxide_core::sandbox::SANDBOX_COPY_OUT,
+            Builtin::Generate(kind) => kind.tool().unwrap_or(oxide_core::GENERATE_AUDIO),
         }
     }
 }
@@ -214,6 +218,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
             ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
             ToolKind::Builtin(Builtin::RunPython) => ToolUsageKind::Python,
+            ToolKind::Builtin(Builtin::Generate(_)) => ToolUsageKind::Generation,
             ToolKind::Builtin(
                 Builtin::SandboxExec | Builtin::SandboxCopyIn | Builtin::SandboxCopyOut,
             )
@@ -322,6 +327,7 @@ pub struct Tools {
     browser: Option<oxide_pyenv::BrowserAgents>,
     chrome: Option<oxide_bridge::Bridge>,
     computer: Option<crate::computer::ComputerUse>,
+    generation: Option<crate::generation::Generation>,
 }
 
 impl Tools {
@@ -340,7 +346,18 @@ impl Tools {
             browser: None,
             chrome: None,
             computer: None,
+            generation: None,
         }
+    }
+
+    /// Gives models the generation tools (for the kinds set up in Settings → Generation).
+    pub fn with_generation(mut self, generation: crate::generation::Generation) -> Self {
+        self.generation = Some(generation);
+        self
+    }
+
+    pub fn generation(&self) -> Option<&crate::generation::Generation> {
+        self.generation.as_ref()
     }
 
     /// Gives models `run_python`, running in this managed environment.
@@ -528,7 +545,8 @@ impl Tools {
                 | Builtin::RunPython
                 | Builtin::SandboxExec
                 | Builtin::SandboxCopyIn
-                | Builtin::SandboxCopyOut,
+                | Builtin::SandboxCopyOut
+                | Builtin::Generate(_),
             )
             | ToolKind::SandboxFile { .. }
             | ToolKind::Browser { .. }
@@ -784,6 +802,9 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::SandboxExec => return sandbox::exec_entry(),
         Builtin::SandboxCopyIn => return sandbox::copy_in_entry(),
         Builtin::SandboxCopyOut => return sandbox::copy_out_entry(),
+        Builtin::Generate(kind) => {
+            return crate::generation::tool_entry(kind, &oxide_core::GenerationSettings::default());
+        }
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \

@@ -196,6 +196,8 @@ mod tests {
             "{csp}"
         );
         assert!(!directive("frame-src").contains('*'));
+        // Generated video and audio play from blob: URLs made in the window (Phase 19).
+        assert_eq!(directive("media-src"), "media-src 'self' blob:");
         assert!(
             conf["app"]["security"]
                 .get("dangerousDisableAssetCspModification")

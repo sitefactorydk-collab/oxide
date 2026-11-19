@@ -57,6 +57,7 @@ export const da: Catalog = {
   "section.connectors": "Forbindelser",
   "section.web-search": "Websøgning",
   "section.voice": "Stemme",
+  "section.generation": "Generering",
   "section.desktop": "Skrivebord",
   "section.extensions": "Udvidelser",
   "section.skills": "Færdigheder",

@@ -18,6 +18,9 @@ import {
   Shapes,
   Sparkles,
   ShieldCheck,
+  AudioLines,
+  Film,
+  ImageIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router";
@@ -29,6 +32,8 @@ import { useSkillFocus } from "@/features/extensions/store";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { useBrowserFrame } from "@/features/browser/queries";
 import { ImageThumb } from "@/features/attachments/MessageAttachments";
+import { GeneratedMedia, MediaPlayer } from "@/features/generation/GeneratedMedia";
+import { isPlayable } from "@/features/generation/media";
 import { useStreams, type ToolCallView } from "@/features/chat/streams";
 import { useArtifactPanel } from "@/features/artifacts/store";
 import { useMcpUi } from "@/features/mcp/store";
@@ -75,7 +80,13 @@ function KindIcon({ call }: { call: ToolCallView }) {
                             ? PanelTop
                             : kind === "computer"
                               ? MonitorSmartphone
-                              : Plug;
+                              : kind === "generation"
+                                ? call.tool === "generate_video"
+                                  ? Film
+                                  : call.tool === "generate_audio"
+                                    ? AudioLines
+                                    : ImageIcon
+                                : Plug;
   return <Icon aria-hidden className="size-4 shrink-0" />;
 }
 
@@ -95,6 +106,8 @@ function StatusBadge({ call }: { call: ToolCallView }) {
             "Setting up Python"
           ) : call.status === "running" && frame?.text ? (
             <span className="max-w-48 truncate">{frame.text}</span>
+          ) : call.status === "running" && call.progress ? (
+            `${call.progress.note}${call.progress.percent !== null ? ` ${call.progress.percent}%` : ""}`
           ) : call.status === "running" && progress ? (
             `${progress.message ?? "Working"}${progress.total ? ` ${Math.round((progress.progress / progress.total) * 100)}%` : ""}`
           ) : call.status === "running" ? (
@@ -164,6 +177,9 @@ export function ToolResultView({
         }
         if (b.type === "artifactRef") {
           return <ArtifactLink key={i} id={b.artifactId} title={b.title} version={b.version} />;
+        }
+        if (isPlayable(b)) {
+          return <MediaPlayer key={i} path={b.source.path} mediaType={b.mediaType} name={b.name} />;
         }
         return null;
       })}
@@ -463,6 +479,9 @@ function ToolLine({ call }: { call: ToolCallView }) {
       )}
       {!open && toolKind(call) === "python" && call.result && !call.isError && (
         <PythonOutputs content={call.result} />
+      )}
+      {!open && toolKind(call) === "generation" && call.result && !call.isError && (
+        <GeneratedMedia content={call.result} />
       )}
       {!open && toolKind(call) === "browser" && <BrowserView call={call} />}
       {!open && toolKind(call) === "computer" && <ComputerShot call={call} />}

@@ -334,6 +334,12 @@ pub fn secret_names(provider_ids: &[String], mcp_servers: &[String]) -> Vec<Stri
             .map(|k| k.secret_name().to_owned()),
     );
     names.extend(mcp_servers.iter().map(|s| oxide_mcp::oauth::token_key(s)));
+    // Settings → Generation's own keys (Phase 19).
+    names.extend(
+        oxide_core::GenerationKind::ALL
+            .iter()
+            .map(|k| k.secret_name()),
+    );
     names.sort();
     names.dedup();
     names
@@ -649,6 +655,8 @@ mod tests {
             .expect("set");
         s.set("websearch:brave", &Secret::new("brave"))
             .expect("set");
+        s.set("generation:video", &Secret::new("sk-video"))
+            .expect("set");
         set_large(s, "mcp-oauth:notion", &"t".repeat(5_000)).expect("set");
         s.set("unrelated", &Secret::new("keep")).expect("set");
         let names = secret_names(&["anthropic".into()], &["notion".into(), "notion".into()]);
@@ -657,6 +665,7 @@ mod tests {
         for gone in [
             "provider:anthropic",
             "websearch:brave",
+            "generation:video",
             "mcp-oauth:notion",
             "mcp-oauth:notion#1",
         ] {

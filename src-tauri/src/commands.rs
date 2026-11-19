@@ -10,6 +10,7 @@ pub mod computer;
 pub mod data;
 pub mod desktop;
 pub mod extensions;
+pub mod generation;
 pub mod insights;
 pub mod mcp;
 pub mod memory;

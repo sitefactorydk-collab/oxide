@@ -1410,6 +1410,74 @@ async transcribeAudio(audio: string, mime: string) : Promise<Result<string, Comm
 }
 },
 /**
+ * The kinds of generation that have a key of their own in the keychain.
+ */
+async generationKeys() : Promise<Result<GenerationKind[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generation_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a kind's own key (it overrides the endpoint's), or removes it with `None`.
+ */
+async setGenerationKey(kind: GenerationKind, key: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_generation_key", { kind, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Test in Settings → Generation: reaches the endpoint and looks for the model in its list.
+ */
+async testGeneration(kind: GenerationKind, endpoint: GenerationEndpoint) : Promise<Result<GenerationTest, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_generation", { kind, endpoint }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every model the endpoint lists, for the model picker.
+ */
+async generationModels(kind: GenerationKind, endpoint: GenerationEndpoint) : Promise<Result<string[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generation_models", { kind, endpoint }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A stored file (generated video or audio) as base64, for a player in the window. Only files
+ * in the attachments folder can be read.
+ */
+async attachmentMedia(path: string) : Promise<Result<string, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("attachment_media", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a stored file (a generated image's full-size original, video or audio) where the user
+ * picks. Returns the path, or `None` if they cancelled.
+ */
+async saveAttachmentFile(path: string, name: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_attachment_file", { path, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1776,7 +1844,11 @@ updates: UpdateSettings;
 /**
  * Settings → Voice (dictation).
  */
-dictation: DictationSettings }
+dictation: DictationSettings; 
+/**
+ * Settings → Generation (Phase 19).
+ */
+generation: GenerationSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont; language: UiLanguage }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
@@ -2880,6 +2952,43 @@ thinking: boolean;
  * Effort level. `None` (and levels the model doesn't accept) leave the model's default.
  */
 effort: Effort | null }
+/**
+ * Where one kind of generation goes: a model on an endpoint from Settings → Providers, or on
+ * a custom base URL (which wins when both are set).
+ */
+export type GenerationEndpoint = { 
+/**
+ * An endpoint from Settings → Providers (its URL and key are used).
+ */
+providerId: string | null; 
+/**
+ * A custom OpenAI-compatible base URL (`https://…/v1`); empty uses the provider's.
+ */
+baseUrl: string; 
+/**
+ * The model id on that endpoint.
+ */
+model: string }
+/**
+ * A kind of generation.
+ */
+export type GenerationKind = "text" | "image" | "video" | "audio"
+/**
+ * Settings → Generation.
+ */
+export type GenerationSettings = { text: GenerationEndpoint; image: GenerationEndpoint; video: GenerationEndpoint; audio: GenerationEndpoint; 
+/**
+ * The voice speech uses unless the model picks another (`alloy`, `nova`, …).
+ */
+voice: string; 
+/**
+ * The audio format speech is made in (one of [`AUDIO_FORMATS`]).
+ */
+audioFormat: string }
+/**
+ * The result of Test in Settings → Generation.
+ */
+export type GenerationTest = { ok: boolean; message: string }
 export type ImportCandidate = { config: McpServerConfig; status: ImportStatus }
 /**
  * What "Import from Claude desktop" would do.
@@ -4029,6 +4138,10 @@ export type StreamEvent =
  */
 { type: "toolRunning"; id: string } | 
 /**
+ * How far a long tool call has come (a video being made).
+ */
+{ type: "toolProgress"; id: string; progress: ToolProgress } | 
+/**
  * A tool call finished. `content` is what the model sees.
  */
 { type: "toolResult"; id: string; content: ContentBlock[]; isError: boolean; durationMs: number } | { type: "usage"; usage: Usage } | 
@@ -4178,6 +4291,18 @@ skill: SkillSavePreview | null;
  */
 computer?: ComputerApproval | null; requestedAt: number }
 /**
+ * Progress of a long tool call (a video being made), shown on its line.
+ */
+export type ToolProgress = { 
+/**
+ * 0–100, when the endpoint says.
+ */
+percent: number | null; 
+/**
+ * A short status such as "Queued" or "Rendering".
+ */
+note: string }
+/**
  * Tool approvals and the tool loop (Settings → Permissions).
  */
 export type ToolSettings = { 
@@ -4261,7 +4386,11 @@ export type ToolUsageKind = "webSearch" | "webFetch" |
  * Computer use: the screen seen, the mouse and keyboard used (the label is the action
  * or the app).
  */
-"computer"
+"computer" | 
+/**
+ * `generate_image`, `generate_video`, `generate_audio` (Phase 19).
+ */
+"generation"
 /**
  * The language of Oxide's own interface (Phase 18). Model replies follow the user.
  */

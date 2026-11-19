@@ -18,6 +18,13 @@ use serde_json::{Value, json};
 
 const MOCK: &str = env!("CARGO_BIN_EXE_oxide-mcp-mock");
 
+/// The tests here run one at a time. On Windows, `install_configure_toggle_update_uninstall`
+/// failed with os error 32 (the old extension folder still in use after 20 s of retries) only
+/// while the other tests ran beside it (one starts a real `node` server); alone it passed
+/// every time (Phase 19, `scripts\win\ext-diag.cmd`). They test install flows, not
+/// concurrency.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Sink;
 impl ManagerSink for Sink {
     fn event(&self, _event: McpEvent) {}
@@ -143,6 +150,7 @@ fn config_json(s: &Setup) -> Value {
 
 #[tokio::test]
 async fn install_configure_toggle_update_uninstall() {
+    let _serial = SERIAL.lock().await;
     let s = setup(json!({"mcpServers": {}})).await;
     let file = bundle(s.dir.path(), "mock.mcpb", &manifest("1.0.0"));
 
@@ -279,6 +287,7 @@ async fn install_configure_toggle_update_uninstall() {
 
 #[tokio::test]
 async fn bad_bundles_are_refused_and_leave_nothing_behind() {
+    let _serial = SERIAL.lock().await;
     let s = setup(json!({"mcpServers": {"mock-ext": {"command": MOCK, "args": ["modern"]}}})).await;
     let staging = s.dir.path().join("extensions/.staging");
     let count = || std::fs::read_dir(&staging).map(|d| d.count()).unwrap_or(0);
@@ -341,6 +350,7 @@ async fn bad_bundles_are_refused_and_leave_nothing_behind() {
 /// The sample bundle in `docs/samples` (what the Phase 10 exit check installs).
 #[tokio::test]
 async fn the_sample_bundle_installs_and_runs_with_node() {
+    let _serial = SERIAL.lock().await;
     let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/samples/oxide-dice.mcpb");
     let s = setup(json!({"mcpServers": {}})).await;
     let p = s.ext.preview(&sample).await.expect("opens the sample");

@@ -15,6 +15,7 @@ pub mod conversation;
 pub mod data;
 pub mod desktop;
 pub mod extension;
+pub mod generation;
 pub mod mcp;
 pub mod memory;
 pub mod message;
@@ -62,6 +63,10 @@ pub use extension::{
     Extension, ExtensionField, ExtensionFieldType, ExtensionInfo, ExtensionItem, ExtensionPreview,
     ExtensionServerType, ExtensionStatus, ExtensionValue, LOAD_SKILL, SAVE_SKILL, Skill,
     SkillDetail, SkillFileChange, SkillInput, SkillSavePreview,
+};
+pub use generation::{
+    GENERATE_AUDIO, GENERATE_IMAGE, GENERATE_VIDEO, GENERATION_SWITCH, GenerationEndpoint,
+    GenerationKind, GenerationSettings, GenerationTest, ToolProgress,
 };
 pub use mcp::{
     ChatTools, ImportCandidate, ImportPreview, ImportStatus, McpAnswer, McpAsk, McpCapabilities,

@@ -12,6 +12,7 @@ import { DataSection } from "@/features/data/DataSection";
 import { UpdatesCard } from "@/features/data/UpdatesCard";
 import { SandboxSection } from "@/features/sandbox/SandboxSection";
 import { VoiceSection } from "@/features/dictation/VoiceSection";
+import { GenerationSection } from "@/features/generation/GenerationSection";
 import { UsageSection } from "@/features/usage/UsageSection";
 import { useT, type MessageKey, type T } from "@/i18n";
 import type { UiLanguage } from "@/bindings";
@@ -116,6 +117,8 @@ function SectionBody({ section }: { section: SettingsSection }) {
   switch (section.id) {
     case "voice":
       return <VoiceSection />;
+    case "generation":
+      return <GenerationSection />;
     case "usage":
       return <UsageSection />;
     case "general":

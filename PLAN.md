@@ -51,6 +51,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Paths from the window | Commands that grant folders or install from disk accept only paths from Oxide's pickers or drops (`src-tauri/src/chosen.rs`); others need a native confirmation (Phase 18). See `docs/SECURITY.md` |
 | i18n | Own small `src/i18n` (`useT`, flat keys, `en.ts`/`da.ts` with matching key sets), language in `appearance.language` (system/en/da). Danish covers the shell; other text is English until translated (Phase 18) |
 | Dictation | Provider speech-to-text through an OpenAI-compatible `/audio/transcriptions` endpoint chosen in Settings → Voice (MediaRecorder in the web view, base64 to `transcribe_audio`), not local `whisper-rs` (Phase 18) |
+| Media generation | OpenAI-compatible only: `oxide-llm::generation` (`/images/generations` and `/images/edits`, `/audio/speech`, `/videos` with polling, `GET /models`). Settings → Generation keeps an endpoint per kind (text, image, video, audio): a provider or a custom URL, a model, and an optional key of its own in the keychain (`generation:<kind>`). Chats get `generate_image`, `generate_video` and `generate_audio`, which ask first; results are stored with the attachments and played via `blob:` URLs (CSP `media-src 'self' blob:`) (Phase 19) |
 | Long chats | A message window (newest 40 mounted, older ones on scrolling up) plus `content-visibility: auto`, not a virtualized list (Phase 18) |
 | Location | `C:\AI Apps\Oxide` |
 
@@ -465,6 +466,8 @@ Requested by the user after Phase 17 (planning for Utility Apps): Oxide must gen
 - **Tests**: fake OpenAI-compatible servers for images, speech and video (incl. job polling, failures and missing endpoints), settings round trip, tool results.
 
 **Exit:** in a chat on Windows, “make an image of …”, “make a 5-second video of …” and “read this paragraph aloud” work against OpenAI-compatible endpoints set in Settings → Generation (a local server where one offers the endpoint, else OpenAI); changing a default changes which model and endpoint are used.
+
+*Built 2026-11-19* (see PROGRESS.md). OpenAI shut down its Videos API (Sora 2) on 2026-09-24, so the video check uses a gateway that kept OpenAI's `/videos` API. Test in Settings → Generation checks the model against the endpoint's model list instead of generating (no cost).
 
 ### Phase 20 — Utility Apps: runtime and gallery
 Requested by the user after Phase 17: a **Utility Apps** page (sidebar item after **Projects**) with a collection of AI utility apps, modelled on the user's AI-Toolkit (`github.com/sitefactorydk-collab/AI-Toolkit`, built in Google AI Studio). Apps can be used, cloned, modified and created; sharing as a community platform may come later.

@@ -20,6 +20,7 @@ import {
   Sparkles,
   Terminal,
   UserRound,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -67,6 +68,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: Globe,
     blurb:
       "The service Oxide’s web search tool uses. Anthropic models can use Anthropic’s own search instead. Keys live in the system keychain.",
+  },
+  {
+    id: "generation",
+    label: "Generation",
+    icon: Wand2,
+    blurb:
+      "The models that make text, images, video and audio, on any OpenAI-compatible endpoint. Chats use them through their generation tools.",
   },
   {
     id: "voice",

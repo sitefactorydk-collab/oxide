@@ -30,6 +30,8 @@ const KEEP_ORIGINAL_BYTES: usize = 3 * 1024 * 1024;
 /// The model APIs reject images above 5 MB.
 const MAX_STORED_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 const JPEG_QUALITY: u8 = 85;
+/// Largest generated video or audio file kept (and read back for the player).
+pub const MAX_MEDIA_BYTES: usize = 200 * 1024 * 1024;
 /// Side of the composer chip preview, in pixels.
 const THUMBNAIL_SIDE: u32 = 160;
 
@@ -100,6 +102,13 @@ impl AttachmentStore {
     /// Checks, converts and stores one file.
     pub async fn prepare(&self, source: AttachmentSource) -> Result<Attachment> {
         let (name, bytes) = self.read_source(source).await?;
+        self.prepare_bytes(name, bytes).await
+    }
+
+    /// [`Self::prepare`] for bytes already in memory (`name` gives the type when the content
+    /// doesn't).
+    pub async fn prepare_bytes(&self, name: String, bytes: Vec<u8>) -> Result<Attachment> {
+        let name = clean_name(&name);
         let original_size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
         let id = new_id();
         tokio::fs::create_dir_all(&self.dir)
@@ -201,6 +210,82 @@ impl AttachmentStore {
             .map_err(|e| unreadable(&name, e))?;
         attachment.path = path;
         Ok(attachment)
+    }
+
+    /// Stores a generated image (Phase 19) like an attachment, so models get a copy they
+    /// accept. When that copy had to be scaled or re-encoded, the endpoint's own file is kept
+    /// next to it ([`original_sidecar`]) for downloading.
+    pub async fn save_generated_image(&self, name: &str, bytes: Vec<u8>) -> Result<Attachment> {
+        let original = bytes.clone();
+        let att = self.prepare_bytes(name.to_owned(), bytes).await?;
+        if att.kind == AttachmentKind::Image && att.size as usize != original.len() {
+            tokio::fs::write(original_sidecar(&att.path), original)
+                .await
+                .map_err(|e| unreadable(name, e))?;
+        }
+        Ok(att)
+    }
+
+    /// Stores generated audio or video (Phase 19) unchanged. Returns its path.
+    pub async fn save_media(&self, ext: &str, bytes: &[u8]) -> Result<String> {
+        if bytes.len() > MAX_MEDIA_BYTES {
+            return Err(AttachmentError::TooLarge {
+                name: format!("generated.{ext}"),
+                what: "generated media",
+                size: format_bytes(bytes.len() as u64),
+                limit: format_bytes(MAX_MEDIA_BYTES as u64),
+            });
+        }
+        let ext: String = ext
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(8)
+            .collect();
+        let ext = if ext.is_empty() {
+            "bin".to_owned()
+        } else {
+            ext
+        };
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|e| unreadable("generated media", e))?;
+        let path = self.stored_path(&new_id(), &ext);
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|e| unreadable("generated media", e))?;
+        Ok(path)
+    }
+
+    /// The bytes of a stored file, for playing it in the window or saving it elsewhere. A
+    /// generated image's full-size original is preferred when there is one.
+    pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        if !self.owns(path) {
+            return Err(AttachmentError::Foreign);
+        }
+        let name = Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let original = original_sidecar(path);
+        let source = if tokio::fs::try_exists(&original).await.unwrap_or(false) {
+            original
+        } else {
+            path.to_owned()
+        };
+        let meta = tokio::fs::metadata(&source)
+            .await
+            .map_err(|e| unreadable(&name, e))?;
+        if meta.len() > MAX_MEDIA_BYTES as u64 {
+            return Err(AttachmentError::TooLarge {
+                name,
+                what: "a file shown in the chat",
+                size: format_bytes(meta.len()),
+                limit: format_bytes(MAX_MEDIA_BYTES as u64),
+            });
+        }
+        tokio::fs::read(&source)
+            .await
+            .map_err(|e| unreadable(&name, e))
     }
 
     /// Content blocks for attachments the UI sends back, after checking they're ours.
@@ -331,6 +416,11 @@ impl AttachmentStore {
             }
         }
     }
+}
+
+/// Where a generated image's original is kept when the stored copy differs.
+pub fn original_sidecar(path: &str) -> String {
+    format!("{path}.original")
 }
 
 fn unreadable(name: &str, e: impl std::fmt::Display) -> AttachmentError {

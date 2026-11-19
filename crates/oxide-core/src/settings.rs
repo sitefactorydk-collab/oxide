@@ -353,6 +353,8 @@ pub struct AppSettings {
     pub updates: crate::data::UpdateSettings,
     /// Settings → Voice (dictation).
     pub dictation: DictationSettings,
+    /// Settings → Generation (Phase 19).
+    pub generation: crate::generation::GenerationSettings,
 }
 
 impl AppSettings {
@@ -422,6 +424,7 @@ impl AppSettings {
         self.computer = self.computer.normalized();
         self.context = self.context.normalized();
         self.dictation = self.dictation.normalized();
+        self.generation = self.generation.normalized();
         self.desktop.quick_entry_shortcut =
             crate::desktop::clean_shortcut(&self.desktop.quick_entry_shortcut)
                 .unwrap_or_else(|| crate::desktop::DEFAULT_QUICK_ENTRY_SHORTCUT.into());

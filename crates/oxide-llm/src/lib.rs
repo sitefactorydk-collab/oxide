@@ -13,6 +13,7 @@
 pub mod anthropic;
 pub mod capabilities;
 mod error;
+pub mod generation;
 mod http;
 pub mod media;
 pub mod openai;

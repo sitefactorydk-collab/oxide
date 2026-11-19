@@ -82,6 +82,87 @@ pub(crate) fn status_error(status: u16, body: &str) -> LlmError {
     }
 }
 
+/// A `multipart/form-data` body written by hand (reqwest's `multipart` feature isn't used).
+pub(crate) struct Multipart {
+    boundary: String,
+    body: Vec<u8>,
+}
+
+impl Multipart {
+    pub(crate) fn new() -> Self {
+        Self {
+            boundary: format!("oxide-{:016x}", rand_u64()),
+            body: Vec::new(),
+        }
+    }
+
+    /// Characters that would break a header line or a quoted value are dropped.
+    fn clean(value: &str) -> String {
+        value
+            .chars()
+            .filter(|c| !c.is_control() && *c != '"')
+            .collect()
+    }
+
+    pub(crate) fn text(&mut self, name: &str, value: &str) -> &mut Self {
+        let b = &self.boundary;
+        let name = Self::clean(name);
+        self.body.extend_from_slice(
+            format!("--{b}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
+        );
+        self
+    }
+
+    pub(crate) fn file(
+        &mut self,
+        name: &str,
+        file_name: &str,
+        mime: &str,
+        bytes: &[u8],
+    ) -> &mut Self {
+        let b = &self.boundary;
+        let (name, file_name, mime) =
+            (Self::clean(name), Self::clean(file_name), Self::clean(mime));
+        let mime = if mime.is_empty() {
+            "application/octet-stream".to_owned()
+        } else {
+            mime
+        };
+        self.body.extend_from_slice(
+            format!(
+                "--{b}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{file_name}\"\r\nContent-Type: {mime}\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        self.body.extend_from_slice(bytes);
+        self.body.extend_from_slice(b"\r\n");
+        self
+    }
+
+    /// (content type, body).
+    pub(crate) fn finish(mut self) -> (String, Vec<u8>) {
+        self.body
+            .extend_from_slice(format!("--{}--\r\n", self.boundary).as_bytes());
+        (
+            format!("multipart/form-data; boundary={}", self.boundary),
+            self.body,
+        )
+    }
+}
+
+fn rand_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    h.finish()
+}
+
 /// How long to wait before retry number `attempt` (0-based). Honors `retry-after` (seconds)
 /// up to a cap; `None` means don't retry.
 pub(crate) fn retry_delay(attempt: u32, headers: &HeaderMap) -> Option<Duration> {

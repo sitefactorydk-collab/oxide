@@ -53,6 +53,7 @@ import {
 import { fakeComputerCommands, resetFakeComputer, setComputerEmitter } from "./fakeComputer";
 import { fakeDataCommands, resetFakeData, setUpdateEmitter } from "./fakeData";
 import { fakeInsightCommands, resetFakeInsights } from "./fakeInsights";
+import { fakeGenerationCommands, resetFakeGeneration } from "./fakeGeneration";
 import { fakeExtensionCommands, resetFakeExtensions } from "./fakeExtensions";
 import { fakeMcpCommands, fakeMcpState, resetFakeMcp, setMcpEmitter } from "./fakeMcp";
 import { fakePythonCommands, resetFakePython, setPythonEmitter } from "./fakePython";
@@ -163,6 +164,8 @@ export interface FakeSeed {
     language: AppSettings["appearance"]["language"];
     /** Changes to dictation (Settings → Voice). */
     dictation: Partial<AppSettings["dictation"]>;
+    /** Changes to Settings → Generation. */
+    generation: Partial<AppSettings["generation"]>;
   }>;
   empty?: boolean;
   replies?: ReplyMode;
@@ -262,6 +265,15 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         language: "",
         ...seed.settings?.dictation,
       },
+      generation: {
+        text: { providerId: null, baseUrl: "", model: "" },
+        image: { providerId: null, baseUrl: "", model: "gpt-image-2" },
+        video: { providerId: null, baseUrl: "", model: "" },
+        audio: { providerId: null, baseUrl: "", model: "gpt-4o-mini-tts" },
+        voice: "alloy",
+        audioFormat: "mp3",
+        ...seed.settings?.generation,
+      },
     },
     models: seedModels(),
     replies: seed.replies ?? "auto",
@@ -303,6 +315,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
   resetFakeSchedule();
   resetFakeData();
   resetFakeInsights();
+  resetFakeGeneration();
   configureFakeChrome(state.settings.chrome.enabled, state.settings.chrome.port);
 }
 
@@ -805,6 +818,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeComputerCommands,
   ...fakeDataCommands,
   ...fakeInsightCommands,
+  ...fakeGenerationCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({

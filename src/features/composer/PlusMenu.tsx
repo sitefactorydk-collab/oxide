@@ -14,6 +14,7 @@ import {
   Settings2,
   Shapes,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -78,6 +79,10 @@ export function PlusMenu({
   const settings = useSettings().data ?? DEFAULT_SETTINGS;
   const sandboxEnabled = settings.sandbox.enabled;
   const browserEnabled = settings.browser.enabled;
+  const g = settings.generation;
+  const generationReady = (["image", "video", "audio"] as const).some(
+    (k) => g[k].model !== "" && (g[k].providerId !== null || g[k].baseUrl !== ""),
+  );
   const chromeEnabled = settings.chrome.enabled;
   const computerEnabled = settings.computer.enabled;
   const running = servers.filter((s) => s.status === "running");
@@ -206,6 +211,21 @@ export function PlusMenu({
               </span>
             </span>
           </MenuCheckboxItem>
+          {generationReady && (
+            <MenuCheckboxItem
+              checked={switches.generationOn}
+              onCheckedChange={(v) => switches.toggleGeneration(v === true)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <Wand2 />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span>Generate media</span>
+                <span className="text-xs leading-4 text-fg-subtle">
+                  Images, video and audio from Settings → Generation; each asks you first
+                </span>
+              </span>
+            </MenuCheckboxItem>
+          )}
           {sandboxEnabled && (
             <MenuCheckboxItem
               checked={switches.sandboxOn}

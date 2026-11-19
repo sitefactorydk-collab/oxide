@@ -36,8 +36,8 @@ const BINDINGS_HEADER: &str =
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions,
-        insights, mcp, memory, models, projects, providers, python, sandbox, schedule, settings,
-        system, tools, updates, workspace,
+        generation, insights, mcp, memory, models, projects, providers, python, sandbox, schedule,
+        settings, system, tools, updates, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -208,6 +208,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             insights::app_ready,
             insights::app_metrics,
             insights::transcribe_audio,
+            // Generation endpoints and generated media (Phase 19)
+            generation::generation_keys,
+            generation::set_generation_key,
+            generation::test_generation,
+            generation::generation_models,
+            generation::attachment_media,
+            generation::save_attachment_file,
             // System
             system::open_external,
             // Desktop integration

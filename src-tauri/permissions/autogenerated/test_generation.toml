@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-test-generation"
+description = "Enables the test_generation command without any pre-configured scope."
+commands.allow = ["test_generation"]
+
+[[permission]]
+identifier = "deny-test-generation"
+description = "Denies the test_generation command without any pre-configured scope."
+commands.deny = ["test_generation"]

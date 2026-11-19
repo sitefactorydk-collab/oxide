@@ -6,6 +6,7 @@ import type {
   ContextUsage,
   Message,
   ToolApprovalRequest,
+  ToolProgress,
   Usage,
 } from "@/bindings";
 
@@ -40,6 +41,8 @@ export interface ToolCallView {
   durationMs: number | null;
   /** Provider-run (Anthropic web search). */
   provider: boolean;
+  /** How far a long call has come (a video being made). */
+  progress?: ToolProgress | null;
 }
 
 /** One piece of a live reply, in the order it arrived. */
@@ -234,6 +237,12 @@ export function reduceStream(
           status: "running",
           approval: null,
         })),
+      });
+    case "toolProgress":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({ ...c, progress: event.progress })),
       });
     case "toolResult":
       if (!live) return state;

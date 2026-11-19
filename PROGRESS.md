@@ -10,8 +10,9 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 15** — Scheduled tasks: done (`68ee955`, follow-up `d7c34cd`; every check green on Windows; all exit checks passed by hand on 2026-11-13 11:13)
 - **Phase 16** — Computer use: closed by the user on 2026-11-13 (`898553d`, follow-ups `ef0098f`, `9046b25`, `6afc299`, `7af87f7`; every check green on Windows). The exit check was **not fully passed**: with the local Strata `swift-iq2_xs` the model opened Notepad and typed the text but never managed the Save dialog (its clicking isn't precise enough); the check with Claude and the Ctrl+Alt+Esc check by hand weren't done (Stop from the app worked). See Phase 16's notes.
 - **Phase 17** — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`. CI is green on Windows, macOS and Ubuntu. Releases v0.1.0 and v0.1.1 were published from the public repo `sitefactorydk-collab/oxide`. The macOS and Linux installer checks were deferred by the user.
-- **Last completed:** Phase 18 — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19). Every check is green on Windows and every manual check passed. Commit: "phase 18: hardening & polish" (`phase18-close.cmd`).
-- **Next phase:** Phase 19 — Generation endpoints & media generation (after the Vitest 5 maintenance step; ESLint 10 waits for plugin support).
+- **Phase 18** — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19, `ff92037`). Every check is green on Windows and every manual check passed. Then the Vitest 5 maintenance step (`a4615c4`, pushed; ESLint 10 waits for plugin support).
+- **Current:** Phase 19 — Generation endpoints & media generation: **partial** (2026-11-19). It is built and tested on the agent side. `scripts\win\phase19.cmd` runs the Windows checks and commits "phase 19: generation endpoints & media generation". The manual exit check is still open. OpenAI's Videos API (Sora) was shut down on 2026-09-24, so the video check needs a `/videos`-compatible gateway.
+- **Next phase:** finish Phase 19's exit check, then Phase 20 — Utility Apps: runtime and gallery.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -38,7 +39,98 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Chrome extension in the cloud container** (Phase 14): `crates.io` and npm are unreachable, but TypeScript and Prettier work when staged from the device (`node_modules/typescript`, `node_modules/prettier`); `node scripts/build-extension.mjs` builds `extension/dist`, and Chrome for Testing (`/usr/bin/google-chrome`) loads it unpacked for `crates/oxide-bridge/tests/real_chrome.rs`.
 - **Docker in the cloud container** (Phase 12b): `dockerd` runs there (start it with `nohup dockerd &`), but Docker Hub isn't reachable. Make a stand-in command image with `tar -c --one-file-system … / | docker import - oxide-test:local` and build a stand-in file server image from it; then run the ignored real-Docker tests with `OXIDE_SANDBOX_IMAGE` / `OXIDE_SANDBOX_FILES_IMAGE`. The harness `~/oxide-linux` has `oxide-sandbox` as a member.
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
+- **Linux harness after Phase 18** (Phase 19): `logs\linux-vendor.tgz` has no `dbus-secret-service`, so in `~/oxide-linux` `crates/oxide-store` is a folder with symlinked `src` and `migrations` and a `Cargo.toml` whose `secret-service` feature is `[]`. Start without the repo's `Cargo.lock` (cargo resolves offline from the vendor folder). Mirror tarball: exclude `src-tauri/binaries`, `docs/ui-parity`, `docs/*.json` and `extension/dist` too (they are large). `src-tauri` files are formatted with `rustfmt --edition 2024 --config-path rustfmt.toml <files>`.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 19 — Generation endpoints & media generation — 2026-11-19
+Status: **partial**: built and tested on the agent side. Every Rust test passes on Linux (library crates, clippy `-D warnings`, fmt, and the acl/CSP tests in a scratch crate); tsc, ESLint and Prettier pass on the device. `scripts\win\phase19.cmd` does the rest:
+- it regenerates the bindings and runs every check and vite build on Windows;
+- it commits with `logs\commit-msg-phase19.txt` only when all of that passes (no push);
+- it then starts the app for the manual exit check.
+
+The exit check is still open (see below).
+
+**API check (2026-11-19, OpenAI's reference at developers.openai.com):**
+- **OpenAI shut down the Videos API (Sora 2) on 2026-09-24.** No one-to-one replacement exists. Oxide's `/videos` client follows OpenAI's last published shape: JSON `POST /videos` {model, prompt, `seconds` as a string, size, `input_reference.image_url`}, then `GET /videos/{id}` (`queued`/`in_progress`/`completed`/`failed`, `progress`), then `GET /videos/{id}/content`. Gateways that kept that API work with it (CometAPI, haimaker, apiyi, LLM Gateway, …). The video exit check therefore needs such an endpoint, **not OpenAI**.
+- `gpt-image-1` was shut down on 2026-10-23, so the default image model is `gpt-image-2`. GPT image models always return base64 and reject `response_format`, so Oxide never sends it. It reads `b64_json`, or downloads `url` (without the key).
+- `/audio/speech` takes `input` up to 4096 characters, a voice, `response_format` (mp3/opus/aac/flac/wav/pcm), `instructions` and `speed` (0.25–4). `tts-1`, `tts-1-hd` and `gpt-4o-mini-tts` are announced to shut down on 2027-01-06.
+
+Exit criteria:
+- [ ] In a chat on Windows, each of these works against endpoints set in Settings → Generation:
+  - "make an image of …": a local server if one offers `/images/generations`, else OpenAI;
+  - "make a 5-second video of …": a `/videos`-compatible gateway (see above);
+  - "read this paragraph aloud": a local TTS server or OpenAI.
+- [ ] Changing a default changes which model and endpoint are used. Check the Request in the tool line and the endpoint's own log.
+
+Done:
+- **oxide-llm `generation.rs`:**
+  - `generate_images`: JSON to `/images/generations`. With reference images it sends multipart to `/images/edits`, as `image` for one image and `image[]` for several (up to 16).
+  - `generate_speech`, `generate_video` (polling every 5 s, up to 20 min, with a progress callback) and `list_model_ids` (all of `GET /models`, image, speech and video models included).
+  - 404, 405 and 501 answers that don't mention a model become "this endpoint doesn't offer … (/path)".
+  - A finished video comes from `/content`, or else from the job's `video_url`/`url`.
+  - Results are capped at 200 MB. A new `LlmError::Generation` carries plain messages.
+  - `http::Multipart` is shared with `transcribe.rs`. The test server can send binary replies.
+- **oxide-core:**
+  - `generation.rs`: `GenerationKind`, `GenerationEndpoint` (provider id or custom URL, plus model) and `GenerationSettings` (four endpoints, voice, audio format) as `AppSettings.generation`.
+  - Also there: `GenerationTest`, `ToolProgress`, and the tool names and `GENERATION_SWITCH`.
+  - `StreamEvent::ToolProgress` and `ToolUsageKind::Generation`, stored as "generation" in the tool log.
+- **oxide-agent:**
+  - `Generation` resolves endpoints. A custom URL wins over a provider; its key comes from the keychain entry `generation:<kind>`, else the provider's key. Anthropic endpoints are refused with a reason.
+  - `test` checks the model against the endpoint's list and generates nothing, so it costs nothing. `models` gives the model list, and `run` runs the three tools.
+  - Generated images are stored like attachments, so models get an image they accept. When the stored copy was scaled, the original is kept as `<file>.original` for downloading. Video and audio are stored unchanged (`save_media`).
+  - Tool results are text plus an `Image` block, or a `Document` block with `video/*` or `audio/*`. Providers turn those into "can't be read by this model" text.
+  - `AttachmentStore::read_file` serves the player and downloads (it prefers `.original`).
+  - Chat: each kind that is set up gets its tool, unless the "+" menu's `generation` switch or a tool's own name is in `disabledBuiltins`.
+  - Each call asks, like `run_python`, with "Allow always for this chat". Scheduled tasks set to run without asking don't ask.
+  - `use_attached_images` / `use_attached_image` take the newest images in the chat. Those are the user's attachments or images made earlier, up to 4 (a video takes 1).
+  - A video's progress streams as `ToolProgress`, and Stop ends the wait. Usage labels are the prompt's first line.
+  - Delete all removes the `generation:*` keys.
+- **src-tauri:**
+  - Commands `generation_keys`, `set_generation_key`, `test_generation`, `generation_models`, `attachment_media` (base64 for a `blob:` URL) and `save_attachment_file` (a save dialog).
+  - Capabilities updated. The CSP gains `media-src 'self' blob:`, and `acl.rs` checks it.
+- **Frontend:**
+  - Settings → Generation (`features/generation/GenerationSection.tsx`) has four cards: Text, Image, Video, Audio. Each header shows the chosen model.
+  - Each card has an endpoint (non-Anthropic providers), a custom URL, the model (suggestions plus **List models**), its own API key (Save/Remove), and **Test**. Audio adds the voice and format.
+  - The "+" menu's **Generate media** appears when a kind is set up.
+  - Tool lines say "Making an image", "Making a video" and "Reading aloud" with the prompt, and show the progress ("Making the video 42%").
+  - Under the line (`GeneratedMedia`): the images with Download, and video and audio players with Download.
+  - "Used in this chat" shows "Generated media". The nav label is translated (`section.generation` in en and da).
+- **Tests:**
+  - Rust: llm generation (9), agent generation (5: resolution and keys, Test, all three tools stored, failures), `generation_tools_are_offered_ask_and_store_their_results` (chat), core settings (3), Delete all's key names, and acl's `media-src`.
+  - Vitest: `features/generation/Generation.test.tsx` covers Settings → Generation, video progress → player → download, and the headlines and usage rows. The fake is `src/test/fakeGeneration.ts`.
+
+Deviations from PLAN.md (and why):
+- **Video isn't checked against OpenAI**, which no longer offers it (see above).
+- **Test doesn't generate.** It lists the endpoint's models and looks for the chosen one. A real generation costs money, and the first chat call shows real errors anyway.
+- **The Text endpoint isn't used by chats.** It is the default for Utility Apps (Phase 20). Chats keep their own model, as the plan says.
+- **Reference images are the newest images in the chat** (the model sets `use_attached_images`). Models don't see attachment paths, so they can't pick a file.
+- **Video is sent as JSON, not multipart.** OpenAI's reference lists JSON, and the gateways checked accept it.
+
+Known issues / TODO carried forward:
+- Generated files stay in the attachments folder when a chat is deleted (the existing per-chat sweeping issue from Phase 4). Delete all removes them.
+- Speech is one request of at most 4096 characters. The model is told to split longer text over several calls.
+- A stopped video job may still finish (and be billed) on the server. Oxide only stops waiting.
+- The player loads the whole file over IPC as base64 (up to 200 MB). That is fine for seconds-long clips; a streaming URI scheme would be better for long media.
+- The scheduled task dialog has no "Generate media" switch. Runs use whatever the endpoint settings allow.
+
+Notes for Phase 20:
+- `oxide_agent::Generation` is the backend for the Utility Apps SDK's image, video and audio calls. `run` takes the tool input shape, and `endpoint(kind, &GenerationEndpoint)` resolves per-app overrides: pass the app's endpoint instead of the global one.
+- Per-app keys need their own keychain names (for example `app:<id>:generation:<kind>`). Delete all must remove them, and `data::secret_names` should learn the pattern.
+- `GenerationSettings.text` is the default for apps' text generation. Resolve it with `Generation::endpoint(GenerationKind::Text, …)` and call it with `oxide_llm::connect` and `complete_text` or `stream`.
+- New user-facing strings go through `useT` only for the shell, as before.
+
+**Windows runs of `phase19.cmd`:**
+- **11:52:**
+  - The bindings regenerated cleanly. fmt, clippy, typecheck, lint and vite build passed.
+  - Two of the new Vitest tests were wrong: the endpoint was picked before the provider list loaded, and the fake video was stored before `renderApp`, which resets the fake backend. Both are fixed.
+  - `oxide-mcp`'s Phase 10 test `install_configure_toggle_update_uninstall` failed with os error 32.
+- **12:23:** everything passed except that same test, again.
+- **`scripts\win\ext-diag.cmd` (12:43):** run alone, the test passed 3 out of 3 times in 0.3 s, and no mock server was left running. It fails only beside the binary's other two tests, one of which starts a real `node` server.
+  - The kill path is sound: a Job Object with `KILL_ON_JOB_CLOSE`, a non-inheritable job handle, a kill after a 2 s grace period, and std's spawn lock against handle leaks. So the cause is unconfirmed (a scanner, or something in parallel spawning).
+  - **Change:** `crates/oxide-mcp/tests/extensions.rs` now runs its three tests one at a time (a shared `tokio::sync::Mutex`). They test install flows, not concurrency.
+  - Known issue: if users ever see "the installed version couldn't be replaced" while updating an extension, look here again.
+
+Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl/CSP in a scratch crate) tsc ✅ eslint ✅ prettier ✅. Windows (`phase19.cmd`): all green except the flaky extensions test (fixed as above; third run pending). Manual exit check: pending.
 
 ## Maintenance — Vitest 5 — 2026-11-19
 Between Phase 18 and Phase 19. It closes the last `npm audit` findings, which were dev-only: Vitest ≤ 4.1.10, @vitest/mocker and tinypool (2 critical).

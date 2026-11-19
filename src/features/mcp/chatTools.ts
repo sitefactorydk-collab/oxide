@@ -107,8 +107,20 @@ export function useToolSwitches(conversationId: string | undefined) {
         : [...new Set([...tools.disabledBuiltins, "save_skill"])],
     });
 
+  /** Image, video and audio generation ("Generate media" in the "+" menu, when set up). */
+  const generationOn = !tools.disabledBuiltins.includes("generation");
+  const toggleGeneration = (on: boolean) =>
+    set({
+      ...tools,
+      disabledBuiltins: on
+        ? tools.disabledBuiltins.filter((b) => b !== "generation")
+        : [...new Set([...tools.disabledBuiltins, "generation"])],
+    });
+
   return {
     tools,
+    generationOn,
+    toggleGeneration,
     saveSkillsOn,
     toggleSaveSkills,
     chromeOn,

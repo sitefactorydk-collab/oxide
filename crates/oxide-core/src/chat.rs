@@ -159,6 +159,11 @@ pub enum StreamEvent {
     ToolRunning {
         id: String,
     },
+    /// How far a long tool call has come (a video being made).
+    ToolProgress {
+        id: String,
+        progress: crate::generation::ToolProgress,
+    },
     /// A tool call finished. `content` is what the model sees.
     #[serde(rename_all = "camelCase")]
     ToolResult {

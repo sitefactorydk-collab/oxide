@@ -202,6 +202,18 @@ export const CHROME_TOOL_VERBS: Record<string, [string, string]> = {
   get_console: ["Reading Chrome's console", "Read Chrome's console"],
 };
 
+/** Oxide's generation tools (Phase 19): verbs while running and after. */
+export const GENERATION_TOOL_VERBS: Record<string, [string, string]> = {
+  generate_image: ["Making an image", "Made an image"],
+  generate_video: ["Making a video", "Made a video"],
+  generate_audio: ["Reading aloud", "Read aloud"],
+};
+
+/** Whether a call is one of the generation tools. */
+export function isGenerationCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
+  return call.server === null && call.tool in GENERATION_TOOL_VERBS;
+}
+
 /** Whether a call is one of the Chrome extension's. */
 export function isChromeCall(call: Pick<ToolCallView, "tool" | "server">): boolean {
   return call.server === "chrome" && call.tool in CHROME_TOOL_VERBS;
@@ -257,6 +269,11 @@ export function callDetail(call: Pick<ToolCallView, "tool" | "server" | "inputJs
     return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
   };
   if (call.tool === "web_search") return str("query") ?? "";
+  if (isGenerationCall(call)) {
+    const text = str("prompt") ?? str("text") ?? "";
+    const line = text.split("\n")[0] ?? "";
+    return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+  }
   if (call.tool === "web_fetch") return str("url") ?? "";
   if (call.tool === "project_search") return str("query") ?? "";
   if (call.server === null && call.tool === "move_file") {
@@ -396,6 +413,7 @@ export type ToolKind =
   | "browser"
   | "chrome"
   | "computer"
+  | "generation"
   | "connector";
 
 export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind {
@@ -415,6 +433,7 @@ export function toolKind(call: Pick<ToolCallView, "tool" | "server">): ToolKind 
   if (isBrowserCall(call)) return "browser";
   if (isChromeCall(call)) return "chrome";
   if (call.server === "computer" && call.tool === "computer") return "computer";
+  if (isGenerationCall(call)) return "generation";
   return "connector";
 }
 
@@ -478,6 +497,10 @@ export function callHeadline(call: ToolCallView): { action: string; detail: stri
       const [doing, did] = computerVerbs(call.inputJson);
       return { action: busy ? doing : did, detail: computerDetail(call.inputJson) };
     }
+    case "generation": {
+      const [doing, did] = GENERATION_TOOL_VERBS[call.tool] ?? ["Generating", "Generated"];
+      return { action: busy ? doing : did, detail };
+    }
     case "connector": {
       const name = call.title ?? call.tool;
       return { action: call.server ? `${name}` : name, detail };
@@ -536,7 +559,9 @@ export function usageRows(usage: ToolUsage[]): UsageRow[] {
                               ? "Chrome"
                               : u.kind === "computer"
                                 ? "Computer"
-                                : (u.server ?? "Connector");
+                                : u.kind === "generation"
+                                  ? "Generated media"
+                                  : (u.server ?? "Connector");
     const row = rows.get(key) ?? {
       key,
       kind: u.kind,

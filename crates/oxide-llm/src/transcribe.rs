@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::Endpoint;
 use crate::LlmError;
-use crate::http::{USER_AGENT, describe, status_error};
+use crate::http::{Multipart, USER_AGENT, describe, status_error};
 
 /// Largest recording sent (OpenAI's limit is 25 MB).
 pub const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
@@ -39,48 +39,6 @@ fn file_name(mime: &str) -> &'static str {
     }
 }
 
-/// Builds a `multipart/form-data` body. Returns (content type, body).
-fn multipart(fields: &[(&str, &str)], recording: &Recording<'_>) -> (String, Vec<u8>) {
-    let boundary = format!("oxide-{:016x}", rand_u64());
-    let mut body = Vec::with_capacity(recording.bytes.len() + 512);
-    for (name, value) in fields {
-        body.extend_from_slice(
-            format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
-            )
-            .as_bytes(),
-        );
-    }
-    let mime: String = recording
-        .mime
-        .chars()
-        .filter(|c| !c.is_control() && *c != '"')
-        .collect();
-    body.extend_from_slice(
-        format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
-            file_name(&mime),
-            if mime.is_empty() { "application/octet-stream" } else { &mime }
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(recording.bytes);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    (format!("multipart/form-data; boundary={boundary}"), body)
-}
-
-fn rand_u64() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
-    );
-    h.finish()
-}
-
 /// Turns a recording into text with `model` on `endpoint`. `language` is an ISO-639-1 hint.
 pub async fn transcribe(
     endpoint: &Endpoint,
@@ -108,7 +66,13 @@ pub async fn transcribe(
     if let Some(lang) = language.map(str::trim).filter(|l| !l.is_empty()) {
         fields.push(("language", lang));
     }
-    let (content_type, body) = multipart(&fields, &recording);
+    let mut form = Multipart::new();
+    for (name, value) in &fields {
+        form.text(name, value);
+    }
+    let mime = recording.mime.trim();
+    form.file("file", file_name(mime), mime, recording.bytes);
+    let (content_type, body) = form.finish();
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(TIMEOUT)

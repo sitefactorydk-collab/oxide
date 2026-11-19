@@ -32,6 +32,7 @@ use oxide_core::{
     ModelInfo, ProviderKind, Role, StopReason, StreamEvent, TaskItem, TaskList, TaskStatus,
     ThinkingStyle, ToolApprovalRequest, ToolUsageKind, Usage,
 };
+use oxide_core::{GENERATION_SWITCH, GenerationKind, MediaSource};
 use oxide_llm::capabilities::{anthropic_computer_flavor, anthropic_curated};
 use oxide_llm::{
     ChatEvent, ChatMessage, ChatRequest, ContextNumbers, Provider, Thinking, ToolResultClearing,
@@ -865,6 +866,21 @@ impl ChatService {
                 && chat_tools.allows_builtin(RUN_PYTHON)
             {
                 own.push(python_entry());
+            }
+            // Image, video and audio generation: a tool per kind set up in Settings →
+            // Generation (Phase 19).
+            if self.tools.generation().is_some() && chat_tools.allows_builtin(GENERATION_SWITCH) {
+                for kind in [
+                    GenerationKind::Image,
+                    GenerationKind::Video,
+                    GenerationKind::Audio,
+                ] {
+                    if settings.generation.endpoint(kind).is_set()
+                        && kind.tool().is_some_and(|t| chat_tools.allows_builtin(t))
+                    {
+                        own.push(crate::generation::tool_entry(kind, &settings.generation));
+                    }
+                }
             }
             // The Docker sandbox. `sandbox_exec` is offered even while Docker is down, so a
             // request to use it ends in Docker's own message instead of a missing tool.
@@ -2037,6 +2053,8 @@ impl ChatService {
             ToolKind::Builtin(Builtin::File(op)) => !op.read_only(),
             // Python code runs as the user, unsandboxed: each run asks until "Allow always".
             ToolKind::Builtin(Builtin::RunPython) => true,
+            // Generating costs money (video a lot): each call asks until "Allow always".
+            ToolKind::Builtin(Builtin::Generate(_)) => true,
             ToolKind::Builtin(Builtin::RunCommand) => match command_of(input) {
                 Ok(c) => !command_allowed(&c, &setup.settings.shell.allowlist),
                 // Runs (and fails with a message) without bothering the user.
@@ -2383,6 +2401,14 @@ impl ChatService {
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
+                } else if let ToolKind::Builtin(Builtin::Generate(kind)) = r.entry.kind {
+                    let started = Instant::now();
+                    let mut out = self
+                        .run_generation(cid, &r.call.id, kind, &r.input, settings, &mut cancel)
+                        .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
                 } else if let ToolKind::Browser { tool } = &r.entry.kind {
                     let started = Instant::now();
                     let input = capped_input(&r.entry, &r.input, cap);
@@ -2480,6 +2506,80 @@ impl ChatService {
     }
 
     /// Runs a file tool, the task list or a shell command for a chat.
+    /// Makes an image, a video or audio (Phase 19). Reference images are the newest images in
+    /// the chat; a video's progress is shown on its line; Stop ends the wait.
+    async fn run_generation(
+        &self,
+        cid: &str,
+        call_id: &str,
+        kind: GenerationKind,
+        input: &Value,
+        settings: &AppSettings,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> ToolOutput {
+        let Some(generation) = self.tools.generation() else {
+            return ToolOutput::error("Generation isn't available.");
+        };
+        let wants_images = ["use_attached_images", "use_attached_image"]
+            .iter()
+            .any(|k| input.get(*k).and_then(Value::as_bool) == Some(true));
+        let mut references = Vec::new();
+        if wants_images && kind != GenerationKind::Audio {
+            let found = self.recent_images(cid).await;
+            if found.is_empty() {
+                return ToolOutput::error(
+                    "There are no images in this chat to start from. Ask the user to attach \
+                     one, or describe the image instead.",
+                );
+            }
+            let limit = if kind == GenerationKind::Video {
+                1
+            } else {
+                crate::generation::MAX_REFERENCES
+            };
+            let skip = found.len().saturating_sub(limit);
+            references = crate::generation::load_references(
+                generation.attachments(),
+                found[skip..].to_vec(),
+            )
+            .await;
+            if kind == GenerationKind::Video {
+                references.reverse();
+            }
+        }
+        let progress = |p: oxide_core::ToolProgress| {
+            self.emit(
+                cid,
+                StreamEvent::ToolProgress {
+                    id: call_id.to_owned(),
+                    progress: p,
+                },
+            );
+        };
+        let run = generation.run(kind, input, &settings.generation, references, &progress);
+        tokio::select! {
+            out = run => out,
+            _ = cancel.wait_for(|stopped| *stopped) => {
+                ToolOutput::error("Stopped before it finished.")
+            }
+        }
+    }
+
+    /// The images of the newest message in the chat that has any (the user's attachments or
+    /// images made earlier), oldest first.
+    async fn recent_images(&self, cid: &str) -> Vec<(String, MediaSource)> {
+        let mut messages = self.store.list_messages(cid).await.unwrap_or_default();
+        messages.sort_by_key(|m| m.created_at);
+        for m in messages.iter().rev() {
+            let mut found = Vec::new();
+            crate::generation::images_in(&m.content, &mut found);
+            if !found.is_empty() {
+                return found;
+            }
+        }
+        Vec::new()
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn run_workspace_tool(
         &self,
@@ -2778,6 +2878,7 @@ impl ChatService {
                     ToolKind::Browser { ref tool } => browser_tools::browser_label(tool, input),
                     ToolKind::Chrome { ref tool } => chrome_tools::chrome_label(tool, input),
                     ToolKind::Computer => computer_tools::computer_label(input),
+                    ToolKind::Builtin(Builtin::Generate(_)) => crate::generation::label(input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,
@@ -7725,5 +7826,115 @@ class Agent:
             other => panic!("fails: {other:?}"),
         }
         assert_eq!(f.fake.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn generation_tools_are_offered_ask_and_store_their_results() {
+        let (base, seen) = crate::generation::tests::serve(vec![(
+            "200 OK",
+            "application/json",
+            format!(
+                r#"{{"data":[{{"b64_json":"{}"}}]}}"#,
+                crate::generation::tests::PNG_1X1
+            )
+            .into_bytes(),
+        )])
+        .await;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = Store::open_in_memory().await.expect("store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let fake = FakeProvider::new(vec![
+            turn(
+                call("g1", "generate_image", r#"{"prompt":"a red fox in snow"}"#),
+                StopReason::ToolUse,
+            ),
+            turn(vec![text("Here it is.")], StopReason::EndTurn),
+            title_step(),
+        ]);
+        let registry = Arc::new(ModelRegistry::with_connector(
+            store.clone(),
+            secrets.clone(),
+            fake_connector(fake.clone()),
+        ));
+        let sink = Arc::new(Recorder::default());
+        let generation = crate::generation::Generation::new(
+            store.clone(),
+            secrets.clone(),
+            crate::attachments::AttachmentStore::new(tmp.path().join("att")),
+        );
+        let tools = Tools::new(None, secrets, None).with_generation(generation);
+        let service = ChatService::new(store.clone(), registry, sink.clone(), tools);
+        let mut settings = store.app_settings().await.expect("settings");
+        settings.generation.image = oxide_core::GenerationEndpoint {
+            provider_id: None,
+            base_url: base.clone(),
+            model: "gpt-image-2".into(),
+        };
+        // Audio is set up too; video isn't, so it isn't offered.
+        settings.generation.audio.base_url = base;
+        store.save_app_settings(settings).await.expect("saves");
+        let (chat, first) = store
+            .start_conversation(StartConversation {
+                text: "Draw a fox".into(),
+                model: "lmstudio/fake-model".into(),
+                project_id: None,
+                attachments: Vec::new(),
+                folders: vec![],
+                tools: None,
+            })
+            .await
+            .expect("chat");
+        let f = Fixture {
+            store,
+            service,
+            fake,
+            sink,
+            chat,
+            first,
+        };
+        f.service
+            .reply(&f.chat.id, &f.first.id, GenerateOptions::default())
+            .await
+            .expect("starts");
+        // Generating costs money: it asks first.
+        let req = wait_approval(&f, "g1").await;
+        assert_eq!(req.tool, "generate_image");
+        assert!(req.input_json.contains("red fox"));
+        let offered: Vec<String> = f.fake.requests()[0]
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert!(
+            offered.contains(&"generate_image".to_owned()),
+            "{offered:?}"
+        );
+        assert!(
+            offered.contains(&"generate_audio".to_owned()),
+            "{offered:?}"
+        );
+        assert!(
+            !offered.contains(&"generate_video".to_owned()),
+            "{offered:?}"
+        );
+        assert!(
+            f.service
+                .answer_approval(&f.chat.id, "g1", ApprovalDecision::AllowOnce)
+        );
+        f.sink.wait_finished().await;
+        let m = saved(&f);
+        let (r, bad) = result_of(&m, "g1");
+        assert!(!bad, "{r}");
+        assert!(r.contains("Made 1 image with gpt-image-2"), "{r}");
+        assert!(m.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolResult { tool_use_id, content, .. }
+                if tool_use_id == "g1"
+                    && content.iter().any(|c| matches!(c, ContentBlock::Image { .. }))
+        )));
+        let used = f.store.tool_usage(&f.chat.id).await.expect("usage");
+        assert!(used.iter().any(|u| u.kind == ToolUsageKind::Generation
+            && u.label.as_deref() == Some("a red fox in snow")));
+        assert!(seen.lock().await[0].starts_with("POST /v1/images/generations"));
     }
 }
