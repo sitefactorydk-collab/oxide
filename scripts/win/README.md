@@ -32,6 +32,8 @@ Double-click these in File Explorer. Each writes logs to `logs\` (git-ignored), 
 | `phase17.cmd` | Phase 17: makes the update signing key (once, `%USERPROFILE%\.tauri\oxide-updater.key`) and writes its public key into `tauri.conf.json`, pins uv for every target, bindings, the extension, checks, the Windows installers (`npx tauri build` → `target\release\bundle\nsis` and `msi`), commit when green, then opens the installers' folder | `phase17*`, `check*`, `commit*` |
 | `phase18.cmd` | Phase 18: stops a running dev app, `npm install`, bindings (diff in `phase18-bindings.diff`), `npm audit` report, checks, vite build, then starts the app for the manual checks (no commit) | `phase18*`, `npm-audit.*`, `check*`, `dev.log` |
 | `phase18-close.cmd` | Phase 18 close-out: npm audit fixes (KaTeX override, `npm audit fix`), checks, vite build, commit with `logs\commit-msg-phase18.txt` when green, push | `phase18-close*`, `npm-audit-after.txt`, `check*`, `commit*` |
+| `vitest5.cmd` | Maintenance: Vitest 5 (Node 22.12+ check, npm install, audit report, checks, vite build), commit with `logs\commit-msg-vitest5.txt` when green, push | `vitest5*`, `npm-audit-vitest5.txt`, `check*`, `commit*` |
+| `push.cmd` | `git push` in a console, so Git Credential Manager can sign in | (console) |
 | `phase0-finish.cmd` | Re-resolves deps, runs checks, commits Phase 0 when green, starts the app | `deps*`, `check*`, `commit*`, `dev.log` |
 
 Later phases add a `phaseN.cmd` that does the phase's setup, runs `check.ps1`, commits when green and starts the app.

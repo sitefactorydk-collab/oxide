@@ -1,4 +1,5 @@
 dist
+.vitest
 node_modules
 target
 src-tauri/gen

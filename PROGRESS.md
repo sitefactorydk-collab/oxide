@@ -11,7 +11,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 16** — Computer use: closed by the user on 2026-11-13 (`898553d`, follow-ups `ef0098f`, `9046b25`, `6afc299`, `7af87f7`; every check green on Windows). The exit check was **not fully passed**: with the local Strata `swift-iq2_xs` the model opened Notepad and typed the text but never managed the Save dialog (its clicking isn't precise enough); the check with Claude and the Ctrl+Alt+Esc check by hand weren't done (Stop from the app worked). See Phase 16's notes.
 - **Phase 17** — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`. CI is green on Windows, macOS and Ubuntu. Releases v0.1.0 and v0.1.1 were published from the public repo `sitefactorydk-collab/oxide`. The macOS and Linux installer checks were deferred by the user.
 - **Last completed:** Phase 18 — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19). Every check is green on Windows and every manual check passed. Commit: "phase 18: hardening & polish" (`phase18-close.cmd`).
-- **Next phase:** before Phase 19, upgrade Vitest to 5 and ESLint to 10 as their own step (it closes the remaining `npm audit` findings). Then Phase 19 — Generation endpoints & media generation.
+- **Next phase:** Phase 19 — Generation endpoints & media generation (after the Vitest 5 maintenance step; ESLint 10 waits for plugin support).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -39,6 +39,18 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Docker in the cloud container** (Phase 12b): `dockerd` runs there (start it with `nohup dockerd &`), but Docker Hub isn't reachable. Make a stand-in command image with `tar -c --one-file-system … / | docker import - oxide-test:local` and build a stand-in file server image from it; then run the ignored real-Docker tests with `OXIDE_SANDBOX_IMAGE` / `OXIDE_SANDBOX_FILES_IMAGE`. The harness `~/oxide-linux` has `oxide-sandbox` as a member.
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Maintenance — Vitest 5 — 2026-11-19
+Between Phase 18 and Phase 19. It closes the last `npm audit` findings, which were dev-only: Vitest ≤ 4.1.10, @vitest/mocker and tinypool (2 critical).
+- `vitest` goes from `^3.2.0` to `^5.1.1`. Vitest 5 needs Node 22.12+ and Vite 6.4+ (Oxide has Vite 7.3); `scripts\win\vitest5.cmd` checks the Node version.
+- `.vitest/` (Vitest 5's output folder) is ignored by git, Prettier and ESLint.
+- Vitest 5's new defaults that touch Oxide:
+  - `clearMocks` is on, so mock call history is cleared before each test.
+  - `jsdom` globals assignments now reach the DOM.
+  - The tests already put `vi.mock` at the top level and use none of the removed APIs.
+- **ESLint 10 is not done.** `eslint-plugin-react-hooks` 5.x declares ESLint ≤ 9, and newer releases bring the React Compiler rules. Revisit when the plugin officially supports ESLint 10. ESLint 9 has no open audit findings.
+- Also in this commit: `scripts\win\push.cmd`, which runs `git push` in a console so Git Credential Manager can sign in. It was needed on the new PC, where the first push from a script failed with "Invalid username or token". git's `user.email` was fixed on 2026-11-19; `ff92037` carries the placeholder email.
+- Phase 18's CI run #8 (`ff92037`) is green on all three systems (11 m 22 s).
 
 ## Phase 18 — Hardening & polish (+ usage dashboard, HTML export, dictation) — 2026-11-15/19
 Status: **done**. Every check is green on Windows (`phase18.cmd`, 2026-11-19 08:25–08:38), and the user passed every manual check (08:54). Committed by `scripts\win\phase18-close.cmd` (message `logs\commit-msg-phase18.txt`).
