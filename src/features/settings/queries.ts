@@ -96,7 +96,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updates: { checkAutomatically: true },
   dictation: { enabled: true, providerId: null, model: "whisper-1", language: "" },
   generation: {
-    text: { providerId: null, baseUrl: "", model: "" },
     image: { providerId: null, baseUrl: "", model: "gpt-image-2" },
     video: { providerId: null, baseUrl: "", model: "" },
     audio: { providerId: null, baseUrl: "", model: "gpt-4o-mini-tts" },

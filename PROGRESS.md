@@ -11,7 +11,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 16** — Computer use: closed by the user on 2026-11-13 (`898553d`, follow-ups `ef0098f`, `9046b25`, `6afc299`, `7af87f7`; every check green on Windows). The exit check was **not fully passed**: with the local Strata `swift-iq2_xs` the model opened Notepad and typed the text but never managed the Save dialog (its clicking isn't precise enough); the check with Claude and the Ctrl+Alt+Esc check by hand weren't done (Stop from the app worked). See Phase 16's notes.
 - **Phase 17** — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`. CI is green on Windows, macOS and Ubuntu. Releases v0.1.0 and v0.1.1 were published from the public repo `sitefactorydk-collab/oxide`. The macOS and Linux installer checks were deferred by the user.
 - **Phase 18** — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19, `ff92037`). Every check is green on Windows and every manual check passed. Then the Vitest 5 maintenance step (`a4615c4`, pushed; ESLint 10 waits for plugin support).
-- **Current:** Phase 19 — Generation endpoints & media generation: **partial** (2026-11-19). It is built and tested on the agent side. `scripts\win\phase19.cmd` runs the Windows checks and commits "phase 19: generation endpoints & media generation". The manual exit check is still open. OpenAI's Videos API (Sora) was shut down on 2026-09-24, so the video check needs a `/videos`-compatible gateway.
+- **Current:** Phase 19 — Generation endpoints & media generation: **partial** (2026-11-19). It is built and tested on the agent side. Every check is green on Windows, and it is committed as `dcd3bdb` (not pushed). The manual exit check is still open. OpenAI's Videos API (Sora) was shut down on 2026-09-24, so the video check needs a `/videos`-compatible gateway.
+- **Phase 19 follow-up (2026-11-19 evening):** at the user's request, the page is renamed **Settings → Media generation** and the Text group is dropped (text comes from Providers and Models). Script: `scripts\win\phase19-media.cmd`, message `logs\commit-msg-phase19-media.txt`.
 - **Next phase:** finish Phase 19's exit check, then Phase 20 — Utility Apps: runtime and gallery.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -56,7 +57,7 @@ The exit check is still open (see below).
 - `/audio/speech` takes `input` up to 4096 characters, a voice, `response_format` (mp3/opus/aac/flac/wav/pcm), `instructions` and `speed` (0.25–4). `tts-1`, `tts-1-hd` and `gpt-4o-mini-tts` are announced to shut down on 2027-01-06.
 
 Exit criteria:
-- [ ] In a chat on Windows, each of these works against endpoints set in Settings → Generation:
+- [ ] In a chat on Windows, each of these works against endpoints set in Settings → Media generation:
   - "make an image of …": a local server if one offers `/images/generations`, else OpenAI;
   - "make a 5-second video of …": a `/videos`-compatible gateway (see above);
   - "read this paragraph aloud": a local TTS server or OpenAI.
@@ -89,7 +90,7 @@ Done:
   - Commands `generation_keys`, `set_generation_key`, `test_generation`, `generation_models`, `attachment_media` (base64 for a `blob:` URL) and `save_attachment_file` (a save dialog).
   - Capabilities updated. The CSP gains `media-src 'self' blob:`, and `acl.rs` checks it.
 - **Frontend:**
-  - Settings → Generation (`features/generation/GenerationSection.tsx`) has four cards: Text, Image, Video, Audio. Each header shows the chosen model.
+  - Settings → Media generation (`features/generation/GenerationSection.tsx`) has three cards: Image, Video, Audio (the first build also had Text; see the follow-up below). Each header shows the chosen model.
   - Each card has an endpoint (non-Anthropic providers), a custom URL, the model (suggestions plus **List models**), its own API key (Save/Remove), and **Test**. Audio adds the voice and format.
   - The "+" menu's **Generate media** appears when a kind is set up.
   - Tool lines say "Making an image", "Making a video" and "Reading aloud" with the prompt, and show the progress ("Making the video 42%").
@@ -102,7 +103,7 @@ Done:
 Deviations from PLAN.md (and why):
 - **Video isn't checked against OpenAI**, which no longer offers it (see above).
 - **Test doesn't generate.** It lists the endpoint's models and looks for the chosen one. A real generation costs money, and the first chat call shows real errors anyway.
-- **The Text endpoint isn't used by chats.** It is the default for Utility Apps (Phase 20). Chats keep their own model, as the plan says.
+- **No Text endpoint** (dropped by the user after the first build): chats keep their own model, and Utility Apps pick a chat model from Providers and Models.
 - **Reference images are the newest images in the chat** (the model sets `use_attached_images`). Models don't see attachment paths, so they can't pick a file.
 - **Video is sent as JSON, not multipart.** OpenAI's reference lists JSON, and the gateways checked accept it.
 
@@ -116,7 +117,7 @@ Known issues / TODO carried forward:
 Notes for Phase 20:
 - `oxide_agent::Generation` is the backend for the Utility Apps SDK's image, video and audio calls. `run` takes the tool input shape, and `endpoint(kind, &GenerationEndpoint)` resolves per-app overrides: pass the app's endpoint instead of the global one.
 - Per-app keys need their own keychain names (for example `app:<id>:generation:<kind>`). Delete all must remove them, and `data::secret_names` should learn the pattern.
-- `GenerationSettings.text` is the default for apps' text generation. Resolve it with `Generation::endpoint(GenerationKind::Text, …)` and call it with `oxide_llm::connect` and `complete_text` or `stream`.
+- Apps' text generation uses a chat model from Providers and Models, through `ModelRegistry`. It is the per-app model, or by default the first available one or the one the app's manifest names. Phase 19's Text endpoint was dropped.
 - New user-facing strings go through `useT` only for the shell, as before.
 
 **Windows runs of `phase19.cmd`:**
@@ -130,7 +131,15 @@ Notes for Phase 20:
   - **Change:** `crates/oxide-mcp/tests/extensions.rs` now runs its three tests one at a time (a shared `tokio::sync::Mutex`). They test install flows, not concurrency.
   - Known issue: if users ever see "the installed version couldn't be replaced" while updating an extension, look here again.
 
-Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl/CSP in a scratch crate) tsc ✅ eslint ✅ prettier ✅. Windows (`phase19.cmd`): all green except the flaky extensions test (fixed as above; third run pending). Manual exit check: pending.
+Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl/CSP in a scratch crate) tsc ✅ eslint ✅ prettier ✅. Windows (`phase19.cmd`, third run 13:01–13:06): fmt ✅ prettier ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅; committed `dcd3bdb` (not pushed). Manual exit check: pending.
+
+**Follow-up: "Media generation" without Text (user's request, 2026-11-19 evening):**
+- Settings → Generation is now **Settings → Media generation** (the nav label in en and da; `section.generation` = "Media generation" / "Mediegenerering"). The route stays `/settings/generation`.
+- The **Text** group is gone: chats always used their own model, and text comes from Providers and Models. `GenerationKind` is now `image | video | audio`, and `GenerationKind::tool()` returns `&str`. `GenerationSettings` has no `text`. A `text` entry saved by the first build is ignored, and Delete all still removes the old keychain entry `generation:text`.
+- PLAN.md changes:
+  - Phase 20's per-app text model is a chat model from Providers and Models: the first available one, or the one the app's manifest names.
+  - Phase 21's builder model is picked in the builder.
+- Checked: Rust fmt, clippy and tests on Linux; tsc, ESLint and Prettier on the device. The Windows checks and commit run in `scripts\win\phase19-media.cmd`.
 
 ## Maintenance — Vitest 5 — 2026-11-19
 Between Phase 18 and Phase 19. It closes the last `npm audit` findings, which were dev-only: Vitest ≤ 4.1.10, @vitest/mocker and tinypool (2 critical).

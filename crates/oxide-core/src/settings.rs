@@ -353,7 +353,7 @@ pub struct AppSettings {
     pub updates: crate::data::UpdateSettings,
     /// Settings → Voice (dictation).
     pub dictation: DictationSettings,
-    /// Settings → Generation (Phase 19).
+    /// Settings → Media generation (Phase 19).
     pub generation: crate::generation::GenerationSettings,
 }
 

@@ -6,13 +6,17 @@ import { fakeGeneration, setFakeMedia } from "@/test/fakeGeneration";
 import { renderApp } from "@/test/renderApp";
 import { callHeadline, toolKind, usageRows } from "@/features/tools/toolView";
 
-describe("Settings → Generation", () => {
+describe("Settings → Media generation", () => {
   it("sets an endpoint, a model and a key per kind, and tests it", async () => {
     renderApp("/settings/generation");
-    // Four groups; Image is open, and each header shows its model or "Not set up".
+    // Three groups (text comes from the chat models); Image is open, and each header shows
+    // its model or "Not set up".
     const image = await screen.findByRole("region", { name: "Image generation" });
-    expect(screen.getByRole("region", { name: "Text generation" })).toHaveTextContent("Not set up");
-    expect(screen.getByRole("region", { name: "Video generation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Media generation" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Text generation" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Video generation" })).toHaveTextContent(
+      "Not set up",
+    );
     expect(screen.getByRole("region", { name: "Audio generation" })).toBeInTheDocument();
     expect(within(image).getByRole("button", { expanded: true })).toHaveTextContent("Not set up");
 

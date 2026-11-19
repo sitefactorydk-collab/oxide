@@ -64,7 +64,7 @@ export const en = {
   "section.connectors": "Connectors",
   "section.web-search": "Web search",
   "section.voice": "Voice",
-  "section.generation": "Generation",
+  "section.generation": "Media generation",
   "section.desktop": "Desktop",
   "section.extensions": "Extensions",
   "section.skills": "Skills",

@@ -156,7 +156,7 @@ fn check_endpoint(endpoint: &Endpoint, what: &str) -> Result<(), LlmError> {
     if endpoint.kind == ProviderKind::Anthropic {
         return Err(LlmError::Generation(format!(
             "Anthropic's API doesn't make {what}; pick an OpenAI-compatible endpoint in \
-             Settings → Generation"
+             Settings → Media generation"
         )));
     }
     if !(endpoint.base_url.starts_with("http://") || endpoint.base_url.starts_with("https://")) {

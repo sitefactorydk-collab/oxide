@@ -334,12 +334,14 @@ pub fn secret_names(provider_ids: &[String], mcp_servers: &[String]) -> Vec<Stri
             .map(|k| k.secret_name().to_owned()),
     );
     names.extend(mcp_servers.iter().map(|s| oxide_mcp::oauth::token_key(s)));
-    // Settings → Generation's own keys (Phase 19).
+    // Settings → Media generation's own keys (Phase 19).
     names.extend(
         oxide_core::GenerationKind::ALL
             .iter()
             .map(|k| k.secret_name()),
     );
+    // The first Phase 19 build also had a Text endpoint with a key of its own.
+    names.push("generation:text".to_owned());
     names.sort();
     names.dedup();
     names

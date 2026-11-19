@@ -71,10 +71,10 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     id: "generation",
-    label: "Generation",
+    label: "Media generation",
     icon: Wand2,
     blurb:
-      "The models that make text, images, video and audio, on any OpenAI-compatible endpoint. Chats use them through their generation tools.",
+      "The models that make images, video and audio, on any OpenAI-compatible endpoint. Chats use them through their generation tools.",
   },
   {
     id: "voice",

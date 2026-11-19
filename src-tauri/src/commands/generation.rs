@@ -1,4 +1,4 @@
-//! Settings → Generation (Phase 19): keys of its own per kind, Test, the model list, and the
+//! Settings → Media generation (Phase 19): keys of its own per kind, Test, the model list, and the
 //! generated files the chat shows (players and downloads).
 
 use base64::Engine;
@@ -34,7 +34,7 @@ pub async fn set_generation_key(
         .map_err(CommandError::Keychain)
 }
 
-/// Test in Settings → Generation: reaches the endpoint and looks for the model in its list.
+/// Test in Settings → Media generation: reaches the endpoint and looks for the model in its list.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_generation(

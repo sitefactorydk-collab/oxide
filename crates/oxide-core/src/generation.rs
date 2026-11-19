@@ -1,5 +1,6 @@
-//! Generation endpoints (Phase 19): the global defaults for text, image, video and audio
-//! generation in Settings → Generation, and the chat tools that use them.
+//! Media generation endpoints (Phase 19): the global defaults for image, video and audio
+//! generation in Settings → Media generation, and the chat tools that use them. Text comes
+//! from the chat models in Settings → Providers and Models.
 //!
 //! Every generation endpoint speaks the OpenAI-compatible API. An endpoint is either one of
 //! the endpoints in Settings → Providers, or a custom base URL; a key kept in the keychain
@@ -26,19 +27,17 @@ pub const DEFAULT_VOICE: &str = "alloy";
 /// Audio formats a speech endpoint is asked for (all play in the app).
 pub const AUDIO_FORMATS: [&str; 5] = ["mp3", "wav", "opus", "aac", "flac"];
 
-/// A kind of generation.
+/// A kind of media generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum GenerationKind {
-    Text,
     Image,
     Video,
     Audio,
 }
 
 impl GenerationKind {
-    pub const ALL: [GenerationKind; 4] = [
-        GenerationKind::Text,
+    pub const ALL: [GenerationKind; 3] = [
         GenerationKind::Image,
         GenerationKind::Video,
         GenerationKind::Audio,
@@ -46,7 +45,6 @@ impl GenerationKind {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            GenerationKind::Text => "text",
             GenerationKind::Image => "image",
             GenerationKind::Video => "video",
             GenerationKind::Audio => "audio",
@@ -58,13 +56,12 @@ impl GenerationKind {
         format!("generation:{}", self.as_str())
     }
 
-    /// The chat tool that uses this kind (`None` for text, which chats do themselves).
-    pub fn tool(self) -> Option<&'static str> {
+    /// The chat tool that uses this kind.
+    pub fn tool(self) -> &'static str {
         match self {
-            GenerationKind::Text => None,
-            GenerationKind::Image => Some(GENERATE_IMAGE),
-            GenerationKind::Video => Some(GENERATE_VIDEO),
-            GenerationKind::Audio => Some(GENERATE_AUDIO),
+            GenerationKind::Image => GENERATE_IMAGE,
+            GenerationKind::Video => GENERATE_VIDEO,
+            GenerationKind::Audio => GENERATE_AUDIO,
         }
     }
 
@@ -124,11 +121,10 @@ impl GenerationEndpoint {
     }
 }
 
-/// Settings → Generation.
+/// Settings → Media generation. (A `text` entry saved before it was dropped is ignored.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GenerationSettings {
-    pub text: GenerationEndpoint,
     pub image: GenerationEndpoint,
     pub video: GenerationEndpoint,
     pub audio: GenerationEndpoint,
@@ -141,7 +137,6 @@ pub struct GenerationSettings {
 impl Default for GenerationSettings {
     fn default() -> Self {
         Self {
-            text: GenerationEndpoint::default(),
             image: GenerationEndpoint::with_model(DEFAULT_IMAGE_MODEL),
             video: GenerationEndpoint::default(),
             audio: GenerationEndpoint::with_model(DEFAULT_AUDIO_MODEL),
@@ -154,7 +149,6 @@ impl Default for GenerationSettings {
 impl GenerationSettings {
     pub fn endpoint(&self, kind: GenerationKind) -> &GenerationEndpoint {
         match kind {
-            GenerationKind::Text => &self.text,
             GenerationKind::Image => &self.image,
             GenerationKind::Video => &self.video,
             GenerationKind::Audio => &self.audio,
@@ -162,7 +156,6 @@ impl GenerationSettings {
     }
 
     pub fn normalized(mut self) -> Self {
-        self.text = self.text.normalized();
         self.image = self.image.normalized();
         self.video = self.video.normalized();
         self.audio = self.audio.normalized();
@@ -182,7 +175,7 @@ impl GenerationSettings {
     }
 }
 
-/// The result of Test in Settings → Generation.
+/// The result of Test in Settings → Media generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationTest {
@@ -230,7 +223,10 @@ mod tests {
     #[test]
     fn settings_round_trip_and_fill_in_missing_fields() {
         let s: GenerationSettings =
-            serde_json::from_str(r#"{"video":{"baseUrl":"http://x/v1","model":"v"}}"#)
+            // `text` was saved by the first Phase 19 build; it is ignored now.
+            serde_json::from_str(
+                r#"{"text":{"model":"t"},"video":{"baseUrl":"http://x/v1","model":"v"}}"#,
+            )
                 .expect("parses");
         assert_eq!(s.video.model, "v");
         assert_eq!(s.audio.model, DEFAULT_AUDIO_MODEL);
@@ -242,9 +238,7 @@ mod tests {
     #[test]
     fn kinds_name_their_tools_and_keys() {
         for k in GenerationKind::ALL {
-            if let Some(t) = k.tool() {
-                assert_eq!(GenerationKind::of_tool(t), Some(k));
-            }
+            assert_eq!(GenerationKind::of_tool(k.tool()), Some(k));
         }
         assert_eq!(GenerationKind::Image.secret_name(), "generation:image");
         assert_eq!(

@@ -126,7 +126,7 @@ impl Builtin {
             Builtin::SandboxExec => oxide_core::sandbox::SANDBOX_EXEC,
             Builtin::SandboxCopyIn => oxide_core::sandbox::SANDBOX_COPY_IN,
             Builtin::SandboxCopyOut => oxide_core::sandbox::SANDBOX_COPY_OUT,
-            Builtin::Generate(kind) => kind.tool().unwrap_or(oxide_core::GENERATE_AUDIO),
+            Builtin::Generate(kind) => kind.tool(),
         }
     }
 }
@@ -350,7 +350,7 @@ impl Tools {
         }
     }
 
-    /// Gives models the generation tools (for the kinds set up in Settings → Generation).
+    /// Gives models the generation tools (for the kinds set up in Settings → Media generation).
     pub fn with_generation(mut self, generation: crate::generation::Generation) -> Self {
         self.generation = Some(generation);
         self

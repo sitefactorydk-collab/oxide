@@ -1432,7 +1432,7 @@ async setGenerationKey(kind: GenerationKind, key: string | null) : Promise<Resul
 }
 },
 /**
- * Test in Settings → Generation: reaches the endpoint and looks for the model in its list.
+ * Test in Settings → Media generation: reaches the endpoint and looks for the model in its list.
  */
 async testGeneration(kind: GenerationKind, endpoint: GenerationEndpoint) : Promise<Result<GenerationTest, CommandError>> {
     try {
@@ -1846,7 +1846,7 @@ updates: UpdateSettings;
  */
 dictation: DictationSettings; 
 /**
- * Settings → Generation (Phase 19).
+ * Settings → Media generation (Phase 19).
  */
 generation: GenerationSettings }
 export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont; language: UiLanguage }
@@ -2970,13 +2970,13 @@ baseUrl: string;
  */
 model: string }
 /**
- * A kind of generation.
+ * A kind of media generation.
  */
-export type GenerationKind = "text" | "image" | "video" | "audio"
+export type GenerationKind = "image" | "video" | "audio"
 /**
- * Settings → Generation.
+ * Settings → Media generation. (A `text` entry saved before it was dropped is ignored.)
  */
-export type GenerationSettings = { text: GenerationEndpoint; image: GenerationEndpoint; video: GenerationEndpoint; audio: GenerationEndpoint; 
+export type GenerationSettings = { image: GenerationEndpoint; video: GenerationEndpoint; audio: GenerationEndpoint; 
 /**
  * The voice speech uses unless the model picks another (`alloy`, `nova`, …).
  */
@@ -2986,7 +2986,7 @@ voice: string;
  */
 audioFormat: string }
 /**
- * The result of Test in Settings → Generation.
+ * The result of Test in Settings → Media generation.
  */
 export type GenerationTest = { ok: boolean; message: string }
 export type ImportCandidate = { config: McpServerConfig; status: ImportStatus }

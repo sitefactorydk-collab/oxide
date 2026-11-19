@@ -266,7 +266,6 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         ...seed.settings?.dictation,
       },
       generation: {
-        text: { providerId: null, baseUrl: "", model: "" },
         image: { providerId: null, baseUrl: "", model: "gpt-image-2" },
         video: { providerId: null, baseUrl: "", model: "" },
         audio: { providerId: null, baseUrl: "", model: "gpt-4o-mini-tts" },

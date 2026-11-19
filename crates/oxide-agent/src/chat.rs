@@ -867,8 +867,8 @@ impl ChatService {
             {
                 own.push(python_entry());
             }
-            // Image, video and audio generation: a tool per kind set up in Settings →
-            // Generation (Phase 19).
+            // Image, video and audio generation: a tool per kind set up in Settings → Media
+            // generation (Phase 19).
             if self.tools.generation().is_some() && chat_tools.allows_builtin(GENERATION_SWITCH) {
                 for kind in [
                     GenerationKind::Image,
@@ -876,7 +876,7 @@ impl ChatService {
                     GenerationKind::Audio,
                 ] {
                     if settings.generation.endpoint(kind).is_set()
-                        && kind.tool().is_some_and(|t| chat_tools.allows_builtin(t))
+                        && chat_tools.allows_builtin(kind.tool())
                     {
                         own.push(crate::generation::tool_entry(kind, &settings.generation));
                     }

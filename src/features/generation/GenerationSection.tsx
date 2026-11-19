@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AudioLines, ChevronRight, Film, ImageIcon, Type, type LucideIcon } from "lucide-react";
+import { AudioLines, ChevronRight, Film, ImageIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   commands,
@@ -24,7 +24,6 @@ const generationKeys = {
 
 /** Models that usually fit each kind (typed models work too). */
 const SUGGESTED: Record<GenerationKind, string[]> = {
-  text: ["gpt-5.1", "gpt-5-mini", "gemini-2.5-flash", "llama-3.3-70b-versatile"],
   image: [
     "gpt-image-2",
     "gpt-image-1.5",
@@ -53,12 +52,6 @@ const VOICES = [
 ];
 
 const GROUPS: { kind: GenerationKind; title: string; icon: LucideIcon; hint: string }[] = [
-  {
-    kind: "text",
-    title: "Text generation",
-    icon: Type,
-    hint: "The default text model for Utility Apps. Chats keep the model picked in the chat.",
-  },
   {
     kind: "image",
     title: "Image generation",
@@ -91,7 +84,7 @@ function useGenerationKeys() {
   });
 }
 
-/** Settings → Generation: an endpoint and model per kind of generation. */
+/** Settings → Media generation: an endpoint and model per kind of generation. */
 export function GenerationSection() {
   const { data } = useSettings();
   const g = (data ?? DEFAULT_SETTINGS).generation;
@@ -101,7 +94,8 @@ export function GenerationSection() {
       <p className="text-sm text-fg-subtle">
         Every endpoint here speaks the OpenAI-compatible API: OpenAI, Gemini’s and Groq’s compatible
         endpoints, LM Studio, LocalAI, vLLM and other servers. Pick one from Settings → Providers or
-        give a URL. Generating costs money, so each chat asks before it runs a generation tool.
+        give a URL. Generating costs money, so each chat asks before it runs a generation tool. Text
+        comes from the chat’s own model (Providers and Models).
       </p>
       {GROUPS.map((group) => (
         <GroupCard
