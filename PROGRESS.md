@@ -16,7 +16,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 2 (2026-11-19 late evening):** at the user's request, Audio (speech) became **Music generation** on `/music/generations` (the user's local comfy-bridge server). Image was checked in Oxide by the user.
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
-- **Phase 21** — Utility App builder: **built** (2026-11-20); waiting for `scripts\win\phase21.cmd` (every check, then commit) and the manual exit checks.
+- **Phase 21** — Utility App builder: **committed** `1ce2afe` (2026-11-20 17:09, every check green on Windows on the third run); the manual exit checks are pending.
 - **Next phase:** Phase 22 — More Utility Apps (rest of AI-Toolkit), after Phase 21's Windows run and exit checks.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -48,7 +48,9 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 21 — Utility App builder (build mode) — 2026-11-20
-Status: **built, waiting for the Windows run** (`scripts\win\phase21.cmd`; commit message `logs\commit-msg-phase21.txt`). The library crates' fmt, clippy `-D warnings` and tests pass on Linux; tsc, ESLint and Prettier pass on the device. Vitest, `src-tauri` (clippy, the acl and bindings tests) and the manual exit checks need Windows.
+Status: **committed** `1ce2afe` (2026-11-20 17:09, every check green on Windows); the manual exit checks are pending.
+
+**Windows runs:** 1 (`phase21.cmd`, 16:30–16:45): bindings, SDK types, fmt, clippy, cargo test, typecheck, lint and vite build passed; Vitest failed 4 tests, all test mistakes: the builder's “Back” clashed with the title bar's Back (renamed **Close the builder**), `appIcons.test.ts` resolved its path from `import.meta.url` (not a file URL under jsdom; now `process.cwd()`), and `sdkTypes.test.ts` asked for the node environment, which `src/test/setup.ts` doesn't support (now jsdom). 2 (`phase21-retry.cmd`, which skips the prep): one test looked for the app page's toolbar before it loaded (now `findByRole`). 3 (17:00–17:09): all green, committed.
 
 Before starting: Phase 20's exit checks were passed (11:14) and the user's fix commit `0839fa8` (dialog tooltips, extension folders) was in. No Phase 20 visual bugs were listed beyond that one, so the phase went ahead.
 
@@ -87,6 +89,8 @@ Deviations from PLAN.md (and why):
 - **Builder tools don't ask**: they change only the draft, and every turn is a checkpoint.
 - **Clone stays as in Phase 20** (a copy in My apps); **Edit** then opens the builder. Export works on the saved app.
 
+**After the commit (manual check, 17:21):** the user typed the CSV request into the *template app's* prompt box in the Preview and pressed its **Ask** button, so the template sent it to the model as a plain question (an HTML answer came back) instead of going to the builder chat. The template is now a static “Your new app will appear here — describe it in the builder's chat on the left” screen with no prompt box and no capabilities. Drafts made before this keep the old template until the builder rewrites `App.tsx`.
+
 Known issues / TODO carried forward:
 - Checkpoints keep whole copies of the draft (base64 in the database, 60 per app); fine for text apps, heavy for apps with large files.
 - The screenshot's fonts and anything from linked stylesheets are missing; canvases with cross-origin pixels stay blank.
@@ -97,7 +101,7 @@ Notes for Phase 22:
 - Port the remaining AI-Toolkit apps with the builder or by hand into `utility-apps/<id>/` (list them in `builtin.rs` and `BuiltinApps.test.tsx`).
 - After changing `src/appframe/sdk.ts`, run `npm run sdk-types` (the Vitest test checks it).
 
-Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: core, store, agent) tsc ✅ eslint ✅ prettier ✅. Windows: pending (`phase21.cmd`).
+Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `phase21-retry.cmd`, third run); committed `1ce2afe`. Manual exit checks: pending.
 
 ## Phase 20 — Utility Apps: runtime and gallery — 2026-11-20
 Status: **done** (2026-11-20). Committed `1915243` by `scripts\win\phase20.cmd` (fourth run, 10:37–10:44, every check green). The user passed every manual exit check (11:14).

@@ -6,5 +6,5 @@
   "category": "Other",
   "version": "1.0.0",
   "entry": "App.tsx",
-  "capabilities": ["text"]
+  "capabilities": []
 }
