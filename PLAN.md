@@ -482,7 +482,7 @@ Requested by the user after Phase 17: a **Utility Apps** page (sidebar item afte
 
 **Exit:** on Windows, the four built-in apps run from the Utility Apps page with the global models and with a per-app override; each capability asks once; a cloned app can be exported and imported again.
 
-*Built 2026-11-20* (see PROGRESS.md). Deviations: files and storage don't ask; Deny lasts for the visit; Edit is a plain file editor until Phase 21; JSON output by instruction with one retry; the app frame's CSP allows no network at all.
+*Done 2026-11-20* (see PROGRESS.md). Deviations: files and storage don't ask; Deny lasts for the visit; Edit is a plain file editor until Phase 21; JSON output by instruction with one retry; the app frame's CSP allows no network at all.
 
 ### Phase 21 — Utility App builder (build mode)
 Requested by the user: creating and editing apps “much like AI Studio's build mode”, with a switch between **Preview** and **Code**.

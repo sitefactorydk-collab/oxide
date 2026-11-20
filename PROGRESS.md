@@ -15,8 +15,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up (2026-11-19 evening):** at the user's request, the page is renamed **Settings → Media generation** and the Text group is dropped (text comes from Providers and Models). Script: `scripts\win\phase19-media.cmd`, message `logs\commit-msg-phase19-media.txt`.
 - **Phase 19 follow-up 2 (2026-11-19 late evening):** at the user's request, Audio (speech) became **Music generation** on `/music/generations` (the user's local comfy-bridge server). Image was checked in Oxide by the user.
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
-- **Phase 20** — Utility Apps: runtime and gallery: **built on the agent side** (2026-11-20). Rust tests, clippy `-D warnings` and fmt pass on Linux for every library crate (plus the acl tests in a scratch crate); tsc, ESLint and Prettier pass on the device (except `jszip`, which `npm install` adds). The Windows checks, the commit (`logs\commit-msg-phase20.txt`) and the manual exit checks run from `scripts\win\phase20.cmd`.
-- **Next phase:** Phase 20's Windows checks and manual exit checks, then Phase 21 — Utility App builder.
+- **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed and left for later (not yet listed).
+- **Next phase:** Phase 21 — Utility App builder (first, if the user wants: the Phase 20 visual bugs).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -47,18 +47,18 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 20 — Utility Apps: runtime and gallery — 2026-11-20
-Status: **built, waiting for the Windows run** (`scripts\win\phase20.cmd`: npm install with `jszip`, bindings, every check, vite build, commit only when green, then the app for the manual checks).
+Status: **done** (2026-11-20). Committed `1915243` by `scripts\win\phase20.cmd` (fourth run, 10:37–10:44, every check green). The user passed every manual exit check (11:14).
 
 Exit criteria (Windows, by hand):
-- [ ] Sidebar → **Utility Apps** lists the four built-in apps (search and categories work).
-- [ ] Each built-in app runs with the global models (text from Providers and Models):
+- [x] Sidebar → **Utility Apps** lists the four built-in apps (search and categories work).
+- [x] Each built-in app runs with the global models (text from Providers and Models):
   - **AI Meta Tag Generator**: a URL (asks for *AI text* and *reading web pages* once each) → three suggestions; also with pasted HTML.
   - **Readability & Tone Analyzer**: a URL or pasted text → score, tone, strengths, improvements, analysis.
   - **AI HTML Table from Image**: a picture of a table (needs a vision model) → table preview, Code, Copy, Download.
   - **AI SVG Creator**: a description → SVG; a second request refines it; Download.
-- [ ] With a per-app override (an app's **Settings** → Text model) the app uses that model (check the endpoint's log or the Meta Tag app's model label).
-- [ ] Each capability asks once per app; **Revoke** in Settings makes it ask again; Deny makes the call fail with a message in the app.
-- [ ] **Clone** a built-in app → it appears under “My apps” with **Edit**; change its `App.tsx` in Edit → Save → it reloads changed; **Export** saves an `.oxideapp`; delete the clone, **Import app** that file → the preview lists what it may ask for → Install → it runs.
+- [x] With a per-app override (an app's **Settings** → Text model) the app uses that model (check the endpoint's log or the Meta Tag app's model label).
+- [x] Each capability asks once per app; **Revoke** in Settings makes it ask again; Deny makes the call fail with a message in the app.
+- [x] **Clone** a built-in app → it appears under “My apps” with **Edit**; change its `App.tsx` in Edit → Save → it reloads changed; **Export** saves an `.oxideapp`; delete the clone, **Import app** that file → the preview lists what it may ask for → Install → it runs.
 
 Done:
 - **core** `utility_app.rs`: `AppManifest` (id, name, description, icon, category, version, entry, capabilities, default models, author) with validation; `AppCapability` (text, image, video, music, webSearch, webFetch, connectors, python, sandbox, browser, chrome); `UtilityApp`, `AppBundle`, `AppFile`; `AppPrefs` (text model, `AppGenerationOverride` per kind, granted capabilities) and `AppPrefsView`; `AppImportPreview`; `AppCallError`/`AppErrorCode`; `app_secret_name` = `app:<id>:generation:<kind>`; limits (200 files, 2 MB a file, 20 MB an app, 10 MB storage).
@@ -88,7 +88,7 @@ Deviations from PLAN.md (and why):
 - **Imports through a file picker** (no drag-drop onto the gallery yet).
 
 Known issues / TODO carried forward:
-- Not yet run on Windows (checks and manual exit checks above).
+- A few non-breaking visual bugs the user noticed during the manual checks (2026-11-20); to be listed and fixed later.
 - Only text files of an app reach the frame (images in an app's folder are kept and exported but not loadable yet).
 - Generated media reach the frame as base64 over IPC (as in Phase 19); fine for images and short clips.
 - An app's Python working folder (`<data>/app-work/<id>`) isn't removed when the app is deleted (Delete all removes it).
@@ -99,7 +99,7 @@ Notes for Phase 21:
 - Compile errors and runtime errors already reach the host (`type: "error"` messages); forward them to the builder chat for **Fix with AI**.
 - `AppFrame` takes a bundle and a reload key; the Preview pane can reuse it with unsaved files.
 
-Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl in a scratch crate) tsc ✅ (but `jszip`) eslint ✅ prettier ✅. Windows: pending.
+Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl in a scratch crate) tsc ✅ (but `jszip`) eslint ✅ prettier ✅. Windows (`phase20.cmd`, fourth run): fmt ✅ prettier ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅; committed `1915243`. Manual exit checks ✅ (by the user).
 
 **Windows run 1 (`phase20.cmd`, 2026-11-20 09:31–09:46):** npm install, bindings, fmt, prettier, lint and vite build passed; not committed.
 - clippy: `artifact_frame::allowed` is now only used by tests (`#[cfg_attr(not(test), allow(dead_code))]`).
