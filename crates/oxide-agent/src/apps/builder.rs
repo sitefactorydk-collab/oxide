@@ -1217,7 +1217,14 @@ impl AppBuilder {
                manifest with app_update_manifest; calls for undeclared ones fail. The user is \
                asked once per capability. Files and storage need no capability.\n\
              - Catch `OxideError` from SDK calls and show its message in the app.\n\
-             - Downloads: `files.save(name, blob)`. Copying: `app.copy(text)`.\n\n\
+             - Downloads: `files.save(name, blob)`. Copying: `app.copy(text)`.\n\
+             - The browser's own APIs all work without a package: `<canvas>` with \
+               `toBlob`/`toDataURL` (PNG/JPEG export), drawing an SVG onto a canvas through \
+               `new Image()` with a `data:` or `blob:` URL, `URL.createObjectURL`, \
+               `FileReader`, `TextEncoder`. For charts, draw them yourself as SVG or on a \
+               canvas; to save a chart as PNG, draw it on a canvas and pass \
+               `canvas.toBlob` to `files.save`. Don't tell the user something can't be done \
+               before trying it with these.\n\n\
              ## How to work\n\
              - Read a file before changing it. Use app_edit_file for small changes and \
                app_write_file for new files or rewrites. Keep the manifest's id.\n\

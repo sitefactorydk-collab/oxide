@@ -16,8 +16,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 2 (2026-11-19 late evening):** at the user's request, Audio (speech) became **Music generation** on `/music/generations` (the user's local comfy-bridge server). Image was checked in Oxide by the user.
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
-- **Phase 21** — Utility App builder: **committed** `1ce2afe` (2026-11-20 17:09, every check green on Windows on the third run); the manual exit checks are pending.
-- **Next phase:** Phase 22 — More Utility Apps (rest of AI-Toolkit), after Phase 21's Windows run and exit checks.
+- **Phase 21** — Utility App builder: **done** (2026-11-20). Committed `1ce2afe` (every check green on Windows on the third run), template fix `c606ab4`; the user passed every manual exit check (18:35), building the CSV chart app with LM Studio's `google/gemma-4-12b-qat`.
+- **Next phase:** Phase 22 — More Utility Apps (rest of AI-Toolkit).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -48,19 +48,19 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 21 — Utility App builder (build mode) — 2026-11-20
-Status: **committed** `1ce2afe` (2026-11-20 17:09, every check green on Windows); the manual exit checks are pending.
+Status: **done** (2026-11-20). Committed `1ce2afe` (17:09, every check green on Windows) and `c606ab4` (template); the user passed every manual exit check (18:35).
 
 **Windows runs:** 1 (`phase21.cmd`, 16:30–16:45): bindings, SDK types, fmt, clippy, cargo test, typecheck, lint and vite build passed; Vitest failed 4 tests, all test mistakes: the builder's “Back” clashed with the title bar's Back (renamed **Close the builder**), `appIcons.test.ts` resolved its path from `import.meta.url` (not a file URL under jsdom; now `process.cwd()`), and `sdkTypes.test.ts` asked for the node environment, which `src/test/setup.ts` doesn't support (now jsdom). 2 (`phase21-retry.cmd`, which skips the prep): one test looked for the app page's toolbar before it loaded (now `findByRole`). 3 (17:00–17:09): all green, committed.
 
 Before starting: Phase 20's exit checks were passed (11:14) and the user's fix commit `0839fa8` (dialog tooltips, extension folders) was in. No Phase 20 visual bugs were listed beyond that one, so the phase went ahead.
 
 Exit criteria (Windows, by hand):
-- [ ] Utility Apps → **New app** opens the builder on a draft (“New app”, from the template). In its chat: “build an app that turns a pasted CSV into a chart and lets me download it as PNG”. The model writes the files (the Preview reloads as it works), checks the Preview (`app_preview_status`), fixes what it reports, and the app works in Preview (paste a CSV → chart → **Download PNG**).
-- [ ] **Code**: change something by hand (e.g. a heading in `App.tsx`), **Save** (or Ctrl+S) → the Preview shows it; **Checkpoints** lists “Saved App.tsx” and the model's turns; restoring an older one goes back (and the current one is kept).
-- [ ] **Save to Utility Apps** → the app is in the gallery under My apps (name, icon and category from the model or **App details**).
-- [ ] A built-in app: **Clone** → **Edit** opens the builder → change it (by chat or in Code) → **Save to Utility Apps** → it runs changed from the gallery.
-- [ ] Both apps **Export** (from the app page, or the builder's ⋯ → Export saved app) and import again.
-- [ ] Optional: an error in the Preview shows **Fix with AI**, which asks the builder chat to fix it.
+- [x] Utility Apps → **New app** opens the builder on a draft (“New app”, from the template). In its chat: “build an app that turns a pasted CSV into a chart and lets me download it as PNG”. The model writes the files (the Preview reloads as it works), checks the Preview (`app_preview_status`), fixes what it reports, and the app works in Preview (paste a CSV → chart → **Download PNG**).
+- [x] **Code**: change something by hand (e.g. a heading in `App.tsx`), **Save** (or Ctrl+S) → the Preview shows it; **Checkpoints** lists “Saved App.tsx” and the model's turns; restoring an older one goes back (and the current one is kept).
+- [x] **Save to Utility Apps** → the app is in the gallery under My apps (name, icon and category from the model or **App details**).
+- [x] A built-in app: **Clone** → **Edit** opens the builder → change it (by chat or in Code) → **Save to Utility Apps** → it runs changed from the gallery.
+- [x] Both apps **Export** (from the app page, or the builder's ⋯ → Export saved app) and import again.
+- [x] Optional: an error in the Preview shows **Fix with AI**, which asks the builder chat to fix it.
 
 Done:
 - **core** `app_builder.rs`: the builder tool names (`app_list_files`, `app_read_file`, `app_write_file`, `app_edit_file`, `app_delete_file`, `app_rename_file`, `app_update_manifest`, `app_preview_status`, `app_screenshot`), `AppDraft` (the draft's app and files, published, unsaved, the builder chat), `AppCheckpoint` + `CheckpointKind` (start, model, manual, restore), `PreviewRequestKind` (status, screenshot), `PreviewReport` + `PreviewConsoleLine`, `checkpoint_label` (“After: <the request's first line>”), `MAX_APP_CHECKPOINTS` (60 per app).
@@ -101,7 +101,9 @@ Notes for Phase 22:
 - Port the remaining AI-Toolkit apps with the builder or by hand into `utility-apps/<id>/` (list them in `builtin.rs` and `BuiltinApps.test.tsx`).
 - After changing `src/appframe/sdk.ts`, run `npm run sdk-types` (the Vitest test checks it).
 
-Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `phase21-retry.cmd`, third run); committed `1ce2afe`. Manual exit checks: pending.
+**Exit check (18:35, by the user, all OK):** with `google/gemma-4-12b-qat` (LM Studio) the builder made a working CSV → chart app with PNG download. The model struggled at first: it believed PNG export needed `html2canvas`, offered screenshots instead, then planned a canvas export in a long loop until Oxide cut the repetition, and finally built SVG charts plus a canvas-drawn PNG through `files.save`. The builder prompt now says the browser's own APIs work without packages (`<canvas>` `toBlob`/`toDataURL`, SVG → canvas through `Image` with `data:`/`blob:` URLs, `URL.createObjectURL`, `FileReader`), how to save a chart as PNG, and not to give up before trying them (agent test re-run on Linux).
+
+Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `phase21-retry.cmd`, third run); committed `1ce2afe`. Manual exit checks ✅ (by the user).
 
 ## Phase 20 — Utility Apps: runtime and gallery — 2026-11-20
 Status: **done** (2026-11-20). Committed `1915243` by `scripts\win\phase20.cmd` (fourth run, 10:37–10:44, every check green). The user passed every manual exit check (11:14).

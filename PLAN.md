@@ -495,7 +495,7 @@ Requested by the user: creating and editing apps “much like AI Studio's build 
 
 **Exit:** on Windows, “build an app that turns a pasted CSV into a chart and lets me download it as PNG” is built from scratch in the builder, its code is changed by hand in Code view, a built-in app is cloned and modified, and both are exported.
 
-*Built 2026-11-20* (see PROGRESS.md); Windows run and exit checks pending. Deviations: the builder chat is an ordinary hidden chat; drafts are folders and the Preview runs them as `draft:<id>`; screenshots are drawn by the frame; the code editor is Oxide's own (no new dependency); builder tools don't ask (checkpoints undo); Clone stays a copy in My apps and Edit opens the builder.
+*Done 2026-11-20* (see PROGRESS.md). Deviations: the builder chat is an ordinary hidden chat; drafts are folders and the Preview runs them as `draft:<id>`; screenshots are drawn by the frame; the code editor is Oxide's own (no new dependency); builder tools don't ask (checkpoints undo); Clone stays a copy in My apps and Edit opens the builder.
 
 ### Phase 22 — More Utility Apps (rest of AI-Toolkit)
 - Port the remaining AI-Toolkit tools onto the SDK (AI Web Auditor, AI SEO Recommendations, AI Schema Markup Generator, Multi Purpose AI Translator, AI FAQ Questions Generator, llms.txt Generator, Markdown for AI Agents testing tool, AI SFT Dataset Generator, SP Page Builder - AI, AI Plugin Creator), in the order the user picks; each as a built-in app with its own test.
