@@ -1478,6 +1478,186 @@ async saveAttachmentFile(path: string, name: string) : Promise<Result<string | n
 }
 },
 /**
+ * Every app: built-in first, then the user's own.
+ */
+async listApps() : Promise<Result<UtilityApp[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_apps") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * An app's manifest and source files, for the frame.
+ */
+async appBundle(id: string) : Promise<Result<AppBundle, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_bundle", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copies an app into “My apps”.
+ */
+async cloneApp(id: string) : Promise<Result<UtilityApp, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clone_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes an own app with its settings, storage and keys.
+ */
+async deleteApp(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves one file of an own app (its Code view).
+ */
+async saveAppFile(id: string, path: string, content: string) : Promise<Result<UtilityApp, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_app_file", { id, path, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Exports an app as one `.oxideapp` file where the user picks. Returns the path, or `None`
+ * if they cancelled.
+ */
+async exportApp(id: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lets the user pick an `.oxideapp` file and reads it (nothing is installed yet). `None`:
+ * they cancelled.
+ */
+async pickAppImport() : Promise<Result<AppImportPreview | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pick_app_import") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Installs an app read by [`pick_app_import`].
+ */
+async installAppImport(token: string) : Promise<Result<UtilityApp, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_app_import", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * An app's settings dialog.
+ */
+async appPrefs(id: string) : Promise<Result<AppPrefsView, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_prefs", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves an app's settings. Grants can only be removed here.
+ */
+async saveAppPrefs(id: string, prefs: AppPrefs) : Promise<Result<AppPrefs, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_app_prefs", { id, prefs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The user allowed a capability for an app (its approval card).
+ */
+async grantAppCapability(id: string, capability: AppCapability) : Promise<Result<AppPrefs, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grant_app_capability", { id, capability }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets or (with `None`) removes an app's own key for a kind of generation.
+ */
+async setAppKey(id: string, kind: GenerationKind, key: string | null) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_app_key", { id, kind, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Empties an app's storage.
+ */
+async clearAppStorage(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_app_storage", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Runs one SDK call of an app. `params_json` and the answer are JSON. Streamed text and
+ * progress arrive as `appCallEvent`s with the same `call_id`.
+ */
+async appCall(appId: string, callId: string, method: string, paramsJson: string) : Promise<Result<string, AppCallError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_call", { appId, callId, method, paramsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stops a running SDK call.
+ */
+async cancelAppCall(callId: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_app_call", { callId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a file an app made (`oxide.files.save`) where the user picks. `data_base64` is the
+ * content. Returns the path, or `None` if they cancelled.
+ */
+async saveAppOutput(name: string, dataBase64: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_app_output", { name, dataBase64 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1778,6 +1958,7 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 
 
 export const events = __makeEvents__<{
+appCallEvent: AppCallEvent,
 browserChanged: BrowserChanged,
 browserLive: BrowserLive,
 chatStream: ChatStream,
@@ -1793,6 +1974,7 @@ scheduleChanged: ScheduleChanged,
 taskListChanged: TaskListChanged,
 updateChanged: UpdateChanged
 }>({
+appCallEvent: "app-call-event",
 browserChanged: "browser-changed",
 browserLive: "browser-live",
 chatStream: "chat-stream",
@@ -1815,6 +1997,151 @@ updateChanged: "update-changed"
 
 /** user-defined types **/
 
+/**
+ * Everything the frame needs to run an app.
+ */
+export type AppBundle = { app: UtilityApp; files: AppFile[] }
+/**
+ * An app's SDK call failed.
+ */
+export type AppCallError = { code: AppErrorCode; message: string; capability: AppCapability | null }
+/**
+ * Streamed text or progress of a Utility App's SDK call (`events.appCallEvent`). `event_json`
+ * is the event as JSON (`{"type":"delta","text":…}`, `{"type":"progress",…}`).
+ */
+export type AppCallEvent = { callId: string; eventJson: string }
+/**
+ * Something an app may do that asks the user first (once per app).
+ * 
+ * Picking and saving files and the app's own storage don't ask: the user picks every file
+ * and every save location, and storage belongs to the app.
+ */
+export type AppCapability = 
+/**
+ * Text generation with the app's chat model (images and PDFs as input, JSON output).
+ */
+"text" | 
+/**
+ * Image generation.
+ */
+"image" | 
+/**
+ * Video generation.
+ */
+"video" | 
+/**
+ * Music generation.
+ */
+"music" | 
+/**
+ * Web search.
+ */
+"webSearch" | 
+/**
+ * Reading web pages (fetch and crawl).
+ */
+"webFetch" | 
+/**
+ * Tools of the connected MCP servers.
+ */
+"connectors" | 
+/**
+ * Python in the managed environment (not sandboxed).
+ */
+"python" | 
+/**
+ * Commands in the app's Docker sandbox.
+ */
+"sandbox" | 
+/**
+ * The browser agent.
+ */
+"browser" | 
+/**
+ * The paired Chrome.
+ */
+"chrome"
+/**
+ * Why an app's SDK call failed.
+ */
+export type AppErrorCode = 
+/**
+ * The user hasn't allowed the capability for this app yet: ask, then call again.
+ */
+"needsPermission" | 
+/**
+ * The app's manifest doesn't declare the capability.
+ */
+"undeclared" | 
+/**
+ * The user said no.
+ */
+"denied" | 
+/**
+ * The call was stopped.
+ */
+"cancelled" | 
+/**
+ * No such SDK method.
+ */
+"unknown" | 
+/**
+ * It ran and failed (the message says why).
+ */
+"failed"
+/**
+ * One source file of an app.
+ */
+export type AppFile = { path: string; content: string }
+/**
+ * A per-app override of a generation endpoint. Empty fields use the global default
+ * (Settings → Media generation): only the model, only a custom URL, or both can be set.
+ */
+export type AppGenerationOverride = { 
+/**
+ * An endpoint from Settings → Providers.
+ */
+providerId: string | null; 
+/**
+ * A custom OpenAI-compatible base URL (`https://…/v1`).
+ */
+baseUrl: string; model: string }
+/**
+ * What an `.oxideapp` file holds, shown before it is installed.
+ */
+export type AppImportPreview = { 
+/**
+ * Pass it to the install command (the file was read once; nothing is installed yet).
+ */
+token: string; manifest: AppManifest; files: number; bytes: number; 
+/**
+ * An own app with this id exists and would be replaced.
+ */
+replaces: boolean; 
+/**
+ * A built-in app has this id: the import gets a new one.
+ */
+renamedFrom: string | null }
+/**
+ * An app's `oxide-app.json`.
+ */
+export type AppManifest = { 
+/**
+ * Unique, lower-case letters, digits and dashes (the folder's name).
+ */
+id: string; name: string; description?: string; 
+/**
+ * A lucide icon name (`"file-code"`) or a single emoji.
+ */
+icon?: string; category?: string; version?: string; 
+/**
+ * The file whose default export is the app's root component.
+ */
+entry?: string; 
+/**
+ * What the app uses that asks first. Calls for anything else are refused.
+ */
+capabilities?: AppCapability[]; models?: AppModels; author?: string | null }
 export type AppMetrics = { 
 /**
  * From the process start to the main window's first screen (`None` until it reports).
@@ -1824,6 +2151,40 @@ startupMs: number | null;
  * Oxide's own process (the web view's processes aren't included), where the system says.
  */
 memoryBytes: number | null }
+/**
+ * Default models an app's manifest may name. Text is a chat model id
+ * (`<provider>/<model>`); the others are model names on the global endpoints.
+ */
+export type AppModels = { text: string | null; image: string | null; video: string | null; music: string | null }
+/**
+ * Per-app settings, kept in the database (never in the app's folder).
+ */
+export type AppPrefs = { 
+/**
+ * The chat model the app's text calls use (`<provider>/<model>`). `None`: the manifest's,
+ * else the first available.
+ */
+textModel: string | null; image: AppGenerationOverride; video: AppGenerationOverride; music: AppGenerationOverride; 
+/**
+ * Capabilities the user allowed for this app.
+ */
+granted: AppCapability[] }
+/**
+ * Settings → the app's settings dialog.
+ */
+export type AppPrefsView = { prefs: AppPrefs; 
+/**
+ * The text model calls use now (after defaults), if any model is available.
+ */
+textModel: string | null; 
+/**
+ * Kinds of generation with a key of the app's own in the keychain.
+ */
+keys: GenerationKind[]; 
+/**
+ * Bytes in the app's storage.
+ */
+storageBytes: number }
 export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings; 
 /**
  * Settings → Chrome (the extension and its bridge).
@@ -4524,6 +4885,22 @@ export type UsageTotals = {
  * Replies counted (with or without token counts).
  */
 replies: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
+/**
+ * An app as the gallery lists it.
+ */
+export type UtilityApp = { manifest: AppManifest; 
+/**
+ * Ships with Oxide; read-only (clone it to change it).
+ */
+builtin: boolean; 
+/**
+ * Of an own app: where its folder is.
+ */
+folder: string | null; 
+/**
+ * Why the app can't run (a broken manifest, a missing entry file).
+ */
+problem: string | null }
 /**
  * Masked hints of the web search API keys in the keychain.
  */

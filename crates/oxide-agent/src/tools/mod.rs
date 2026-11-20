@@ -33,7 +33,7 @@ use serde_json::{Map, Value, json};
 
 use crate::attachments::AttachmentStore;
 use crate::skills::Skills;
-pub use web::{Fetched, SearchHit, WebTools};
+pub use web::{Fetched, RawPage, SearchHit, WebTools};
 
 /// Most characters of text one tool result gives the model.
 pub const MAX_RESULT_CHARS: usize = 100_000;
@@ -419,6 +419,11 @@ impl Tools {
 
     pub fn skills(&self) -> Option<&Skills> {
         self.skills.as_ref()
+    }
+
+    /// The MCP servers' tools (Utility Apps call them directly).
+    pub fn mcp(&self) -> Option<&Arc<dyn McpTools>> {
+        self.mcp.as_ref()
     }
 
     pub fn with_web(mut self, web: WebTools) -> Self {

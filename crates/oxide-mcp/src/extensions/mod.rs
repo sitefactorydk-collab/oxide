@@ -138,8 +138,10 @@ impl Extensions {
             .or_else(|| find_program("uv"))
     }
 
+    /// The folder an extension runs from: the newest of `<name>` and `<name>~<id>` (see
+    /// [`current_dir`]).
     fn dir_of(&self, name: &str) -> PathBuf {
-        self.inner.root.join(name)
+        current_dir(&self.inner.root, name)
     }
 
     /// Builds every installed extension's server and hands them to the manager. Call after
@@ -391,21 +393,31 @@ impl Extensions {
         let existed = cfg.is_extension(&name);
 
         // Swap the folders: stop the running server first, since Windows keeps its files open.
-        let target = self.dir_of(&name);
+        let current = self.dir_of(&name);
         self.inner.manager.drop_extension_server(&name).await;
-        if target.exists() {
+        let mut target = self.inner.root.join(&name);
+        let mut superseded = None;
+        if current.exists() {
             let old = self
                 .inner
                 .root
                 .join(STAGING_DIR)
                 .join(format!("{}-old", staging_id));
-            rename_retry(&target, &old).await.map_err(|e| {
-                bad(format!(
-                    "the installed version couldn't be replaced ({e}); close anything using its \
-                     files and try again"
-                ))
-            })?;
-            remove_dir(&old).await;
+            match rename_with_retries(&current, &old, &ASIDE_DELAYS_MS).await {
+                Ok(()) => remove_dir(&old).await,
+                Err(e) => {
+                    // Something (often an antivirus scan) still holds the old files: install
+                    // beside them in a newer folder, which wins, and remove the old one later.
+                    tracing::info!(
+                        "the old version of {name} is still in use ({e}); installing beside it"
+                    );
+                    target = self
+                        .inner
+                        .root
+                        .join(format!("{name}{VERSION_SEP}{staging_id}"));
+                    superseded = Some(current);
+                }
+            }
         }
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent)
@@ -415,6 +427,9 @@ impl Extensions {
         rename_retry(&staged.dir, &target)
             .await
             .map_err(|e| bad(format!("couldn't install the extension: {e}")))?;
+        if let Some(old) = superseded {
+            remove_dir(&old).await;
+        }
 
         self.store_values(&name, &fields, values, &mut entry)
             .await?;
@@ -531,8 +546,7 @@ impl Extensions {
             }
         }
         lock(&self.inner.problems).remove(name);
-        let dir = self.dir_of(name);
-        if dir.exists() {
+        for dir in version_dirs(&self.inner.root, name) {
             // Move it aside first (that works once the server has let go), then delete.
             let aside = self.inner.root.join(STAGING_DIR).join(format!(
                 "{}-removed-{}",
@@ -562,6 +576,15 @@ impl Extensions {
         };
         for (_, dir) in old {
             remove_dir(&dir).await;
+        }
+        // Older versions an update installed beside (their files were busy then).
+        for (name, _) in self.inner.manager.config_snapshot().extensions() {
+            let current = self.dir_of(&name);
+            for dir in version_dirs(&self.inner.root, &name) {
+                if dir != current {
+                    remove_dir(&dir).await;
+                }
+            }
         }
         // Folders from an earlier run that nothing refers to.
         let staging = self.inner.root.join(STAGING_DIR);
@@ -743,6 +766,48 @@ pub fn check_values(
     Ok(())
 }
 
+/// Separates an extension's name from a version id in a folder name (`files~<id>`). Names
+/// can't contain it (`manifest::valid_name`).
+const VERSION_SEP: char = '~';
+
+/// Waits while moving the old version aside before installing beside it (about 3 s).
+const ASIDE_DELAYS_MS: [u64; 6] = [100, 250, 500, 500, 750, 1_000];
+
+/// An extension's folders: `<name>` and `<name>~<id>` (an update installed beside a busy
+/// old version).
+fn version_dirs(root: &Path, name: &str) -> Vec<PathBuf> {
+    let prefix = format!("{name}{VERSION_SEP}");
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for e in rd.flatten() {
+            let file = e.file_name().to_string_lossy().into_owned();
+            if (file == name || file.starts_with(&prefix)) && e.path().is_dir() {
+                out.push(e.path());
+            }
+        }
+    }
+    out
+}
+
+/// The folder an extension runs from: the one with the newest version id (`<name>` alone is
+/// the oldest), or `<root>/<name>` when none exists yet. Ids are hex timestamps of one
+/// length, so longer-then-larger is newer.
+pub fn current_dir(root: &Path, name: &str) -> PathBuf {
+    let id_of = |p: &PathBuf| -> String {
+        p.file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .and_then(|f| f.split_once(VERSION_SEP).map(|(_, id)| id.to_owned()))
+            .unwrap_or_default()
+    };
+    version_dirs(root, name)
+        .into_iter()
+        .max_by(|a, b| {
+            let (x, y) = (id_of(a), id_of(b));
+            x.len().cmp(&y.len()).then(x.cmp(&y))
+        })
+        .unwrap_or_else(|| root.join(name))
+}
+
 fn staging_id() -> String {
     use rand::Rng;
     let n: u64 = rand::thread_rng().r#gen();
@@ -793,6 +858,24 @@ async fn remove_dir(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_newest_version_folder_is_the_current_one() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let r = root.path();
+        assert_eq!(current_dir(r, "files"), r.join("files"));
+        std::fs::create_dir_all(r.join("files")).expect("mkdir");
+        std::fs::create_dir_all(r.join("files-two")).expect("mkdir");
+        assert_eq!(current_dir(r, "files"), r.join("files"));
+        let older = format!("files~{}", staging_id());
+        std::thread::sleep(Duration::from_millis(5));
+        let newer = format!("files~{}", staging_id());
+        std::fs::create_dir_all(r.join(&newer)).expect("mkdir");
+        std::fs::create_dir_all(r.join(&older)).expect("mkdir");
+        assert_eq!(current_dir(r, "files"), r.join(&newer));
+        assert_eq!(version_dirs(r, "files").len(), 3);
+        assert!(!manifest::valid_name("files~1"));
+    }
 
     #[test]
     fn renames_keep_trying_for_about_twenty_seconds() {

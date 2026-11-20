@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-app-import"
+description = "Enables the install_app_import command without any pre-configured scope."
+commands.allow = ["install_app_import"]
+
+[[permission]]
+identifier = "deny-install-app-import"
+description = "Denies the install_app_import command without any pre-configured scope."
+commands.deny = ["install_app_import"]

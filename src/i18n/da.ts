@@ -7,6 +7,7 @@ export const da: Catalog = {
   "nav.searchChats": "Søg i chats",
   "nav.chats": "Chats",
   "nav.projects": "Projekter",
+  "nav.apps": "Værktøjsapps",
   "nav.artifacts": "Artefakter",
   "nav.scheduled": "Planlagt",
   "nav.starred": "Stjernemarkeret",

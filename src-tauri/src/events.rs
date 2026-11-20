@@ -244,3 +244,12 @@ impl EventSink for TauriSink {
         }
     }
 }
+
+/// Streamed text or progress of a Utility App's SDK call (`events.appCallEvent`). `event_json`
+/// is the event as JSON (`{"type":"delta","text":…}`, `{"type":"progress",…}`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AppCallEvent {
+    pub call_id: String,
+    pub event_json: String,
+}

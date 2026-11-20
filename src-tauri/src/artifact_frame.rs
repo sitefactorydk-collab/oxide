@@ -68,15 +68,29 @@ pub fn strip_csp_meta(html: &str) -> String {
 
 /// Which paths the frame may load. Release: the entry and the bundled assets. Debug: what
 /// the Vite dev server serves for it, except files outside the project (`/@fs/`).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn allowed(path: &str, dev: bool) -> bool {
+    allowed_for(path, dev, ENTRY)
+}
+
+/// [`allowed`] for a frame with another entry page (the Utility Apps frame).
+pub fn allowed_for(path: &str, dev: bool, entry: &str) -> bool {
     if path.contains("..") {
         return false;
     }
     if dev {
         return !path.starts_with("/@fs/");
     }
-    path == ENTRY || path.starts_with("/assets/")
+    path == entry || path.starts_with("/assets/")
 }
+
+/// A sandboxed frame served by its own protocol: its entry page and its policy.
+pub struct Frame {
+    pub entry: &'static str,
+    pub csp: fn(Option<&str>) -> String,
+}
+
+const ARTIFACT_FRAME: Frame = Frame { entry: ENTRY, csp };
 
 fn plain(status: StatusCode, text: &str) -> Response<Vec<u8>> {
     let mut r = Response::new(text.as_bytes().to_vec());
@@ -89,6 +103,7 @@ fn plain(status: StatusCode, text: &str) -> Response<Vec<u8>> {
 }
 
 fn respond_with(
+    frame: &Frame,
     status: StatusCode,
     mime: &str,
     mut body: Vec<u8>,
@@ -113,8 +128,8 @@ fn respond_with(
                 "no-cache"
             },
         );
-    let builder = if is_html || path == ENTRY {
-        builder.header("Content-Security-Policy", csp(dev))
+    let builder = if is_html || path == frame.entry {
+        builder.header("Content-Security-Policy", (frame.csp)(dev))
     } else {
         builder
     };
@@ -137,14 +152,27 @@ fn dev_origin<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
 
 /// Answers one request of the frame.
 pub async fn respond<R: Runtime>(app: AppHandle<R>, path_and_query: String) -> Response<Vec<u8>> {
+    serve(app, path_and_query, &ARTIFACT_FRAME).await
+}
+
+/// Answers one request of a sandboxed frame.
+pub async fn serve<R: Runtime>(
+    app: AppHandle<R>,
+    path_and_query: String,
+    frame: &Frame,
+) -> Response<Vec<u8>> {
     let dev = dev_origin(&app);
     let path = path_and_query
         .split(['?', '#'])
         .next()
         .unwrap_or("/")
         .to_owned();
-    let path = if path == "/" { ENTRY.to_owned() } else { path };
-    if !allowed(&path, dev.is_some()) {
+    let path = if path == "/" {
+        frame.entry.to_owned()
+    } else {
+        path
+    };
+    if !allowed_for(&path, dev.is_some(), frame.entry) {
         return plain(StatusCode::NOT_FOUND, "not found");
     }
     match &dev {
@@ -161,7 +189,9 @@ pub async fn respond<R: Runtime>(app: AppHandle<R>, path_and_query: String) -> R
                         .unwrap_or("application/octet-stream")
                         .to_owned();
                     match r.bytes().await {
-                        Ok(b) => respond_with(status, &mime, b.to_vec(), &path, dev.as_deref()),
+                        Ok(b) => {
+                            respond_with(frame, status, &mime, b.to_vec(), &path, dev.as_deref())
+                        }
                         Err(e) => {
                             tracing::warn!("artifact frame: dev server read failed: {e}");
                             plain(StatusCode::BAD_GATEWAY, "dev server read failed")
@@ -177,7 +207,14 @@ pub async fn respond<R: Runtime>(app: AppHandle<R>, path_and_query: String) -> R
         None => match app.asset_resolver().get(path.clone()) {
             Some(asset) => {
                 let mime = asset.mime_type().to_owned();
-                respond_with(StatusCode::OK, &mime, asset.bytes().to_vec(), &path, None)
+                respond_with(
+                    frame,
+                    StatusCode::OK,
+                    &mime,
+                    asset.bytes().to_vec(),
+                    &path,
+                    None,
+                )
             }
             None => plain(StatusCode::NOT_FOUND, "not found"),
         },

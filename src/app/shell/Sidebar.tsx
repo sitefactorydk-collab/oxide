@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Ellipsis,
   FolderClosed,
+  LayoutGrid,
   MessagesSquare,
   Plus,
   Search,
@@ -66,6 +67,7 @@ export function Sidebar({ activeChatId }: { activeChatId?: string }) {
         </Tooltip>
         <NavItem to="/chats" icon={MessagesSquare} label={t("nav.chats")} />
         <NavItem to="/projects" icon={FolderClosed} label={t("nav.projects")} />
+        <NavItem to="/apps" icon={LayoutGrid} label={t("nav.apps")} end={false} />
         <NavItem to="/artifacts" icon={Shapes} label={t("nav.artifacts")} />
         <NavItem to="/scheduled" icon={CalendarClock} label={t("nav.scheduled")} end={false} />
       </nav>

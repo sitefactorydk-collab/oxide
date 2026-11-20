@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-prefs"
+description = "Enables the app_prefs command without any pre-configured scope."
+commands.allow = ["app_prefs"]
+
+[[permission]]
+identifier = "deny-app-prefs"
+description = "Denies the app_prefs command without any pre-configured scope."
+commands.deny = ["app_prefs"]

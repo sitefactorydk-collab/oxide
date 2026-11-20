@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 mod acl;
+mod app_frame;
 mod artifact_frame;
 mod chosen;
 mod commands;
@@ -35,7 +36,7 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions,
+        apps, artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions,
         generation, insights, mcp, memory, models, projects, providers, python, sandbox, schedule,
         settings, system, tools, updates, workspace,
     };
@@ -54,7 +55,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::ScheduleChanged,
             events::ComputerChanged,
             events::UpdateChanged,
-            events::DesktopRequest
+            events::DesktopRequest,
+            events::AppCallEvent
         ])
         .commands(collect_commands![
             commands::ping,
@@ -215,6 +217,22 @@ fn specta_builder() -> Builder<tauri::Wry> {
             generation::generation_models,
             generation::attachment_media,
             generation::save_attachment_file,
+            apps::list_apps,
+            apps::app_bundle,
+            apps::clone_app,
+            apps::delete_app,
+            apps::save_app_file,
+            apps::export_app,
+            apps::pick_app_import,
+            apps::install_app_import,
+            apps::app_prefs,
+            apps::save_app_prefs,
+            apps::grant_app_capability,
+            apps::set_app_key,
+            apps::clear_app_storage,
+            apps::app_call,
+            apps::cancel_app_call,
+            apps::save_app_output,
             // System
             system::open_external,
             // Desktop integration
@@ -355,6 +373,18 @@ pub fn run() -> anyhow::Result<()> {
                 });
             },
         )
+        // The sandboxed frame Utility Apps run in (see app_frame.rs).
+        .register_asynchronous_uri_scheme_protocol(app_frame::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request
+                .uri()
+                .path_and_query()
+                .map(|p| p.as_str().to_owned())
+                .unwrap_or_else(|| "/".into());
+            tauri::async_runtime::spawn(async move {
+                responder.respond(app_frame::respond(app, path).await);
+            });
+        })
         .invoke_handler(builder.invoke_handler());
 
     #[cfg(target_os = "macos")]

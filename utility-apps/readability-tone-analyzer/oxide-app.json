@@ -1,0 +1,11 @@
+{
+  "id": "readability-tone-analyzer",
+  "name": "Readability & Tone Analyzer",
+  "description": "Scores a page or a text for readability, finds its tone and audience, and suggests concrete improvements.",
+  "icon": "book-open",
+  "category": "Content",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text", "webFetch"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

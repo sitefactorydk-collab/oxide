@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Utility App</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #faf9f7;
+        color: #1f1e1d;
+        font-family:
+          "Inter Variable",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      html.dark,
+      html.dark body {
+        background: #1f1e1d;
+        color: #ecebe8;
+      }
+      .oxide-app-error {
+        margin: 16px;
+        padding: 12px;
+        white-space: pre-wrap;
+        font:
+          12px/1.5 ui-monospace,
+          monospace;
+        color: #b42318;
+        background: #fef3f2;
+        border-radius: 8px;
+      }
+    </style>
+    <!-- Tailwind's browser build: `dark:` follows the `dark` class Oxide sets. -->
+    <style type="text/tailwindcss">
+      @custom-variant dark (&:where(.dark, .dark *));
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/appframe/main.ts"></script>
+  </body>
+</html>

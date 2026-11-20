@@ -1,4 +1,5 @@
 import type {
+  AppCallEvent,
   AppSettings,
   Artifact,
   ArtifactKind,
@@ -43,6 +44,7 @@ import type {
   WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
+import { fakeAppCommands } from "./fakeApps";
 import { fakeBrowserCommands, resetFakeBrowser, setBrowserEmitters } from "./fakeBrowser";
 import {
   configureFakeChrome,
@@ -416,6 +418,7 @@ setScheduleEmitter((c) => void scheduleChanged.emit(c));
 const computerChanged = fakeEvent<ComputerChanged>("computer-changed");
 setComputerEmitter((c) => void computerChanged.emit(c));
 const updateChanged = fakeEvent<UpdateStatus>("update-changed");
+export const appCallEvent = fakeEvent<AppCallEvent>("app-call-event");
 setUpdateEmitter((s) => void updateChanged.emit(s));
 
 export const fakeEvents = {
@@ -433,6 +436,7 @@ export const fakeEvents = {
   scheduleChanged,
   computerChanged,
   updateChanged,
+  appCallEvent,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -816,6 +820,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeDataCommands,
   ...fakeInsightCommands,
   ...fakeGenerationCommands,
+  ...fakeAppCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({

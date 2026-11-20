@@ -10,6 +10,7 @@ export const en = {
   "nav.searchChats": "Search chats",
   "nav.chats": "Chats",
   "nav.projects": "Projects",
+  "nav.apps": "Utility Apps",
   "nav.artifacts": "Artifacts",
   "nav.scheduled": "Scheduled",
   "nav.starred": "Starred",

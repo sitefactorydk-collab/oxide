@@ -27,10 +27,13 @@ export default defineConfig({
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     rollupOptions: {
-      // The app, and the sandboxed frame that runs HTML and React artifacts (Phase 8).
+      // The app, the sandboxed frame that runs HTML and React artifacts (Phase 8) and the one
+      // Utility Apps run in (Phase 20).
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         frame: fileURLToPath(new URL("./artifact-frame.html", import.meta.url)),
+        // The sandboxed frame Utility Apps run in (Phase 20).
+        appframe: fileURLToPath(new URL("./app-frame.html", import.meta.url)),
       },
     },
   },

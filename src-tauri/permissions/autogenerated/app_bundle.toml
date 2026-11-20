@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-bundle"
+description = "Enables the app_bundle command without any pre-configured scope."
+commands.allow = ["app_bundle"]
+
+[[permission]]
+identifier = "deny-app-bundle"
+description = "Denies the app_bundle command without any pre-configured scope."
+commands.deny = ["app_bundle"]

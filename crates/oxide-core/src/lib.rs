@@ -29,6 +29,7 @@ pub mod schedule;
 pub mod settings;
 pub mod tools;
 pub mod usage;
+pub mod utility_app;
 pub mod workspace;
 
 pub use artifact::{
@@ -106,6 +107,12 @@ pub use tools::{
     WebSearchTest,
 };
 pub use usage::{UsageByModel, UsageByProvider, UsageDay, UsageRecord, UsageReport, UsageTotals};
+pub use utility_app::{
+    APP_FILE_EXT, APP_MANIFEST, AppBundle, AppCallError, AppCapability, AppErrorCode, AppFile,
+    AppGenerationOverride, AppImportPreview, AppManifest, AppModels, AppPrefs, AppPrefsView,
+    MAX_APP_BYTES, MAX_APP_FILE_BYTES, MAX_APP_FILES, MAX_APP_STORAGE_BYTES, UtilityApp,
+    app_secret_name, app_secret_prefix, app_slug, valid_app_id, valid_app_path,
+};
 pub use workspace::{ChatFolder, ChatWorkspace, TaskItem, TaskList, TaskStatus};
 
 /// Product name shown in the UI and window titles.

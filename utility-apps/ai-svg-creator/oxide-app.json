@@ -1,0 +1,11 @@
+{
+  "id": "ai-svg-creator",
+  "name": "AI SVG Creator",
+  "description": "Creates and refines scalable SVG graphics and icons from a description, a reference image or an SVG, optionally animated.",
+  "icon": "pen-tool",
+  "category": "Design",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

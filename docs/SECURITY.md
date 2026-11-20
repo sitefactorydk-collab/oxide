@@ -116,6 +116,22 @@ and the data folder anyway.
 - Installers are **not code-signed** yet, so Windows SmartScreen warns and macOS needs
   right-click → Open.
 
+### 8. Utility Apps (Phase 20)
+- An app (built-in, cloned or imported from an `.oxideapp` file) runs in an `<iframe>` sandboxed
+  without `allow-same-origin`, loaded from the `oxide-app` scheme (`src-tauri/src/app_frame.rs`).
+  Its CSP allows no network at all: scripts, styles, images and fonts only from the frame itself,
+  `data:` and `blob:`; `connect-src 'none'`. It has no IPC; it talks only to the main window by
+  `postMessage`, and the main window accepts messages only from that frame's window.
+- Every SDK method that reaches models, the web, connectors, Python, the sandbox, the browser
+  agent or Chrome needs a capability the app's manifest declares **and** the user allowed for that
+  app (asked once, revocable in the app's settings). The backend checks both
+  (`oxide-agent/src/apps/runtime.rs`), not the frontend. Files are picked and saved through
+  native dialogs; storage is per app in the database.
+- Grants, keys and storage are never part of an app's folder or export; importing an app with the
+  id of an own app replaces it and forgets its grants and keys. Imports are checked for unsafe
+  paths and size before anything is written.
+- `run_python`-style code from an app is not sandboxed, as in chats; the approval card says so.
+
 ## Known limitations
 - `run_python` runs with the user's rights (it asks first, every time).
 - A local MCP server runs with the user's rights once trusted. Trust covers its command line,

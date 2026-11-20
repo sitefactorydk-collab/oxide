@@ -53,6 +53,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Dictation | Provider speech-to-text through an OpenAI-compatible `/audio/transcriptions` endpoint chosen in Settings → Voice (MediaRecorder in the web view, base64 to `transcribe_audio`), not local `whisper-rs` (Phase 18) |
 | Media generation | OpenAI-compatible only: `oxide-llm::generation` (`/images/generations` and `/images/edits`, `/videos` with polling, `/music/generations` (synchronous; the shape of the user's comfy-bridge server, since OpenAI has no music API), `GET /models`). Settings → Media generation keeps an endpoint per kind (image, video, music; text comes from the chat models in Providers and Models): a provider or a custom URL, a model, and an optional key of its own in the keychain (`generation:<kind>`). Chats get `generate_image`, `generate_video` and `generate_music`, which ask first; results are stored with the attachments and played via `blob:` URLs (CSP `media-src 'self' blob:`) (Phase 19) |
 | Long chats | A message window (newest 40 mounted, older ones on scrolling up) plus `content-visibility: auto`, not a virtualized list (Phase 18) |
+| Utility Apps | Folders with `oxide-app.json` (built-in ones compiled in from `utility-apps/`, own ones in `<app data>\apps\<id>`), run in a frame on the `oxide-app` scheme (opaque origin, no IPC, CSP without any network), compiled by Babel with a module map (react, react-dom, lucide-react, react-markdown, remark-gfm, jszip, `oxide`). The `oxide` SDK (`src/appframe/sdk.ts`) talks to the main window by `postMessage`; the backend (`oxide-agent/src/apps`) checks each capability against the manifest and the per-app grant (asked once). Settings, grants and storage live in SQLite, keys as `app:<id>:generation:<kind>` (Phase 20) |
 | Location | `C:\AI Apps\Oxide` |
 
 ### Repository layout (target)
@@ -480,6 +481,8 @@ Requested by the user after Phase 17: a **Utility Apps** page (sidebar item afte
 - **Tests**: manifest validation, SDK messages and capability approvals (once per app, revoke), the frame has no IPC (as in Phase 8), export/import round trip, the four built-in apps' happy paths against fake providers.
 
 **Exit:** on Windows, the four built-in apps run from the Utility Apps page with the global models and with a per-app override; each capability asks once; a cloned app can be exported and imported again.
+
+*Built 2026-11-20* (see PROGRESS.md). Deviations: files and storage don't ask; Deny lasts for the visit; Edit is a plain file editor until Phase 21; JSON output by instruction with one retry; the app frame's CSP allows no network at all.
 
 ### Phase 21 — Utility App builder (build mode)
 Requested by the user: creating and editing apps “much like AI Studio's build mode”, with a switch between **Preview** and **Code**.

@@ -1,0 +1,11 @@
+{
+  "id": "ai-html-table-from-image",
+  "name": "AI HTML Table from Image",
+  "description": "Turns a screenshot or photo of a table into clean HTML table code, with merged cells and alignment.",
+  "icon": "table",
+  "category": "Code",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

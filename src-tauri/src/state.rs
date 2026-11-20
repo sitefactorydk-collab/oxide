@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_agent::{
-    AttachmentStore, ChatService, ComputerUse, EventSink, Generation, McpTools, ModelRegistry,
-    Scheduler, SchedulerSink, Skills, Tools,
+    AppRuntime, AttachmentStore, ChatService, ComputerUse, EventSink, Generation, McpTools,
+    ModelRegistry, Scheduler, SchedulerSink, Skills, Tools, UtilityApps,
 };
 use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
@@ -46,6 +46,8 @@ pub struct AppState {
     pub dirs: oxide_agent::data::DataDirs,
     /// Generation endpoints and the generation tools (Phase 19).
     pub generation: Generation,
+    /// Utility Apps (Phase 20): the library and the runtime that answers their SDK calls.
+    pub apps: Arc<AppRuntime>,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -209,6 +211,13 @@ impl AppState {
             Some(c) => tools.with_computer(c.clone()),
             None => tools,
         };
+        // Utility Apps reach the same tools as chats (Phase 20).
+        let apps = Arc::new(AppRuntime::new(
+            UtilityApps::new(data_dir.join("apps"), store.clone(), secrets.clone()),
+            models.clone(),
+            tools.clone(),
+            data_dir.join("app-work"),
+        ));
         let chat = ChatService::new(store.clone(), models.clone(), sink, tools);
         let scheduler = Scheduler::new(
             store.clone(),
@@ -234,6 +243,7 @@ impl AppState {
             computer_bar,
             dirs: dirs.data_dirs(),
             generation,
+            apps,
         })
     }
 }

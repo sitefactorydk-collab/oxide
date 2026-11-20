@@ -43,7 +43,7 @@ pub struct DataDirs {
 pub const PENDING_DELETE_FILE: &str = ".oxide-delete-pending.json";
 
 /// Folders of the data folder copied whole into an export.
-const EXPORTED_FOLDERS: &[&str] = &["attachments", "skills"];
+const EXPORTED_FOLDERS: &[&str] = &["attachments", "skills", "apps"];
 /// Value put in place of secrets in the exported MCP config.
 const REMOVED: &str = "(removed from the export)";
 
@@ -110,12 +110,20 @@ fn write_export(
         // Extensions: their manifests (the unpacked servers can be rebuilt from the bundles).
         let ext_root = dirs.data.join("extensions");
         if let Ok(entries) = std::fs::read_dir(&ext_root) {
-            let mut names: Vec<_> = entries.flatten().map(|e| e.file_name()).collect();
+            // One manifest per extension, from the folder it runs from (an update may have
+            // installed beside a busy old version as `<name>~<id>`).
+            let mut names: Vec<String> = entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter_map(|n| n.split('~').next().map(str::to_owned))
+                .filter(|n| !n.starts_with('.'))
+                .collect();
             names.sort();
+            names.dedup();
             for name in names {
-                let manifest = ext_root.join(&name).join("manifest.json");
+                let manifest = oxide_mcp::current_dir(&ext_root, &name).join("manifest.json");
                 if manifest.is_file() {
-                    let entry = format!("extensions/{}/manifest.json", name.to_string_lossy());
+                    let entry = format!("extensions/{name}/manifest.json");
                     add_file(&mut zip, &manifest, &entry, &mut files, &mut skipped)?;
                 }
             }
@@ -209,6 +217,7 @@ database/*.json    every table of Oxide's database, one JSON array of rows per t
                    settings, providers without their keys, scheduled tasks and runs, ...)\r
 attachments/       files sent in chats\r
 skills/            your skills, as folders with SKILL.md\r
+apps/              your own Utility Apps, as folders with oxide-app.json\r
 extensions/        the manifest of each installed extension\r
 config/            the MCP config, with env and headers values removed\r
 chrome-pairings.json  paired browsers (no tokens)\r
@@ -319,6 +328,18 @@ pub fn folder_size(dir: &Path) -> u64 {
         }
     }
     total
+}
+
+/// The keychain entries of Utility Apps' own generation keys.
+pub fn app_secret_names(app_ids: &[String]) -> Vec<String> {
+    app_ids
+        .iter()
+        .flat_map(|id| {
+            oxide_core::GenerationKind::ALL
+                .into_iter()
+                .map(move |k| oxide_core::app_secret_name(id, k))
+        })
+        .collect()
 }
 
 /// The keychain entries Oxide may have made, given the providers' ids and the MCP servers'
@@ -514,7 +535,21 @@ impl DeleteAll<'_> {
         self.mcp.shutdown().await;
         let _ =
             tokio::time::timeout(std::time::Duration::from_secs(15), self.browser.shutdown()).await;
-        removed += delete_secrets(self.secrets, secret_names(&providers, &servers)).await;
+        let mut names = secret_names(&providers, &servers);
+        // Utility Apps' own generation keys (Phase 20).
+        let mut app_ids: Vec<String> = crate::apps::builtin::all()
+            .iter()
+            .map(|b| b.id.to_owned())
+            .collect();
+        if let Ok(entries) = std::fs::read_dir(self.dirs.data.join("apps")) {
+            app_ids.extend(
+                entries
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned()),
+            );
+        }
+        names.extend(app_secret_names(&app_ids));
+        removed += delete_secrets(self.secrets, names).await;
 
         self.store.close().await;
         let dirs = self.dirs.clone();
@@ -548,6 +583,8 @@ mod tests {
         let d = dirs(tmp.path());
         std::fs::create_dir_all(d.data.join("attachments/ab")).expect("mkdir");
         std::fs::write(d.data.join("attachments/ab/photo.png"), b"\x89PNG data").expect("write");
+        std::fs::create_dir_all(d.data.join("apps/mine")).expect("mkdir");
+        std::fs::write(d.data.join("apps/mine/oxide-app.json"), "{}").expect("write");
         std::fs::create_dir_all(d.data.join("skills/haiku")).expect("mkdir");
         std::fs::write(
             d.data.join("skills/haiku/SKILL.md"),
@@ -590,8 +627,8 @@ mod tests {
         assert!(done.tables >= 10, "{done:?}");
         assert!(done.rows >= 1);
         assert_eq!(
-            done.files, 4,
-            "photo, SKILL.md, extension manifest, config: {done:?}"
+            done.files, 5,
+            "photo, SKILL.md, app manifest, extension manifest, config: {done:?}"
         );
         assert!(done.skipped.is_empty());
         assert!(!tmp.path().join("out/oxide-export.zip.partial").exists());
@@ -604,6 +641,7 @@ mod tests {
             "database/conversations.json",
             "attachments/ab/photo.png",
             "skills/haiku/SKILL.md",
+            "apps/mine/oxide-app.json",
             "extensions/files/manifest.json",
             "config/oxide_config.json",
             "manifest.json",
@@ -631,7 +669,7 @@ mod tests {
         assert!(config.contains("gh-mcp") && config.contains(REMOVED));
         let manifest: Value = serde_json::from_str(&read("manifest.json")).expect("json");
         assert_eq!(manifest["app"], "Oxide");
-        assert_eq!(manifest["files"], 4);
+        assert_eq!(manifest["files"], 5);
     }
 
     #[tokio::test]

@@ -50,6 +50,18 @@ pub enum Fetched {
     },
 }
 
+/// A page's text as sent ([`WebTools::fetch_raw`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawPage {
+    /// The URL after redirects.
+    pub url: String,
+    /// `text/html` for pages, else the server's type.
+    pub content_type: String,
+    pub text: String,
+    /// The page was longer than Oxide reads.
+    pub truncated: bool,
+}
+
 /// HTTP client and keys for the web tools.
 #[derive(Clone)]
 pub struct WebTools {
@@ -250,7 +262,31 @@ impl WebTools {
     }
 
     /// Downloads `url` and makes it readable. `max_bytes` caps the download.
-    pub async fn fetch(&self, url: &str) -> Result<Fetched, String> {
+    /// A page's text as the server sent it (HTML not converted), for Utility Apps that read
+    /// the markup and for the crawler. Refuses images, PDFs and other binary files.
+    pub async fn fetch_raw(&self, url: &str) -> Result<RawPage, String> {
+        let (final_url, mime, bytes, truncated) = self.get_bytes(url).await?;
+        let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_ascii_lowercase();
+        let html = mime.contains("html")
+            || ((mime.is_empty() || mime == "text/plain")
+                && (head.contains("<html") || head.contains("<!doctype html")));
+        let texty = html
+            || mime.is_empty()
+            || mime.starts_with("text/")
+            || mime.contains("json")
+            || mime.contains("xml");
+        if !texty {
+            return Err(format!("this kind of file ({mime}) isn't text"));
+        }
+        Ok(RawPage {
+            url: final_url.to_string(),
+            content_type: if html { "text/html".into() } else { mime },
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+            truncated,
+        })
+    }
+
+    async fn get_bytes(&self, url: &str) -> Result<(Url, String, Vec<u8>, bool), String> {
         let parsed = Url::parse(url.trim()).map_err(|_| format!("“{url}” isn't a valid URL"))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("only http and https URLs can be fetched".into());
@@ -298,6 +334,11 @@ impl WebTools {
             .unwrap_or("")
             .trim()
             .to_owned();
+        Ok((final_url, mime, bytes, truncated))
+    }
+
+    pub async fn fetch(&self, url: &str) -> Result<Fetched, String> {
+        let (final_url, mime, bytes, truncated) = self.get_bytes(url).await?;
         let sniff_html = || {
             let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_ascii_lowercase();
             head.contains("<html") || head.contains("<!doctype html")

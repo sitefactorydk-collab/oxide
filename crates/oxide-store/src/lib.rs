@@ -4,6 +4,7 @@
 //! One [`Store`] wraps a connection pool. Repository methods live in the submodules as
 //! `impl Store` blocks and return `oxide-core` types.
 
+mod apps;
 mod artifacts;
 mod chat_tools;
 mod compactions;

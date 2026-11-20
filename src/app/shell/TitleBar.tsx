@@ -27,6 +27,7 @@ import {
   useRenameConversation,
   useStarConversation,
 } from "@/features/chats/queries";
+import { useApps } from "@/features/apps/queries";
 import { useProject, useProjects } from "@/features/projects/queries";
 import { useOpenSettings } from "@/features/settings/useOpenSettings";
 import { StepPill } from "@/features/workspace/StepPill";
@@ -161,6 +162,7 @@ function AppMenu() {
 const PAGE_TITLES: Array<[string, string]> = [
   ["/chats", "Chats"],
   ["/projects", "Projects"],
+  ["/apps", "Utility Apps"],
   ["/artifacts", "Artifacts"],
 ];
 
@@ -168,8 +170,23 @@ function Breadcrumb({ pagePath }: { pagePath: string }) {
   const chat = matchPath("/chat/:id", pagePath);
   const project = matchPath("/project/:id", pagePath);
   const { project: p } = useProject(project?.params.id);
+  const utilityApp = matchPath("/apps/:id", pagePath);
+  const { data: apps } = useApps();
 
   if (chat?.params.id) return <ChatBreadcrumb id={chat.params.id} />;
+
+  if (utilityApp?.params.id) {
+    const app = apps?.find((a) => a.manifest.id === utilityApp.params.id);
+    return (
+      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-md">
+        <Link to="/apps" className="shrink-0 text-fg-muted hover:text-fg">
+          Utility Apps
+        </Link>
+        <span className="text-fg-subtle">/</span>
+        <span className="truncate text-fg">{app?.manifest.name ?? "App"}</span>
+      </nav>
+    );
+  }
 
   if (project?.params.id) {
     return (

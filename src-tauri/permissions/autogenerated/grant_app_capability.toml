@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-grant-app-capability"
+description = "Enables the grant_app_capability command without any pre-configured scope."
+commands.allow = ["grant_app_capability"]
+
+[[permission]]
+identifier = "deny-grant-app-capability"
+description = "Denies the grant_app_capability command without any pre-configured scope."
+commands.deny = ["grant_app_capability"]

@@ -17,6 +17,7 @@
 //!
 //! This crate has no Tauri dependency: the app crate implements [`EventSink`].
 
+pub mod apps;
 pub mod artifacts;
 pub mod attachments;
 mod chat;
@@ -39,6 +40,8 @@ pub mod tasks;
 mod title;
 pub mod tools;
 
+pub use apps::UtilityApps;
+pub use apps::runtime::AppRuntime;
 pub use attachments::{AttachmentError, AttachmentStore};
 pub use chat::{ChatService, EventSink, path_to};
 pub use computer::{ComputerControl, ComputerSink, ComputerUse, NoComputerSink, Press};

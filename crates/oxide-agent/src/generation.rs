@@ -94,16 +94,30 @@ impl Generation {
         kind: GenerationKind,
         ep: &GenerationEndpoint,
     ) -> Result<Endpoint, String> {
+        self.endpoint_keyed(kind, ep, vec![kind.secret_name()])
+            .await
+    }
+
+    /// Like [`Generation::endpoint`], with the keychain entries to try for an own key, in
+    /// order (a Utility App's own key, then the global one).
+    pub async fn endpoint_keyed(
+        &self,
+        kind: GenerationKind,
+        ep: &GenerationEndpoint,
+        key_names: Vec<String>,
+    ) -> Result<Endpoint, String> {
         let what = kind_name(kind);
         let secrets = self.secrets.clone();
-        let name = kind.secret_name();
         // Keychains block; keep them off the async threads.
-        let own_key = tokio::task::spawn_blocking(move || secrets.get(&name))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten()
-            .map(|k| k.expose().to_owned());
+        let own_key = tokio::task::spawn_blocking(move || {
+            key_names
+                .iter()
+                .find_map(|name| secrets.get(name).ok().flatten())
+        })
+        .await
+        .ok()
+        .flatten()
+        .map(|k| k.expose().to_owned());
         let provider = match &ep.provider_id {
             Some(id) => match self.store.get_provider(id).await {
                 Ok(p) => Some(p),
@@ -205,7 +219,29 @@ impl Generation {
         progress: &(dyn Fn(ToolProgress) + Send + Sync),
     ) -> ToolOutput {
         let ep = settings.endpoint(kind);
-        let endpoint = match self.endpoint(kind, ep).await {
+        self.run_on(
+            kind,
+            input,
+            ep,
+            vec![kind.secret_name()],
+            references,
+            progress,
+        )
+        .await
+    }
+
+    /// Runs a generation on a given endpoint (a Utility App's), with the keychain entries to
+    /// try for its key.
+    pub async fn run_on(
+        &self,
+        kind: GenerationKind,
+        input: &Value,
+        ep: &GenerationEndpoint,
+        key_names: Vec<String>,
+        references: Vec<InputImage>,
+        progress: &(dyn Fn(ToolProgress) + Send + Sync),
+    ) -> ToolOutput {
+        let endpoint = match self.endpoint_keyed(kind, ep, key_names).await {
             Ok(e) => e,
             Err(e) => return ToolOutput::error(e),
         };

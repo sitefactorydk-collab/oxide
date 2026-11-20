@@ -11,11 +11,12 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 16** — Computer use: closed by the user on 2026-11-13 (`898553d`, follow-ups `ef0098f`, `9046b25`, `6afc299`, `7af87f7`; every check green on Windows). The exit check was **not fully passed**: with the local Strata `swift-iq2_xs` the model opened Notepad and typed the text but never managed the Save dialog (its clicking isn't precise enough); the check with Claude and the Ctrl+Alt+Esc check by hand weren't done (Stop from the app worked). See Phase 16's notes.
 - **Phase 17** — Packaging, updates & CI: done for Windows (2026-11-14): `82d6fe3`, CI fixes `ff775fc`, Groq/0.1.1 `3f61eed`. CI is green on Windows, macOS and Ubuntu. Releases v0.1.0 and v0.1.1 were published from the public repo `sitefactorydk-collab/oxide`. The macOS and Linux installer checks were deferred by the user.
 - **Phase 18** — Hardening & polish (+ usage dashboard, HTML export, dictation): done (2026-11-19, `ff92037`). Every check is green on Windows and every manual check passed. Then the Vitest 5 maintenance step (`a4615c4`, pushed; ESLint 10 waits for plugin support).
-- **Current:** Phase 19 — Generation endpoints & media generation: **partial** (2026-11-19). It is built and tested on the agent side. Every check is green on Windows, and it is committed as `dcd3bdb` (not pushed). The manual exit check is still open. OpenAI's Videos API (Sora) was shut down on 2026-09-24, so the video check needs a `/videos`-compatible gateway.
+- **Phase 19** — Generation endpoints & media generation: **done** (2026-11-20 00:06). Commits `dcd3bdb`, `03b06bc` and `727d13e`, pushed. Every check is green on Windows. The user passed every exit check on their local AI server: image, video (synchronous `/videos/generations`), music (comfy-bridge `ace-step`), and changing a default.
 - **Phase 19 follow-up (2026-11-19 evening):** at the user's request, the page is renamed **Settings → Media generation** and the Text group is dropped (text comes from Providers and Models). Script: `scripts\win\phase19-media.cmd`, message `logs\commit-msg-phase19-media.txt`.
 - **Phase 19 follow-up 2 (2026-11-19 late evening):** at the user's request, Audio (speech) became **Music generation** on `/music/generations` (the user's local comfy-bridge server). Image was checked in Oxide by the user.
-- **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 are checked and committed together by `scripts\win\phase19-music.cmd` (message `logs\commit-msg-phase19-music.txt`).
-- **Next phase:** finish Phase 19's exit check, then Phase 20 — Utility Apps: runtime and gallery.
+- **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
+- **Phase 20** — Utility Apps: runtime and gallery: **built on the agent side** (2026-11-20). Rust tests, clippy `-D warnings` and fmt pass on Linux for every library crate (plus the acl tests in a scratch crate); tsc, ESLint and Prettier pass on the device (except `jszip`, which `npm install` adds). The Windows checks, the commit (`logs\commit-msg-phase20.txt`) and the manual exit checks run from `scripts\win\phase20.cmd`.
+- **Next phase:** Phase 20's Windows checks and manual exit checks, then Phase 21 — Utility App builder.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -45,13 +46,78 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Linux harness after Phase 18** (Phase 19): `logs\linux-vendor.tgz` has no `dbus-secret-service`, so in `~/oxide-linux` `crates/oxide-store` is a folder with symlinked `src` and `migrations` and a `Cargo.toml` whose `secret-service` feature is `[]`. Start without the repo's `Cargo.lock` (cargo resolves offline from the vendor folder). Mirror tarball: exclude `src-tauri/binaries`, `docs/ui-parity`, `docs/*.json` and `extension/dist` too (they are large). `src-tauri` files are formatted with `rustfmt --edition 2024 --config-path rustfmt.toml <files>`.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
+## Phase 20 — Utility Apps: runtime and gallery — 2026-11-20
+Status: **built, waiting for the Windows run** (`scripts\win\phase20.cmd`: npm install with `jszip`, bindings, every check, vite build, commit only when green, then the app for the manual checks).
+
+Exit criteria (Windows, by hand):
+- [ ] Sidebar → **Utility Apps** lists the four built-in apps (search and categories work).
+- [ ] Each built-in app runs with the global models (text from Providers and Models):
+  - **AI Meta Tag Generator**: a URL (asks for *AI text* and *reading web pages* once each) → three suggestions; also with pasted HTML.
+  - **Readability & Tone Analyzer**: a URL or pasted text → score, tone, strengths, improvements, analysis.
+  - **AI HTML Table from Image**: a picture of a table (needs a vision model) → table preview, Code, Copy, Download.
+  - **AI SVG Creator**: a description → SVG; a second request refines it; Download.
+- [ ] With a per-app override (an app's **Settings** → Text model) the app uses that model (check the endpoint's log or the Meta Tag app's model label).
+- [ ] Each capability asks once per app; **Revoke** in Settings makes it ask again; Deny makes the call fail with a message in the app.
+- [ ] **Clone** a built-in app → it appears under “My apps” with **Edit**; change its `App.tsx` in Edit → Save → it reloads changed; **Export** saves an `.oxideapp`; delete the clone, **Import app** that file → the preview lists what it may ask for → Install → it runs.
+
+Done:
+- **core** `utility_app.rs`: `AppManifest` (id, name, description, icon, category, version, entry, capabilities, default models, author) with validation; `AppCapability` (text, image, video, music, webSearch, webFetch, connectors, python, sandbox, browser, chrome); `UtilityApp`, `AppBundle`, `AppFile`; `AppPrefs` (text model, `AppGenerationOverride` per kind, granted capabilities) and `AppPrefsView`; `AppImportPreview`; `AppCallError`/`AppErrorCode`; `app_secret_name` = `app:<id>:generation:<kind>`; limits (200 files, 2 MB a file, 20 MB an app, 10 MB storage).
+- **store**: migration `0011_utility_apps.sql` (`app_prefs`, `app_storage`), with prefs, storage get/set/delete/keys/clear/bytes (capped) and `delete_app_data`.
+- **agent** `apps/`:
+  - `mod.rs` `UtilityApps`: built-in apps (read-only) plus own apps in `<data>/apps/<id>/`; list (broken folders are listed with their problem), bundle, clone (“X (copy)”, unique id), save one file (the manifest is validated, its id can't change), delete (folder, settings, storage, keys), export (zip via `ZipWriter`), import in two steps (preview with a token, then install; unsafe paths, sizes and a missing entry are refused; a zip with one top folder is accepted; a built-in id gets a new id; an own id is replaced and its grants and keys forgotten), prefs (the dialog can only remove grants), grant, keys, clear storage.
+  - `builtin.rs`: the four apps from `utility-apps/<id>/`, compiled in with `include_str!`; a test checks their manifests and that they import only what the frame provides.
+  - `runtime.rs` `AppRuntime`: each SDK method maps to a capability; undeclared → `undeclared`, not granted → `needsPermission`. Text: the app's model (setting, else the manifest's when available, else the first model with tools); prompt or messages; images and documents (base64) on the last user message; streaming deltas as events; JSON mode by instruction (+ schema) with a lenient parser and one retry. Media through `Generation::run_on` with the app's override (`AppGenerationOverride::apply` over the global endpoint and the manifest's model) and keys tried in order: the app's, then the global one only when the app keeps the global endpoint. Web search; fetch as Markdown or HTML (`WebTools::fetch_raw`, new); crawl. Connectors (list, call). Python in `<data>/app-work/<id>`. Sandbox, browser agent and Chrome with the session `app-<id>` (each checks its setting is on). Storage. Cancel per call.
+  - `crawl.rs`: robots.txt (the Oxide group, else `*`; longest match, `*` and `$`), anchor links, same-origin breadth-first crawl (≤ 50 pages, depth), skipped pages with reasons.
+  - `generation.rs`: `endpoint_keyed` and `run_on` (keys and endpoint given by the caller); `tools/web.rs`: `fetch_raw`/`RawPage`; `Tools::mcp()`.
+  - `data.rs`: Export all includes `apps/`; Delete all removes the apps' keys (`app_secret_names`).
+- **src-tauri**: `app_frame.rs` (the `oxide-app` scheme; CSP with no network at all: no `https:` sources, `connect-src 'none'`), sharing `artifact_frame::serve`/`Frame`; commands in `commands/apps.rs` (`list_apps`, `app_bundle`, `clone_app`, `delete_app` (also forgets the app's sandbox and browser), `save_app_file`, `export_app`, `pick_app_import`, `install_app_import`, `app_prefs`, `save_app_prefs`, `grant_app_capability`, `set_app_key`, `clear_app_storage`, `app_call` (JSON in and out), `cancel_app_call`, `save_app_output`); event `AppCallEvent`; capabilities; the main CSP's `frame-src` allows the app frame.
+- **frontend**:
+  - `app-frame.html` + `src/appframe/`: `main.ts` (removes Tauri globals, Tailwind browser build with the `dark` class variant, module map: react, react-dom, lucide-react, react-markdown, remark-gfm, jszip, oxide), `loader.ts` (multi-file CommonJS loader: relative imports, index files, JSON, CSS → `<style>`), `protocol.ts` (messages), `sdk.ts` (the `oxide` module: `ai.text/json/image/video/music/info`, `web.search/fetch/crawl`, `connectors`, `python`, `sandbox`, `browser`, `chrome`, `files.pick/save/zip/toBase64/toDataUrl`, `storage`, `app.copy/theme`, `OxideError`).
+  - `features/apps/`: `AppsPage` (gallery: My apps, Built-in, search, category chips, Import with a preview dialog), `AppPage` (`/apps/:id`: Reload, Settings, Clone, Edit for own apps, Export, Delete), `AppFrame` (the frame, approval cards, error bar, theme), `host.ts` (answers calls: asks once per capability, Deny for the visit, media paths → Blobs, `files.save` and `app.copy` in the main window), `AppSettingsDialog` (text model, overrides and keys for declared kinds, permissions with Revoke, storage), `CodeDialog` (plain editor), `AppIcon`.
+  - Sidebar item **Utility Apps** after Projects (`nav.apps` in en/da), breadcrumb, routes.
+  - `utility-apps/`: the four apps ported from AI-Toolkit onto the SDK (Gemini calls → `ai.text/json`; sitefactory.dk fetchers → `web.fetch`; react-dropzone, motion and clsx dropped), with `tsconfig.json` checked by `npm run typecheck`.
+- **Tests**: core 5, store 2, agent: builtin 1, crawl 3, runtime 2, apps 10 (listing, clone/edit, export/import round trip and refusals, ask once and revoke, text/stream/images/JSON retry, storage, connectors, keys removed with the app, fetch + crawl against a local site, cancel), data export (apps folder); acl; app frame CSP. Vitest: `appframe/loader.test.ts`, `features/apps/Apps.test.tsx` (gallery, approvals once/deny/undeclared, media blobs, files.save, clone → edit → export, import preview, settings revoke), `features/apps/BuiltinApps.test.tsx` (the four apps' happy paths with a fake SDK). Fake backend: `src/test/fakeApps.ts`.
+
+Deviations from PLAN.md (and why):
+- **Files and storage don't ask.** The user picks every file and save location in a dialog, and storage belongs to the app; asking would add a card with no decision in it.
+- **Deny lasts for the visit** (not stored): the next visit asks again, so a mistaken Deny doesn't need Settings.
+- **Edit is a plain file editor** for own apps; the AI builder with Preview/Code is Phase 21.
+- **JSON output by instruction**, not a provider JSON mode (Oxide's request type has none; it works the same on every endpoint), with one retry.
+- **Stricter frame CSP than artifacts**: no remote scripts, styles, images or fonts, so an app can't send data anywhere except through the SDK.
+- **Bundled libraries**: react, react-dom, lucide-react, react-markdown, remark-gfm, jszip (new dependency) and oxide. The ports don't use motion, react-dropzone or clsx.
+- **Imports through a file picker** (no drag-drop onto the gallery yet).
+
+Known issues / TODO carried forward:
+- Not yet run on Windows (checks and manual exit checks above).
+- Only text files of an app reach the frame (images in an app's folder are kept and exported but not loadable yet).
+- Generated media reach the frame as base64 over IPC (as in Phase 19); fine for images and short clips.
+- An app's Python working folder (`<data>/app-work/<id>`) isn't removed when the app is deleted (Delete all removes it).
+
+Notes for Phase 21:
+- The builder's model tools write into `<data>/apps/<id>/` with `UtilityApps::save_file` (validated paths, manifest checks); add delete/rename there.
+- The SDK's types for the builder's system prompt: `src/appframe/sdk.ts` (generate a `.d.ts` or embed the file).
+- Compile errors and runtime errors already reach the host (`type: "error"` messages); forward them to the builder chat for **Fix with AI**.
+- `AppFrame` takes a bundle and a reload key; the Preview pane can reuse it with unsaved files.
+
+Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl in a scratch crate) tsc ✅ (but `jszip`) eslint ✅ prettier ✅. Windows: pending.
+
+**Windows run 1 (`phase20.cmd`, 2026-11-20 09:31–09:46):** npm install, bindings, fmt, prettier, lint and vite build passed; not committed.
+- clippy: `artifact_frame::allowed` is now only used by tests (`#[cfg_attr(not(test), allow(dead_code))]`).
+- typecheck: the generated `AppManifest` marks fields with a serde default as optional (`entry?`, `icon?`, `capabilities?`, …); the frontend now falls back to the defaults.
+- Vitest: the loader and the four built-in apps passed; the six gallery tests failed because `renderApp` reset the fake apps set up before it. The fake apps now reset in the test file's `beforeEach`, and two queries were made exact (the gallery loads asynchronously; a toast also says “My apps”).
+- cargo test: only the known flaky `oxide-mcp` extensions test (os error 32, see Phase 19). Re-run.
+
+**Windows run 2 (10:07–10:14):** everything passed (cargo test too) except one Vitest test: the media test stored its fake file before `renderApp`, which resets the fake generation backend. It now stores it after. Not committed yet.
+
+**Windows run 3 (10:22–10:28):** Vitest, clippy, typecheck and lint passed; `cargo test` failed only on the `oxide-mcp` extension-update test again (os error 32, its second failure in three runs). As decided in Phase 19, updates no longer depend on renaming a busy folder: `Extensions::install` moves the old version aside with a short retry (about 3 s), and when Windows still holds its files, installs beside it as `<name>~<id>`. `current_dir` picks the newest of `<name>` and `<name>~<id>` (names can't contain `~`); the old folder is removed right after, or at the next start (`clean_staging`); uninstall removes every version; Export all takes each extension's manifest from its current folder. Test: `the_newest_version_folder_is_the_current_one`. Checked on Linux: fmt, clippy, every oxide-mcp test and the agent's data tests.
+
 ## Phase 19 — Generation endpoints & media generation — 2026-11-19
-Status: **partial**: built and tested on the agent side. Every Rust test passes on Linux (library crates, clippy `-D warnings`, fmt, and the acl/CSP tests in a scratch crate); tsc, ESLint and Prettier pass on the device. `scripts\win\phase19.cmd` does the rest:
+Status: **done** (2026-11-20; every exit check passed by the user). It was first built and tested on the agent side. Every Rust test passes on Linux (library crates, clippy `-D warnings`, fmt, and the acl/CSP tests in a scratch crate); tsc, ESLint and Prettier pass on the device. `scripts\win\phase19.cmd` does the rest:
 - it regenerates the bindings and runs every check and vite build on Windows;
 - it commits with `logs\commit-msg-phase19.txt` only when all of that passes (no push);
 - it then starts the app for the manual exit check.
 
-The exit check is still open (see below).
+The exit checks were passed by the user on 2026-11-20 (see below).
 
 **API check (2026-11-19, OpenAI's reference at developers.openai.com):**
 - **OpenAI shut down the Videos API (Sora 2) on 2026-09-24.** No one-to-one replacement exists. Oxide's `/videos` client follows OpenAI's last published shape: JSON `POST /videos` {model, prompt, `seconds` as a string, size, `input_reference.image_url`}, then `GET /videos/{id}` (`queued`/`in_progress`/`completed`/`failed`, `progress`), then `GET /videos/{id}/content`. Gateways that kept that API work with it (CometAPI, haimaker, apiyi, LLM Gateway, …). The video exit check therefore needs such an endpoint, **not OpenAI**.
@@ -60,10 +126,10 @@ The exit check is still open (see below).
 
 Exit criteria:
 - In a chat on Windows, each of these works against endpoints set in Settings → Media generation:
-  - [x] "make an image of …" (checked by the user, 2026-11-19);
-  - [ ] "make a 5-second video of …". Reported as working at 22:22, then corrected by the user: it failed, because their server has no `/videos` job API (see Follow-up 3);
-  - [ ] "make a 30-second song about …" on the user's comfy-bridge server (`http://192.168.8.80:8190/v1`, model `ace-step`). This replaced "read this paragraph aloud"; see the music follow-up below.
-- [ ] Changing a default changes which model and endpoint are used. Check the Request in the tool line and the endpoint's own log.
+  - [x] "make an image of …" (checked by the user, 2026-11-19, on their local server);
+  - [x] "make a 5-second video of …". It first failed: the user's server has no `/videos` job API. After Follow-up 3, the user checked it on comfy-bridge `wan2.2-5b` (2026-11-20);
+  - [x] "make a 30-second song about …" (checked by the user, 2026-11-20) on the user's comfy-bridge server (`http://192.168.8.80:8190/v1`, model `ace-step`). This replaced "read this paragraph aloud"; see the music follow-up below.
+- [x] Changing a default changes which model and endpoint are used (checked by the user, 2026-11-20). Check the Request in the tool line and the endpoint's own log.
 
 Done:
 - **oxide-llm `generation.rs`:**
@@ -136,7 +202,7 @@ Notes for Phase 20:
 - **`scripts\win\ext-diag2.cmd` (23:20):** the whole test binary passed 4 out of 4 times, in about 0.5 s each. A sampler checked every 250 ms and found no test server left running, and Windows' Restart Manager reported no process holding files in the extension folder.
   - So nothing in Oxide holds the folder. The failure shows up only in the full `cargo test --workspace` run right after a fresh build, when the machine is busiest.
   - The likely cause is a scan by antivirus (Defender) that lags under load. It is not proven.
-  - **Decision:** re-run, and keep it as a known issue. If it comes back, make updates install into a new folder instead of renaming the old one.
+  - **Decision:** re-run (the second run, 23:31, passed), and keep it as a known issue. If it comes back, make updates install into a new folder instead of renaming the old one.
 
 Verified (agent side): fmt ✅ clippy ✅ cargo test ✅ (Linux: every library crate; acl/CSP in a scratch crate) tsc ✅ eslint ✅ prettier ✅. Windows (`phase19.cmd`, third run 13:01–13:06): fmt ✅ prettier ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅; committed `dcd3bdb` (not pushed). Manual exit check: pending.
 

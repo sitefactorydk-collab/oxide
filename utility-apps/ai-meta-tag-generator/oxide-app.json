@@ -1,0 +1,11 @@
+{
+  "id": "ai-meta-tag-generator",
+  "name": "AI Meta Tag Generator",
+  "description": "Three optimized meta titles and descriptions for a web page, from its live URL or its pasted HTML.",
+  "icon": "search",
+  "category": "SEO",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text", "webFetch"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

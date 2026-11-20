@@ -31,6 +31,6 @@ pub mod trust;
 
 pub use client::{ConnectOptions, McpClient, ServerInfo};
 pub use error::McpError;
-pub use extensions::Extensions;
+pub use extensions::{Extensions, current_dir};
 pub use handler::{ClientEvent, ClientHandler, NoUser};
 pub use manager::{ExtensionServer, ManagerOptions, ManagerSink, McpManager, UserAgent};
