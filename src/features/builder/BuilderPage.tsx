@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Check,
   Code2,
   Download,
   Eye,
@@ -51,6 +52,10 @@ import {
   usePublishDraft,
   useRestoreCheckpoint,
 } from "./queries";
+
+/** The primary action (its own colours: mixing them with `headerButton`'s clashed). */
+const primaryButton =
+  "inline-flex h-8 items-center gap-1.5 rounded-lg bg-fg px-3 text-sm font-medium text-app hover:opacity-90 disabled:opacity-40 [&_svg]:size-4";
 
 const headerButton =
   "inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-sm text-fg hover:bg-hover disabled:opacity-40 [&_svg]:size-4";
@@ -353,31 +358,35 @@ function BuilderHeader({
         </span>
       </button>
       <CheckpointsMenu id={m.id} />
-      <button
-        type="button"
-        className={cn(
-          headerButton,
-          "border-transparent bg-fg text-app hover:bg-fg hover:opacity-90",
-        )}
-        disabled={
-          publish.isPending || (draft.published && !draft.unsaved) || Boolean(draft.app.problem)
-        }
-        title={draft.app.problem ? `The app can't run: ${draft.app.problem}` : undefined}
-        onClick={() =>
-          publish.mutate(undefined, {
-            onSuccess: (app) =>
-              toast(
-                draft.published
-                  ? `Saved ${app.manifest.name}.`
-                  : `Saved ${app.manifest.name} to Utility Apps.`,
-              ),
-            onError: (e) => toast(errorMessage(e), "error"),
-          })
-        }
-      >
-        <Save />
-        Save to Utility Apps
-      </button>
+      {draft.published && !draft.unsaved ? (
+        <span
+          role="status"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-fg-muted [&_svg]:size-4"
+        >
+          <Check /> Saved
+        </span>
+      ) : (
+        <button
+          type="button"
+          className={primaryButton}
+          disabled={publish.isPending || Boolean(draft.app.problem)}
+          title={draft.app.problem ? `The app can't run: ${draft.app.problem}` : undefined}
+          onClick={() =>
+            publish.mutate(undefined, {
+              onSuccess: (app) =>
+                toast(
+                  draft.published
+                    ? `Saved ${app.manifest.name}.`
+                    : `Saved ${app.manifest.name} to Utility Apps.`,
+                ),
+              onError: (e) => toast(errorMessage(e), "error"),
+            })
+          }
+        >
+          <Save />
+          Save to Utility Apps
+        </button>
+      )}
       <MenuRoot>
         <MenuTrigger asChild>
           <IconButton label="More" tooltip={false}>

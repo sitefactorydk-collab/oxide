@@ -150,7 +150,13 @@ describe("the Utility App builder", () => {
     await waitFor(() =>
       expect(fakeApps().apps.get("new-app")?.app.manifest.name).toBe("CSV Chart"),
     );
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    // Nothing left to save: the button gives way to a quiet “Saved”.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /Save to Utility Apps/ }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "App details" })).toHaveTextContent("Saved");
     fireEvent.click(screen.getByRole("button", { name: "Close the builder" }));
     await waitFor(() => expect(location.pathname).toBe("/apps/new-app"));
     const toolbar = await screen.findByRole("toolbar", { name: "App actions" });

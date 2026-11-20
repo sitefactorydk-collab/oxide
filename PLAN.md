@@ -498,10 +498,10 @@ Requested by the user: creating and editing apps “much like AI Studio's build 
 *Done 2026-11-20* (see PROGRESS.md). Deviations: the builder chat is an ordinary hidden chat; drafts are folders and the Preview runs them as `draft:<id>`; screenshots are drawn by the frame; the code editor is Oxide's own (no new dependency); builder tools don't ask (checkpoints undo); Clone stays a copy in My apps and Edit opens the builder.
 
 ### Phase 22 — More Utility Apps (rest of AI-Toolkit)
-- Port the remaining AI-Toolkit tools onto the SDK (AI Web Auditor, AI SEO Recommendations, AI Schema Markup Generator, Multi Purpose AI Translator, AI FAQ Questions Generator, llms.txt Generator, Markdown for AI Agents testing tool, AI SFT Dataset Generator, SP Page Builder - AI, AI Plugin Creator), in the order the user picks; each as a built-in app with its own test.
+- Port three more AI-Toolkit tools onto the SDK, as picked by the user on 2026-11-20: **Multi Purpose AI Translator**, **AI Plugin Creator** and **llms.txt Generator**; each as a built-in app with its own test. The other AI-Toolkit tools (AI Web Auditor, AI SEO Recommendations, AI Schema Markup Generator, AI FAQ Questions Generator, Markdown for AI Agents testing tool, AI SFT Dataset Generator, SP Page Builder - AI) are not ported.
 - Later (not planned yet): a community catalogue for sharing apps.
 
-**Exit:** each ported app does on Windows what its AI-Toolkit original does, using Oxide's models and capabilities.
+**Exit:** each of the three ported apps does on Windows what its AI-Toolkit original does, using Oxide's models and capabilities.
 
 ---
 

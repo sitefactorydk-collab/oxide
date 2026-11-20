@@ -189,7 +189,7 @@ describe("Utility Apps", () => {
     const editor = await screen.findByRole("textbox", { name: "App.tsx" });
     fireEvent.change(editor, { target: { value: "export default () => 'changed';" } });
     fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
-    const publish = screen.getByRole("button", { name: /Save to Utility Apps/ });
+    const publish = await screen.findByRole("button", { name: /Save to Utility Apps/ });
     await waitFor(() => expect(publish).toBeEnabled());
     fireEvent.click(publish);
     await waitFor(() =>

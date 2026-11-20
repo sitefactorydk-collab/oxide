@@ -17,7 +17,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
 - **Phase 21** — Utility App builder: **done** (2026-11-20). Committed `1ce2afe` (every check green on Windows on the third run), template fix `c606ab4`; the user passed every manual exit check (18:35), building the CSV chart app with LM Studio's `google/gemma-4-12b-qat`.
-- **Next phase:** Phase 22 — More Utility Apps (rest of AI-Toolkit).
+- **Next phase:** Phase 22 — More Utility Apps: only **Multi Purpose AI Translator**, **AI Plugin Creator** and **llms.txt Generator** (the user's pick, 2026-11-20; PLAN.md updated).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -90,6 +90,8 @@ Deviations from PLAN.md (and why):
 - **Clone stays as in Phase 20** (a copy in My apps); **Edit** then opens the builder. Export works on the saved app.
 
 **After the commit (manual check, 17:21):** the user typed the CSV request into the *template app's* prompt box in the Preview and pressed its **Ask** button, so the template sent it to the model as a plain question (an HTML answer came back) instead of going to the builder chat. The template is now a static “Your new app will appear here — describe it in the builder's chat on the left” screen with no prompt box and no capabilities. Drafts made before this keep the old template until the builder rewrites `App.tsx`.
+
+**After the exit checks (18:52):** in the dark theme the header's **Save to Utility Apps** showed as an empty light pill when there was nothing to save: it combined `headerButton`'s `text-fg` with `text-app` on `bg-fg`, and `text-fg` won (`cn` doesn't merge Tailwind classes). It now has its own `primaryButton` style, and when the draft is saved the button gives way to a quiet **✓ Saved**.
 
 Known issues / TODO carried forward:
 - Checkpoints keep whole copies of the draft (base64 in the database, 60 per app); fine for text apps, heavy for apps with large files.
