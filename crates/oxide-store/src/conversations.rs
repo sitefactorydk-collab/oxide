@@ -39,10 +39,12 @@ const NOT_FOUND: StoreError = StoreError::NotFound {
 };
 
 impl Store {
-    /// All chats, most recently updated first.
+    /// All chats, most recently updated first (not the Utility App builders' chats).
     pub async fn list_conversations(&self) -> Result<Vec<Conversation>> {
         let rows: Vec<ConversationRow> = sqlx::query_as(&format!(
-            "SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY updated_at DESC, seq DESC"
+            "SELECT {CONVERSATION_COLUMNS} FROM conversations
+             WHERE id NOT IN (SELECT conversation_id FROM app_builder_chats)
+             ORDER BY updated_at DESC, seq DESC"
         ))
         .fetch_all(&self.pool)
         .await?;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-draft-file"
+description = "Enables the delete_draft_file command without any pre-configured scope."
+commands.allow = ["delete_draft_file"]
+
+[[permission]]
+identifier = "deny-delete-draft-file"
+description = "Denies the delete_draft_file command without any pre-configured scope."
+commands.deny = ["delete_draft_file"]

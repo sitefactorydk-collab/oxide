@@ -221,9 +221,11 @@ impl AppRuntime {
                 format!("oxide has no method “{method}”"),
             )
         })?;
+        // The builder's Preview runs the draft (`draft:<id>`) with the app's settings.
+        let (app_id, draft) = super::builder::split_ref(app_id);
         let manifest = self
             .apps
-            .manifest(app_id)
+            .manifest_at(app_id, draft)
             .await
             .map_err(|e| failed(e.to_string()))?;
         let prefs = self

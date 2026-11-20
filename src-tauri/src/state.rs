@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_agent::{
-    AppRuntime, AttachmentStore, ChatService, ComputerUse, EventSink, Generation, McpTools,
-    ModelRegistry, Scheduler, SchedulerSink, Skills, Tools, UtilityApps,
+    AppBuilder, AppRuntime, AttachmentStore, ChatService, ComputerUse, EventSink, Generation,
+    McpTools, ModelRegistry, Scheduler, SchedulerSink, Skills, Tools, UtilityApps,
 };
 use oxide_bridge::{Bridge, BridgeSink};
 use oxide_mcp::{Extensions, ManagerOptions, ManagerSink, McpManager};
@@ -48,6 +48,8 @@ pub struct AppState {
     pub generation: Generation,
     /// Utility Apps (Phase 20): the library and the runtime that answers their SDK calls.
     pub apps: Arc<AppRuntime>,
+    /// The Utility App builder (Phase 21): drafts, checkpoints, the Preview bridge.
+    pub builder: AppBuilder,
 }
 
 /// Where Oxide looks for its `uv`: next to the app (the bundled sidecar), then the folder
@@ -197,6 +199,10 @@ impl AppState {
         .with_browser(browser.clone())
         .with_chrome(chrome.clone())
         .with_generation(generation.clone());
+        // Utility Apps (Phase 20) and their builder (Phase 21), whose chats get its tools.
+        let utility_apps = UtilityApps::new(data_dir.join("apps"), store.clone(), secrets.clone());
+        let builder = AppBuilder::new(utility_apps.clone());
+        let tools = tools.with_builder(builder.clone());
         // Computer use: the real screen, mouse and keyboard, where Oxide can control them.
         let computer = oxide_computer::Desktop::supported().then(|| {
             ComputerUse::new(
@@ -213,7 +219,7 @@ impl AppState {
         };
         // Utility Apps reach the same tools as chats (Phase 20).
         let apps = Arc::new(AppRuntime::new(
-            UtilityApps::new(data_dir.join("apps"), store.clone(), secrets.clone()),
+            utility_apps,
             models.clone(),
             tools.clone(),
             data_dir.join("app-work"),
@@ -244,6 +250,7 @@ impl AppState {
             dirs: dirs.data_dirs(),
             generation,
             apps,
+            builder,
         })
     }
 }

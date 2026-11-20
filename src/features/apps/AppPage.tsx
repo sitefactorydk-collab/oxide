@@ -1,4 +1,4 @@
-import { Copy, Download, FileCode, RotateCw, Settings, Trash2 } from "lucide-react";
+import { Copy, Download, RotateCw, Settings, Trash2, WandSparkles } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { errorMessage } from "@/lib/api";
@@ -6,7 +6,6 @@ import { toast } from "@/lib/toast";
 import { AppFrame } from "./AppFrame";
 import { AppIcon } from "./AppIcon";
 import { AppSettingsDialog } from "./AppSettingsDialog";
-import { CodeDialog } from "./CodeDialog";
 import { useAppBundle, useCloneApp, useDeleteApp, useExportApp } from "./queries";
 
 const button =
@@ -22,7 +21,6 @@ export function AppPage() {
   const remove = useDeleteApp();
   const [reloadKey, setReloadKey] = useState(0);
   const [settings, setSettings] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (error) {
@@ -77,8 +75,13 @@ export function AppPage() {
             <Copy /> Clone
           </button>
           {!app.builtin && (
-            <button type="button" className={button} onClick={() => setEditing(true)}>
-              <FileCode /> Edit
+            <button
+              type="button"
+              className={button}
+              title="Change the app with AI, or edit its code"
+              onClick={() => navigate(`/apps/${m.id}/build`)}
+            >
+              <WandSparkles /> Edit
             </button>
           )}
           <button
@@ -120,9 +123,6 @@ export function AppPage() {
       </header>
       <AppFrame bundle={bundle} reloadKey={reloadKey} />
       <AppSettingsDialog app={app} open={settings} onOpenChange={setSettings} />
-      {!app.builtin && (
-        <CodeDialog bundle={bundle} open={editing} onOpenChange={setEditing} onSaved={reload} />
-      )}
     </div>
   );
 }

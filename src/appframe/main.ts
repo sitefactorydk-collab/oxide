@@ -15,7 +15,8 @@ import * as ReactMarkdown from "react-markdown";
 import * as RemarkGfm from "remark-gfm";
 import type { Transform } from "@/frame/run";
 import { AppLoadError, appComponent, loadApp } from "./loader";
-import { isHostToFrame, type FrameToHost, type Theme } from "./protocol";
+import { isHostToFrame, type ConsoleLevel, type FrameToHost, type Theme } from "./protocol";
+import { snapshot } from "./snapshot";
 import * as sdk from "./sdk";
 
 // Nothing of the host should be reachable from app code, even if a webview injected it.
@@ -46,6 +47,31 @@ function post(msg: FrameToHost): void {
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** One console argument as text (objects as JSON, cut). */
+function show(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v instanceof Error) return v.stack ?? v.message;
+  try {
+    return JSON.stringify(v) ?? String(v);
+  } catch {
+    return String(v);
+  }
+}
+
+// The app's console also goes to the main window (the builder's Preview reports it).
+for (const level of ["log", "info", "warn", "error", "debug"] as ConsoleLevel[]) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    original(...args);
+    try {
+      const text = args.map(show).join(" ").slice(0, 2000);
+      post({ source: "oxide-app", type: "console", level, text });
+    } catch {
+      // never let logging break the app
+    }
+  };
 }
 
 window.addEventListener("error", (e) =>
@@ -154,6 +180,13 @@ window.addEventListener("message", (e: MessageEvent) => {
       break;
     case "theme":
       applyTheme(d.theme);
+      break;
+    case "snapshot":
+      snapshot().then(
+        (dataUrl) => post({ source: "oxide-app", type: "snapshot", id: d.id, dataUrl }),
+        (e: unknown) =>
+          post({ source: "oxide-app", type: "snapshot", id: d.id, error: message(e) }),
+      );
       break;
     case "result":
     case "event":

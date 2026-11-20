@@ -43,7 +43,7 @@ pub struct DataDirs {
 pub const PENDING_DELETE_FILE: &str = ".oxide-delete-pending.json";
 
 /// Folders of the data folder copied whole into an export.
-const EXPORTED_FOLDERS: &[&str] = &["attachments", "skills", "apps"];
+const EXPORTED_FOLDERS: &[&str] = &["attachments", "skills", "apps", "app-drafts"];
 /// Value put in place of secrets in the exported MCP config.
 const REMOVED: &str = "(removed from the export)";
 
@@ -218,6 +218,7 @@ database/*.json    every table of Oxide's database, one JSON array of rows per t
 attachments/       files sent in chats\r
 skills/            your skills, as folders with SKILL.md\r
 apps/              your own Utility Apps, as folders with oxide-app.json\r
+app-drafts/        Utility Apps open in the builder, not saved yet\r
 extensions/        the manifest of each installed extension\r
 config/            the MCP config, with env and headers values removed\r
 chrome-pairings.json  paired browsers (no tokens)\r

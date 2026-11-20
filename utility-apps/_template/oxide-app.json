@@ -1,0 +1,10 @@
+{
+  "id": "new-app",
+  "name": "New app",
+  "description": "A Utility App made in the builder.",
+  "icon": "sparkles",
+  "category": "Other",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text"]
+}

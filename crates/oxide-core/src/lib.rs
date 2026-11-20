@@ -4,6 +4,7 @@
 //! `serde` + `specta::Type`, so the frontend gets it through the generated bindings.
 //! Timestamps are Unix milliseconds (`i64`), exported to TypeScript as `number`.
 
+pub mod app_builder;
 pub mod artifact;
 pub mod attachment;
 pub mod browser;
@@ -32,6 +33,10 @@ pub mod usage;
 pub mod utility_app;
 pub mod workspace;
 
+pub use app_builder::{
+    APP_BUILDER_TOOLS, AppCheckpoint, AppDraft, CheckpointKind, MAX_APP_CHECKPOINTS,
+    PreviewConsoleLine, PreviewReport, PreviewRequestKind, checkpoint_label,
+};
 pub use artifact::{
     ARTIFACT_TOOL, Artifact, ArtifactDetail, ArtifactKind, ArtifactSummary, ArtifactVersion,
 };

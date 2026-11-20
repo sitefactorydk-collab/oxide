@@ -5,6 +5,7 @@ pub mod apps;
 pub mod artifacts;
 pub mod attachments;
 pub mod browser;
+pub mod builder;
 pub mod chats;
 pub mod chrome;
 pub mod computer;

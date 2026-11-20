@@ -99,7 +99,8 @@ impl Store {
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
-            "SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id IN ({placeholders})"
+            "SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id IN ({placeholders})
+             AND id NOT IN (SELECT conversation_id FROM app_builder_chats)"
         );
         let mut query = sqlx::query_as::<_, ConversationRow>(&sql);
         for id in ids {

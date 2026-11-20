@@ -182,10 +182,16 @@ describe("Utility Apps", () => {
     expect(await screen.findByTitle("AI SVG Creator (copy)")).toBeInTheDocument();
     expect(screen.getByText(/My app ·/)).toBeInTheDocument();
 
+    // Edit opens the builder; a change saved in Code reaches the app with Save to Utility Apps.
     fireEvent.click(actions().getByRole("button", { name: /Edit/ }));
+    await waitFor(() => expect(location.pathname).toBe("/apps/ai-svg-creator-copy/build"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Code" }));
     const editor = await screen.findByRole("textbox", { name: "App.tsx" });
     fireEvent.change(editor, { target: { value: "export default () => 'changed';" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    const publish = screen.getByRole("button", { name: /Save to Utility Apps/ });
+    await waitFor(() => expect(publish).toBeEnabled());
+    fireEvent.click(publish);
     await waitFor(() =>
       expect(
         fakeApps()
@@ -193,7 +199,9 @@ describe("Utility Apps", () => {
           ?.files.find((x) => x.path === "App.tsx")?.content,
       ).toContain("changed"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close the builder" }));
+    await waitFor(() => expect(location.pathname).toBe("/apps/ai-svg-creator-copy"));
+    await screen.findByTitle("AI SVG Creator (copy)");
 
     fireEvent.click(actions().getByRole("button", { name: /Export/ }));
     await waitFor(() => expect(fakeApps().exported).toEqual(["ai-svg-creator-copy"]));

@@ -1,5 +1,7 @@
 import type {
   AppCallEvent,
+  AppDraftChanged,
+  AppPreviewRequest,
   AppSettings,
   Artifact,
   ArtifactKind,
@@ -44,7 +46,7 @@ import type {
   WebSearchKeys,
 } from "@/bindings";
 import type { commands as RealCommands, events as RealEvents } from "@/bindings";
-import { fakeAppCommands } from "./fakeApps";
+import { fakeAppCommands, fakeBuilderCommands, setBuilderHooks } from "./fakeApps";
 import { fakeBrowserCommands, resetFakeBrowser, setBrowserEmitters } from "./fakeBrowser";
 import {
   configureFakeChrome,
@@ -177,8 +179,11 @@ export interface FakeSeed {
 
 let state: FakeState;
 let seq = 0;
+/** Utility App builder chats: in `state.conversations`, but not in the chat list. */
+const builderChats = new Set<string>();
 
 export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
+  builderChats.clear();
   state = {
     conversations: seed.empty ? [] : seedConversations(now),
     messages: seed.empty ? [] : seedMessages(now),
@@ -419,6 +424,31 @@ const computerChanged = fakeEvent<ComputerChanged>("computer-changed");
 setComputerEmitter((c) => void computerChanged.emit(c));
 const updateChanged = fakeEvent<UpdateStatus>("update-changed");
 export const appCallEvent = fakeEvent<AppCallEvent>("app-call-event");
+export const appDraftChanged = fakeEvent<AppDraftChanged>("app-draft-changed");
+export const appPreviewRequest = fakeEvent<AppPreviewRequest>("app-preview-request");
+setBuilderHooks({
+  createChat: (title, model) => {
+    const now = Date.now();
+    const c: Conversation = {
+      id: nextId("b"),
+      title,
+      projectId: null,
+      model,
+      starred: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.conversations.push(c);
+    builderChats.add(c.id);
+    return c.id;
+  },
+  deleteChat: (id) => {
+    state.conversations = state.conversations.filter((c) => c.id !== id);
+    state.messages = state.messages.filter((m) => m.conversationId !== id);
+    builderChats.delete(id);
+  },
+  draftChanged: (appId) => void appDraftChanged.emit({ appId }),
+});
 setUpdateEmitter((s) => void updateChanged.emit(s));
 
 export const fakeEvents = {
@@ -437,6 +467,8 @@ export const fakeEvents = {
   computerChanged,
   updateChanged,
   appCallEvent,
+  appDraftChanged,
+  appPreviewRequest,
 } as unknown as typeof RealEvents;
 
 /** Sets a chat's task list, as the `task_list` tool would, and sends the event. */
@@ -821,6 +853,7 @@ export const fakeCommands: typeof RealCommands = {
   ...fakeInsightCommands,
   ...fakeGenerationCommands,
   ...fakeAppCommands,
+  ...fakeBuilderCommands,
   ...fakeScheduleCommands,
   ping: (name: string): Promise<PingResponse> =>
     Promise.resolve({
@@ -830,7 +863,7 @@ export const fakeCommands: typeof RealCommands = {
       coreVersion: "0.1.0",
     }),
 
-  listConversations: () => ok(sorted(state.conversations)),
+  listConversations: () => ok(sorted(state.conversations.filter((c) => !builderChats.has(c.id)))),
   getConversation: (id) => withConversation(id, (c) => c),
   startConversation: (input, options) => {
     const now = Date.now();

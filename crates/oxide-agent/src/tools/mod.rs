@@ -108,6 +108,9 @@ pub enum Builtin {
     /// Image, video or audio generation (Phase 19; run by the chat service, which shows
     /// progress and finds reference images).
     Generate(oxide_core::GenerationKind),
+    /// A Utility App builder tool on the chat's app draft (Phase 21; run by the chat
+    /// service, which knows the app).
+    AppBuild(crate::apps::builder::BuilderOp),
 }
 
 impl Builtin {
@@ -127,6 +130,7 @@ impl Builtin {
             Builtin::SandboxCopyIn => oxide_core::sandbox::SANDBOX_COPY_IN,
             Builtin::SandboxCopyOut => oxide_core::sandbox::SANDBOX_COPY_OUT,
             Builtin::Generate(kind) => kind.tool(),
+            Builtin::AppBuild(op) => op.name(),
         }
     }
 }
@@ -214,7 +218,7 @@ impl ToolEntry {
             ToolKind::Builtin(Builtin::ProjectSearch) => ToolUsageKind::ProjectSearch,
             ToolKind::Builtin(Builtin::Artifact) => ToolUsageKind::Artifact,
             ToolKind::Builtin(Builtin::LoadSkill | Builtin::SaveSkill) => ToolUsageKind::Skill,
-            ToolKind::Builtin(Builtin::File(_)) => ToolUsageKind::File,
+            ToolKind::Builtin(Builtin::File(_) | Builtin::AppBuild(_)) => ToolUsageKind::File,
             ToolKind::Builtin(Builtin::TaskList) => ToolUsageKind::Tasks,
             ToolKind::Builtin(Builtin::RunCommand) => ToolUsageKind::Shell,
             ToolKind::Builtin(Builtin::RunPython) => ToolUsageKind::Python,
@@ -328,6 +332,7 @@ pub struct Tools {
     chrome: Option<oxide_bridge::Bridge>,
     computer: Option<crate::computer::ComputerUse>,
     generation: Option<crate::generation::Generation>,
+    builder: Option<crate::apps::builder::AppBuilder>,
 }
 
 impl Tools {
@@ -347,7 +352,18 @@ impl Tools {
             chrome: None,
             computer: None,
             generation: None,
+            builder: None,
         }
+    }
+
+    /// Gives the Utility App builder's chats their tools (Phase 21).
+    pub fn with_builder(mut self, builder: crate::apps::builder::AppBuilder) -> Self {
+        self.builder = Some(builder);
+        self
+    }
+
+    pub fn builder(&self) -> Option<&crate::apps::builder::AppBuilder> {
+        self.builder.as_ref()
     }
 
     /// Gives models the generation tools (for the kinds set up in Settings → Media generation).
@@ -551,7 +567,8 @@ impl Tools {
                 | Builtin::SandboxExec
                 | Builtin::SandboxCopyIn
                 | Builtin::SandboxCopyOut
-                | Builtin::Generate(_),
+                | Builtin::Generate(_)
+                | Builtin::AppBuild(_),
             )
             | ToolKind::SandboxFile { .. }
             | ToolKind::Browser { .. }
@@ -810,6 +827,7 @@ fn builtin_entry(b: Builtin) -> ToolEntry {
         Builtin::Generate(kind) => {
             return crate::generation::tool_entry(kind, &oxide_core::GenerationSettings::default());
         }
+        Builtin::AppBuild(op) => return crate::apps::builder::builder_entry(op),
         Builtin::WebSearch => (
             "Web search",
             "Search the web. Returns the titles, URLs and snippets of the top results. Use it \

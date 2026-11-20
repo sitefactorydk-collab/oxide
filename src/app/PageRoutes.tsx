@@ -1,6 +1,7 @@
 import { Link, Navigate, useRoutes, type Location } from "react-router";
 import { AppPage } from "@/features/apps/AppPage";
 import { AppsPage } from "@/features/apps/AppsPage";
+import { BuilderPage } from "@/features/builder/BuilderPage";
 import { ArtifactsPage } from "@/features/artifacts/ArtifactsPage";
 import { ChatPage } from "@/features/chat/ChatPage";
 import { ChatsPage } from "@/features/chats/ChatsPage";
@@ -26,6 +27,7 @@ export function PageRoutes({ location }: { location: string | Partial<Location> 
       { path: "/artifacts", element: <ArtifactsPage /> },
       { path: "/apps", element: <AppsPage /> },
       { path: "/apps/:id", element: <AppPage /> },
+      { path: "/apps/:id/build", element: <BuilderPage /> },
       { path: "/scheduled", element: <ScheduledPage /> },
       { path: "/scheduled/:id", element: <TaskPage /> },
       { path: "*", element: <NotFound /> },

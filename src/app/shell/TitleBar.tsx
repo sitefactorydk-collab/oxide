@@ -171,9 +171,22 @@ function Breadcrumb({ pagePath }: { pagePath: string }) {
   const project = matchPath("/project/:id", pagePath);
   const { project: p } = useProject(project?.params.id);
   const utilityApp = matchPath("/apps/:id", pagePath);
+  const building = matchPath("/apps/:id/build", pagePath);
   const { data: apps } = useApps();
 
   if (chat?.params.id) return <ChatBreadcrumb id={chat.params.id} />;
+
+  if (building?.params.id) {
+    return (
+      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-md">
+        <Link to="/apps" className="shrink-0 text-fg-muted hover:text-fg">
+          Utility Apps
+        </Link>
+        <span className="text-fg-subtle">/</span>
+        <span className="truncate text-fg">Builder</span>
+      </nav>
+    );
+  }
 
   if (utilityApp?.params.id) {
     const app = apps?.find((a) => a.manifest.id === utilityApp.params.id);

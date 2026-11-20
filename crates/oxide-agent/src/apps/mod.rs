@@ -6,6 +6,7 @@
 //! storage are in the database (keyed by app id), never in the folder, so an exported
 //! `.oxideapp` carries only the app's files.
 
+pub mod builder;
 pub mod builtin;
 pub mod crawl;
 pub mod runtime;
@@ -251,7 +252,10 @@ impl UtilityApps {
     /// An id no app uses yet, made from `name`.
     fn free_id(&self, name: &str) -> String {
         let base = app_slug(name);
-        let taken = |id: &str| Self::is_builtin(id) || self.inner.dir.join(id).exists();
+        let drafts = self.drafts_dir();
+        let taken = |id: &str| {
+            Self::is_builtin(id) || self.inner.dir.join(id).exists() || drafts.join(id).exists()
+        };
         if !taken(&base) {
             return base;
         }
@@ -410,6 +414,9 @@ impl UtilityApps {
         })
         .await
         .map_err(|e| invalid(format!("deleting failed: {e}")))??;
+        // Its builder draft, chat and checkpoints go with it (Phase 21).
+        self.remove_draft(id).await?;
+        self.inner.store.delete_builder_data(id).await?;
         self.inner.store.delete_app_data(id).await?;
         self.forget_keys(id).await;
         Ok(())
@@ -525,8 +532,11 @@ impl UtilityApps {
     }
 
     /// The user allowed a capability for this app.
+    /// `id` may be a draft's reference (`draft:<id>`, the builder's Preview): the draft's
+    /// manifest must declare the capability, and the grant is the app's.
     pub async fn grant(&self, id: &str, cap: AppCapability) -> Result<AppPrefs, AgentError> {
-        let manifest = self.manifest(id).await?;
+        let (id, draft) = builder::split_ref(id);
+        let manifest = self.manifest_at(id, draft).await?;
         if !manifest.declares(cap) {
             return Err(invalid(format!(
                 "{} doesn't declare “{}” in its manifest.",

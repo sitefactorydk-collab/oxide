@@ -1,0 +1,287 @@
+// Types of the `oxide` module that Utility Apps import (generated from sdk.ts by
+// scripts/sdk-dts.mjs; run `npm run sdk-types` after changing the SDK; don't edit by hand).
+
+/**
+ * The `oxide` module Utility Apps import (Phase 20): Oxide's models and tools, reached through
+ * the main window. Every method returns a promise; failures reject with an {@link OxideError}.
+ *
+ * Calls that use models, the web, connectors or the computer need a capability the app's
+ * manifest declares (`oxide-app.json` → `capabilities`). The first such call asks the user
+ * (“Allow for this app” / “Deny”); after that it just runs. Files and storage never ask.
+ *
+ * ```tsx
+ * import { ai, web } from "oxide";
+ * const page = await web.fetch("https://example.com");
+ * const { text } = await ai.text({ prompt: `Summarize:\n${page.content}` });
+ * ```
+ */
+export type SdkErrorCode =
+  "needsPermission" | "undeclared" | "denied" | "cancelled" | "unknown" | "failed";
+/** An SDK call failed. `code` says why: the user denied it, the manifest doesn't declare the
+ * capability, it was cancelled, or it failed (the message says why). */
+export declare class OxideError extends Error {
+  code: SdkErrorCode;
+  constructor(code: SdkErrorCode, message: string);
+}
+/** A file sent to a model or a generation endpoint: a Blob or File, or base64 data. */
+export type FileInput =
+  | Blob
+  | File
+  | {
+      mediaType: string;
+      data: string;
+      name?: string;
+    };
+/** A Blob's bytes as base64 (no `data:` prefix). */
+export declare function toBase64(blob: Blob): Promise<string>;
+/** A Blob as a `data:` URL (e.g. for `<img src>`). */
+export declare function toDataUrl(blob: Blob): Promise<string>;
+/** A file a generation call made. `url` is an object URL for `<img>`, `<video>`, `<audio>`. */
+export interface GeneratedFile {
+  name: string;
+  mediaType: string;
+  blob: Blob;
+  url: string;
+}
+export interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+export interface TextOptions {
+  /** The user's message (added after `messages`). */
+  prompt?: string;
+  /** Instructions for the model. */
+  system?: string;
+  /** Earlier turns, oldest first. */
+  messages?: Message[];
+  /** Images the model sees with the last message (PNG, JPEG, WebP, GIF). */
+  images?: FileInput[];
+  /** PDFs (and text files) the model reads with the last message. */
+  documents?: FileInput[];
+  maxTokens?: number;
+  /** Let reasoning models think (off by default where it can be switched off). */
+  thinking?: boolean;
+  /** Streams the answer: each new piece and the text so far. */
+  onText?: (delta: string, text: string) => void;
+  signal?: AbortSignal;
+}
+export interface TextResult {
+  text: string;
+  /** The chat model that answered (`<provider>/<model>`). */
+  model: string;
+}
+export interface JsonOptions extends Omit<TextOptions, "onText"> {
+  /** A JSON Schema the answer must match. */
+  schema?: object;
+}
+export interface ProgressInfo {
+  percent: number | null;
+  note: string;
+}
+export declare const ai: {
+  /** Writes text with the app's chat model. */
+  text(options: TextOptions | string): Promise<TextResult>;
+  /** Asks for JSON (matching `schema` when given) and returns it parsed. */
+  json<T = unknown>(options: JsonOptions | string): Promise<T>;
+  /** Generates images with the app's image model. */
+  image(o: {
+    prompt: string;
+    n?: number;
+    size?: string;
+    quality?: string;
+    transparent?: boolean;
+    /** Images to edit or build on. */
+    references?: FileInput[];
+    signal?: AbortSignal;
+  }): Promise<GeneratedFile[]>;
+  /** Generates a video with the app's video model (this can take many minutes). */
+  video(o: {
+    prompt: string;
+    seconds?: number;
+    size?: string;
+    /** An image to start from. */
+    reference?: FileInput;
+    onProgress?: (p: ProgressInfo) => void;
+    signal?: AbortSignal;
+  }): Promise<GeneratedFile>;
+  /** Generates music with the app's music model. */
+  music(o: {
+    /** Genre and mood tags. */
+    style: string;
+    /** Song lyrics (`[verse]`, `[chorus]`); leave out for an instrumental. */
+    lyrics?: string;
+    durationSeconds?: number;
+    seed?: number;
+    onProgress?: (p: ProgressInfo) => void;
+    signal?: AbortSignal;
+  }): Promise<GeneratedFile>;
+  /** The chat model text calls use now. */
+  info(): Promise<{
+    textModel: string | null;
+  }>;
+};
+export interface SearchHit {
+  title: string;
+  url: string;
+  snippet: string;
+  age: string | null;
+}
+export interface Page {
+  /** After redirects. */
+  url: string;
+  title: string | null;
+  /** Markdown (default) or the page's HTML. */
+  content: string;
+  contentType: string;
+  truncated?: boolean;
+}
+export interface CrawlResult {
+  pages: Array<{
+    url: string;
+    title: string | null;
+    content: string;
+    depth: number;
+  }>;
+  skipped: Array<{
+    url: string;
+    reason: string;
+  }>;
+  /** The site had a robots.txt (which was followed). */
+  robots: boolean;
+}
+export declare const web: {
+  /** Searches the web with the search service set in Settings → Tools. */
+  search(
+    query: string,
+    o?: {
+      count?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<SearchHit[]>;
+  /** Reads a page as Markdown, or as its HTML with `format: "html"`. */
+  fetch(
+    url: string,
+    o?: {
+      format?: "markdown" | "html";
+      signal?: AbortSignal;
+    },
+  ): Promise<Page>;
+  /** Reads pages of one site, breadth first, following its robots.txt (at most 50 pages). */
+  crawl(
+    url: string,
+    o?: {
+      maxPages?: number;
+      maxDepth?: number;
+      format?: "markdown" | "html";
+      signal?: AbortSignal;
+    },
+  ): Promise<CrawlResult>;
+};
+export interface ToolInfo {
+  name: string;
+  description: string | null;
+  inputSchema: unknown;
+}
+export interface ToolResult {
+  text: string;
+  images: Array<{
+    mediaType: string;
+    data: string;
+  }>;
+  structured: unknown;
+  isError: boolean;
+}
+export declare const connectors: {
+  /** The tools of the MCP servers that are running. */
+  list(): Promise<
+    Array<
+      ToolInfo & {
+        server: string;
+        title: string | null;
+        readOnly: boolean;
+      }
+    >
+  >;
+  call(server: string, tool: string, args?: Record<string, unknown>): Promise<ToolResult>;
+};
+export declare const python: {
+  /** Runs Python in Oxide's managed environment (in a working folder of the app's own). */
+  run(
+    code: string,
+    o?: {
+      timeoutSeconds?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+  }>;
+};
+export declare const sandbox: {
+  /** Runs a shell command in the app's Docker sandbox (`/workspace`). */
+  exec(
+    command: string,
+    o?: {
+      cwd?: string;
+      timeoutSeconds?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+    cwd: string;
+  }>;
+};
+export declare const browser: {
+  /** The browser agent's tools (`navigate`, `read_page`, `browser_task`, …). */
+  tools(): Promise<ToolInfo[]>;
+  call(tool: string, args?: Record<string, unknown>): Promise<ToolResult>;
+};
+export declare const chrome: {
+  /** The paired Chrome's tools (`navigate`, `read_page`, `click`, …). */
+  tools(): Promise<ToolInfo[]>;
+  call(tool: string, args?: Record<string, unknown>): Promise<ToolResult>;
+};
+export declare const files: {
+  /** Lets the user pick files (`accept` like an `<input type=file>`'s). Empty when cancelled. */
+  pick(o?: { accept?: string; multiple?: boolean }): Promise<File[]>;
+  /** Saves a file where the user picks. Resolves to whether it was saved. */
+  save(
+    name: string,
+    data: Blob | string | Uint8Array,
+    o?: {
+      mediaType?: string;
+    },
+  ): Promise<boolean>;
+  /** A zip of the given files (made in the frame with JSZip). */
+  zip(
+    entries: Array<{
+      name: string;
+      data: Blob | string | Uint8Array;
+    }>,
+  ): Promise<Blob>;
+  readText(file: Blob): Promise<string>;
+  toBase64: typeof toBase64;
+  toDataUrl: typeof toDataUrl;
+};
+/** The app's own storage, kept by Oxide (values are JSON). */
+export declare const storage: {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<void>;
+  keys(): Promise<string[]>;
+  clear(): Promise<void>;
+};
+export declare const app: {
+  readonly id: string;
+  readonly name: string;
+  /** Oxide's theme; the frame's `<html>` has the class `dark` in the dark theme. */
+  readonly theme: "light" | "dark";
+  /** Copies text to the clipboard. */
+  copy(text: string): Promise<void>;
+};
+export {};

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-publish-app-draft"
+description = "Enables the publish_app_draft command without any pre-configured scope."
+commands.allow = ["publish_app_draft"]
+
+[[permission]]
+identifier = "deny-publish-app-draft"
+description = "Denies the publish_app_draft command without any pre-configured scope."
+commands.deny = ["publish_app_draft"]

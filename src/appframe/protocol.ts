@@ -14,6 +14,8 @@ export interface FrameFile {
 
 export type Theme = "light" | "dark";
 
+export type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
+
 /** Error codes an SDK call can fail with (the backend's `AppErrorCode`, plus `denied`). */
 export type SdkErrorCode =
   "needsPermission" | "undeclared" | "denied" | "cancelled" | "unknown" | "failed";
@@ -28,6 +30,10 @@ export type FrameToHost =
   | { source: "oxide-app"; type: "ready" }
   | { source: "oxide-app"; type: "rendered" }
   | { source: "oxide-app"; type: "error"; message: string }
+  /** A console line of the app (the builder's Preview shows them to its model). */
+  | { source: "oxide-app"; type: "console"; level: ConsoleLevel; text: string }
+  /** The answer to a `snapshot` request: a PNG `data:` URL, or why there is none. */
+  | { source: "oxide-app"; type: "snapshot"; id: string; dataUrl?: string; error?: string }
   | { source: "oxide-app"; type: "call"; id: string; method: string; params: unknown }
   | { source: "oxide-app"; type: "cancel"; id: string };
 
@@ -42,6 +48,8 @@ export type HostToFrame =
       theme: Theme;
     }
   | { source: "oxide-host"; type: "theme"; theme: Theme }
+  /** Take a picture of the app (the builder's `app_screenshot`). */
+  | { source: "oxide-host"; type: "snapshot"; id: string }
   | { source: "oxide-host"; type: "result"; id: string; ok: true; value: unknown }
   | { source: "oxide-host"; type: "result"; id: string; ok: false; error: SdkError }
   | { source: "oxide-host"; type: "event"; id: string; event: unknown };

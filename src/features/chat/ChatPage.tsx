@@ -1,7 +1,15 @@
 import { AlertCircle, ArrowDown, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useParams } from "react-router";
-import type { Attachment, Compaction, Feedback, Message } from "@/bindings";
+import type { Attachment, Compaction, Conversation, Feedback, Message } from "@/bindings";
 import { ArtifactPanel } from "@/features/artifacts/ArtifactPanel";
 import {
   useConversation,
@@ -93,8 +101,29 @@ function useStickToBottom() {
   return { scrollRef, contentRef, stick, showJump, onScroll, follow, toBottom };
 }
 
-function ChatView({ id }: { id: string }) {
-  const { conversation: convo, isPending: listPending } = useConversation(id);
+/**
+ * A chat's transcript and composer. The chat page finds the chat in the chat list; the
+ * Utility App builder passes its own chat (`conversation`), which the list leaves out, and
+ * shows it `embedded`: without the artifact and session panels.
+ */
+export function ChatView({
+  id,
+  conversation,
+  embedded = false,
+  onModelChange,
+  placeholder,
+}: {
+  id: string;
+  conversation?: Conversation;
+  embedded?: boolean;
+  /** Changes the model (default: the chat list's own mutation). */
+  onModelChange?: (model: string) => void;
+  /** Shown above the composer while the chat has no messages. */
+  placeholder?: ReactNode;
+}) {
+  const listed = useConversation(conversation ? undefined : id);
+  const convo = conversation ?? listed.conversation;
+  const listPending = conversation ? false : listed.isPending;
   const messagesQuery = useMessages(convo ? id : "");
   // Only the reply's identity, so this view doesn't re-render on every streamed delta.
   const liveParent = useStreams((s) => s.live[id]?.parentId);
@@ -228,9 +257,14 @@ function ChatView({ id }: { id: string }) {
             role="log"
             aria-label="Messages"
             aria-live="off"
-            className="mx-auto flex w-full max-w-thread flex-col gap-6 px-6 pb-10 pt-8"
+            className={
+              embedded
+                ? "mx-auto flex w-full max-w-thread flex-col gap-5 px-4 pb-8 pt-5"
+                : "mx-auto flex w-full max-w-thread flex-col gap-6 px-6 pb-10 pt-8"
+            }
           >
-            <ScheduledRunBanner conversationId={id} />
+            {!embedded && <ScheduledRunBanner conversationId={id} />}
+            {placeholder && thread.length === 0 && !isLive && placeholder}
             {messagesQuery.error && (
               <p role="alert" className="text-danger">
                 Couldn’t load messages: {errorMessage(messagesQuery.error)}
@@ -305,7 +339,7 @@ function ChatView({ id }: { id: string }) {
             </button>
           </div>
         )}
-        <div className="mx-auto w-full max-w-thread px-6 pb-3">
+        <div className={embedded ? "w-full px-3 pb-3" : "mx-auto w-full max-w-thread px-6 pb-3"}>
           <Composer
             variant="reply"
             conversationId={id}
@@ -316,7 +350,9 @@ function ChatView({ id }: { id: string }) {
             streaming={isLive}
             onStop={() => stop.mutate(id)}
             modelId={convo.model}
-            onModelChange={(model) => setModel.mutate({ id, model })}
+            onModelChange={(model) =>
+              onModelChange ? onModelChange(model) : setModel.mutate({ id, model })
+            }
             onSubmit={(text: string, attachments: Attachment[]) => {
               scroll.follow();
               send.mutate(
@@ -332,8 +368,8 @@ function ChatView({ id }: { id: string }) {
           />
         </div>
       </div>
-      <ArtifactPanel conversationId={id} />
-      {panel.open && <SessionPanel id={id} modelId={convo.model} thread={thread} />}
+      {!embedded && <ArtifactPanel conversationId={id} />}
+      {!embedded && panel.open && <SessionPanel id={id} modelId={convo.model} thread={thread} />}
     </div>
   );
 }

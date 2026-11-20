@@ -268,6 +268,8 @@ struct Setup {
     computer_native: Option<oxide_llm::ComputerTool>,
     /// The screen computer use sees ("Dell U2720Q (2560×1440)"), when it's offered.
     computer_display: Option<String>,
+    /// The Utility App this chat builds (a builder chat, Phase 21).
+    app_builder: Option<String>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -665,6 +667,18 @@ impl ChatService {
         }
         let usage = reply.total_usage();
         let content = reply.take_content();
+        // A Utility App builder's reply: a checkpoint of the draft when it changed, made
+        // before the reply ends so the builder lists it with the reply (Phase 21).
+        let builder_app = match self.tools.builder() {
+            Some(b) => match self.store.builder_app_of(&cid).await {
+                Ok(Some(app)) => {
+                    b.checkpoint_turn(&app, &cid).await;
+                    Some(app)
+                }
+                _ => None,
+            },
+            None => None,
+        };
         // A reply that ends on its own has finished its plan, even when the model forgot to
         // tick off the last steps: close the list it kept in this reply.
         if stop_reason == StopReason::EndTurn
@@ -735,11 +749,13 @@ impl ChatService {
                 );
                 if first_exchange
                     && !scheduled
+                    && builder_app.is_none()
                     && let (Some(first), Some(reply)) = (thread.first(), saved.as_ref())
                 {
                     self.auto_title(&cid, first, reply).await;
                 }
                 if stop_reason == StopReason::EndTurn
+                    && builder_app.is_none()
                     && let (Some(user), Some(reply)) = (thread.last(), saved.as_ref())
                 {
                     self.learn_memory(&cid, user, reply).await;
@@ -821,6 +837,27 @@ impl ChatService {
             .await?
             .into_iter()
             .collect();
+        // A Utility App builder's chat (Phase 21): the builder tools on the app's draft, plus
+        // web search and fetching; nothing that reaches the computer or other chats' things.
+        let app_builder = match self.tools.builder() {
+            Some(_) => self.store.builder_app_of(&conversation.id).await?,
+            None => None,
+        };
+        if app_builder.is_some() {
+            tool_set.entries.retain(|e| {
+                matches!(
+                    e.kind,
+                    ToolKind::Builtin(Builtin::WebSearch | Builtin::WebFetch)
+                )
+            });
+            tool_set.skills.clear();
+            if caps.tools {
+                tool_set
+                    .entries
+                    .extend(crate::apps::builder::AppBuilder::tool_entries());
+                tool_set.entries.push(crate::tasks::task_list_entry());
+            }
+        }
         // Agentic work: the task list, and file tools (and the shell) in granted folders.
         let workspace = self.store.chat_workspace(&conversation.id).await?;
         let sandbox = tokio::task::spawn_blocking(move || Sandbox::new(&workspace))
@@ -834,7 +871,7 @@ impl ChatService {
         let mut computer_native = None;
         let mut computer_display = None;
         let mut computer_prompt = None;
-        if caps.tools {
+        if caps.tools && app_builder.is_none() {
             let at = tool_set
                 .entries
                 .iter()
@@ -1051,6 +1088,10 @@ impl ChatService {
             context_notes: settings.context.compaction && !tool_set.is_empty(),
             scheduled_task: unattended.as_ref().map(|u| u.task_name.as_str()),
         });
+        let system = match (&app_builder, self.tools.builder()) {
+            (Some(app), Some(b)) => format!("{system}{}", b.prompt(app).await),
+            _ => system,
+        };
         let server_clearing = config.kind == ProviderKind::Anthropic
             && settings.context.compaction
             && settings.context.anthropic_clearing
@@ -1077,6 +1118,7 @@ impl ChatService {
             auto_approve: unattended.as_ref().is_some_and(|u| u.auto_approve),
             computer_native,
             computer_display,
+            app_builder,
         })
     }
 
@@ -2046,6 +2088,8 @@ impl ChatService {
             ToolKind::Builtin(Builtin::ProjectSearch) => false,
             // Artifacts and the task list only write into Oxide's own database.
             ToolKind::Builtin(Builtin::Artifact | Builtin::TaskList) => false,
+            // The builder changes only the app's draft, and every turn is a checkpoint.
+            ToolKind::Builtin(Builtin::AppBuild(_)) => false,
             // Skills are Oxide's own files, only read.
             ToolKind::Builtin(Builtin::LoadSkill) => false,
             ToolKind::Builtin(Builtin::SaveSkill) => true,
@@ -2243,6 +2287,7 @@ impl ChatService {
         let shell = setup.shell.as_ref();
         let browser_llm = setup.browser_llm.as_ref();
         let cap = setup.result_cap;
+        let app_builder = setup.app_builder.as_deref();
         let fetch_hint = fetch_failure_hint(
             setup
                 .tool_set
@@ -2398,6 +2443,15 @@ impl ChatService {
                     let mut out = self
                         .run_sandbox_tool(cid, b, &r.input, sandbox, settings)
                         .await;
+                    out.duration_ms =
+                        u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    out
+                } else if let ToolKind::Builtin(Builtin::AppBuild(op)) = r.entry.kind {
+                    let started = Instant::now();
+                    let mut out = match (self.tools.builder(), app_builder) {
+                        (Some(b), Some(app)) => b.run(app, op, &r.input).await,
+                        _ => ToolOutput::error("This chat isn't building an app."),
+                    };
                     out.duration_ms =
                         u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     out
@@ -2879,6 +2933,7 @@ impl ChatService {
                     ToolKind::Chrome { ref tool } => chrome_tools::chrome_label(tool, input),
                     ToolKind::Computer => computer_tools::computer_label(input),
                     ToolKind::Builtin(Builtin::Generate(_)) => crate::generation::label(input),
+                    ToolKind::Builtin(Builtin::AppBuild(op)) => op.label(input),
                     _ => usage_label(entry.tool(), input),
                 },
                 out.is_error,

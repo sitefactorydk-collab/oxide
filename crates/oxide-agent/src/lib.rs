@@ -41,6 +41,7 @@ mod title;
 pub mod tools;
 
 pub use apps::UtilityApps;
+pub use apps::builder::{AppBuilder, BuilderSink};
 pub use apps::runtime::AppRuntime;
 pub use attachments::{AttachmentError, AttachmentStore};
 pub use chat::{ChatService, EventSink, path_to};

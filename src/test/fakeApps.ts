@@ -1,5 +1,8 @@
 import type {
   AppBundle,
+  AppCheckpoint,
+  AppDraft,
+  PreviewReport,
   AppCallError,
   AppCapability,
   AppFile,
@@ -29,6 +32,25 @@ interface FakeApps {
   /** What the next import pick returns (`null`: cancelled). */
   nextImport: AppBundle | null;
   imports: Map<string, AppBundle>;
+  /** Builder drafts by app id (Phase 21). */
+  drafts: Map<string, AppBundle>;
+  /** Builder chats by app id. */
+  builderChats: Map<string, string>;
+  /** Checkpoints by app id, newest first, with their files. */
+  checkpoints: Map<string, Array<AppCheckpoint & { snapshot: AppFile[] }>>;
+  /** The Preview's answers to the builder model (`answerPreviewRequest`). */
+  previewAnswers: Array<{ requestId: string; report: PreviewReport }>;
+}
+
+/** How the fake builder reaches the fake backend's chats and events. */
+interface BuilderHooks {
+  createChat: (title: string, model: string) => string;
+  deleteChat: (id: string) => void;
+  draftChanged: (appId: string) => void;
+}
+let hooks: BuilderHooks | null = null;
+export function setBuilderHooks(h: BuilderHooks): void {
+  hooks = h;
 }
 
 const NEEDS: Record<string, AppCapability> = {
@@ -122,6 +144,10 @@ export function resetFakeApps(): void {
     exported: [],
     nextImport: null,
     imports: new Map(),
+    drafts: new Map(),
+    builderChats: new Map(),
+    checkpoints: new Map(),
+    previewAnswers: [],
   };
 }
 resetFakeApps();
@@ -151,6 +177,192 @@ function list(): UtilityApp[] {
     ...all.filter((a) => !a.builtin).sort((a, b) => a.manifest.name.localeCompare(b.manifest.name)),
   ];
 }
+
+// ---- the builder (Phase 21) ----
+
+const TEMPLATE_APP = "export default function App() {\n  return <p>New app</p>;\n}\n";
+let checkpointSeq = 0;
+
+function draftOf(id: string): AppDraft | null {
+  const d = f.drafts.get(id);
+  const chat = f.builderChats.get(id);
+  if (!d || !chat) return null;
+  const saved = f.apps.get(id);
+  const same =
+    saved !== undefined &&
+    JSON.stringify([...saved.files].sort((a, b) => a.path.localeCompare(b.path))) ===
+      JSON.stringify([...d.files].sort((a, b) => a.path.localeCompare(b.path)));
+  return {
+    app: { ...d.app, folder: `/data/app-drafts/${id}` },
+    files: d.files,
+    published: saved !== undefined,
+    unsaved: !same,
+    conversationId: chat,
+  };
+}
+
+function checkpoint(id: string, label: string, kind: AppCheckpoint["kind"]) {
+  const d = f.drafts.get(id);
+  if (!d) return;
+  const list = f.checkpoints.get(id) ?? [];
+  const snapshot = d.files.map((x) => ({ ...x }));
+  if (list[0] && JSON.stringify(list[0].snapshot) === JSON.stringify(snapshot)) return;
+  list.unshift({
+    id: `cp${++checkpointSeq}`,
+    appId: id,
+    label,
+    kind,
+    files: snapshot.length,
+    createdAt: Date.now(),
+    snapshot,
+  });
+  f.checkpoints.set(id, list);
+}
+
+/** Writes a draft file as the builder's model would (and tells the window). */
+export function modelWritesDraftFile(id: string, path: string, content: string): void {
+  const d = f.drafts.get(id);
+  if (!d) throw new Error(`no draft ${id}`);
+  f.drafts.set(id, {
+    ...d,
+    files: d.files.filter((x) => x.path !== path).concat({ path, content }),
+  });
+  hooks?.draftChanged(id);
+}
+
+/** The draft's text for a path. */
+export function draftFile(id: string, path: string): string | undefined {
+  return f.drafts.get(id)?.files.find((x) => x.path === path)?.content;
+}
+
+function withManifest(b: AppBundle, manifest: AppManifest): AppBundle {
+  return {
+    app: { ...b.app, manifest },
+    files: b.files
+      .filter((x) => x.path !== "oxide-app.json")
+      .concat({ path: "oxide-app.json", content: JSON.stringify(manifest) }),
+  };
+}
+
+const okDraft = (id: string) => {
+  const d = draftOf(id);
+  return d ? ok(d) : fail("draft not found");
+};
+
+export const fakeBuilderCommands: Pick<
+  typeof RealCommands,
+  | "openAppBuilder"
+  | "appDraft"
+  | "listAppDrafts"
+  | "saveDraftFile"
+  | "deleteDraftFile"
+  | "renameDraftFile"
+  | "updateDraftDetails"
+  | "appCheckpoints"
+  | "restoreAppCheckpoint"
+  | "publishAppDraft"
+  | "discardAppDraft"
+  | "answerPreviewRequest"
+> = {
+  openAppBuilder: (id, model) => {
+    let appId = id;
+    if (appId === null) {
+      appId = "new-app";
+      for (let n = 2; f.drafts.has(appId) || f.apps.has(appId); n++) appId = `new-app-${n}`;
+      const manifest = fakeManifest({ id: appId, name: "New app", capabilities: ["text"] });
+      const b = fakeBundle(manifest, false, [{ path: "App.tsx", content: TEMPLATE_APP }]);
+      f.drafts.set(appId, b);
+    } else if (!f.drafts.has(appId)) {
+      const saved = f.apps.get(appId);
+      if (!saved) return fail("app not found");
+      if (saved.app.builtin) return fail("Built-in apps can't be changed. Clone the app first.");
+      f.drafts.set(appId, { ...saved, files: saved.files.map((x) => ({ ...x })) });
+    }
+    if (!f.builderChats.has(appId)) {
+      const name = f.drafts.get(appId)?.app.manifest.name ?? appId;
+      f.builderChats.set(appId, hooks?.createChat(`Building ${name}`, model) ?? "b-0");
+    }
+    checkpoint(appId, "Start", "start");
+    return okDraft(appId);
+  },
+  appDraft: (id) => okDraft(id),
+  listAppDrafts: () =>
+    ok([...f.drafts.entries()].filter(([id]) => !f.apps.has(id)).map(([, b]) => b.app)),
+  saveDraftFile: (id, path, content) => {
+    const d = f.drafts.get(id);
+    if (!d) return fail("draft not found");
+    f.drafts.set(id, {
+      ...d,
+      files: d.files.filter((x) => x.path !== path).concat({ path, content }),
+    });
+    checkpoint(id, `Saved ${path}`, "manual");
+    return okDraft(id);
+  },
+  deleteDraftFile: (id, path) => {
+    const d = f.drafts.get(id);
+    if (!d) return fail("draft not found");
+    f.drafts.set(id, { ...d, files: d.files.filter((x) => x.path !== path) });
+    checkpoint(id, `Deleted ${path}`, "manual");
+    return okDraft(id);
+  },
+  renameDraftFile: (id, from, to) => {
+    const d = f.drafts.get(id);
+    if (!d) return fail("draft not found");
+    f.drafts.set(id, {
+      ...d,
+      files: d.files.map((x) => (x.path === from ? { ...x, path: to } : x)),
+    });
+    checkpoint(id, `Renamed ${from}`, "manual");
+    return okDraft(id);
+  },
+  updateDraftDetails: (id, name, description, icon, category) => {
+    const d = f.drafts.get(id);
+    if (!d) return fail("draft not found");
+    f.drafts.set(id, withManifest(d, { ...d.app.manifest, name, description, icon, category }));
+    checkpoint(id, "Changed the app's details", "manual");
+    return okDraft(id);
+  },
+  appCheckpoints: (id) =>
+    ok(
+      (f.checkpoints.get(id) ?? []).map((c): AppCheckpoint => ({
+        id: c.id,
+        appId: c.appId,
+        label: c.label,
+        kind: c.kind,
+        files: c.files,
+        createdAt: c.createdAt,
+      })),
+    ),
+  restoreAppCheckpoint: (id, checkpointId) => {
+    const d = f.drafts.get(id);
+    const cp = (f.checkpoints.get(id) ?? []).find((c) => c.id === checkpointId);
+    if (!d || !cp) return fail("checkpoint not found");
+    checkpoint(id, "Before restoring", "restore");
+    f.drafts.set(id, { ...d, files: cp.snapshot.map((x) => ({ ...x })) });
+    return okDraft(id);
+  },
+  publishAppDraft: (id) => {
+    const d = f.drafts.get(id);
+    if (!d) return fail("draft not found");
+    const app = { ...d.app, builtin: false, folder: `/data/apps/${id}` };
+    f.apps.set(id, { app, files: d.files.map((x) => ({ ...x })) });
+    return ok(app);
+  },
+  discardAppDraft: (id) => {
+    f.drafts.delete(id);
+    if (!f.apps.has(id)) {
+      const chat = f.builderChats.get(id);
+      if (chat) hooks?.deleteChat(chat);
+      f.builderChats.delete(id);
+      f.checkpoints.delete(id);
+    }
+    return ok(null);
+  },
+  answerPreviewRequest: (requestId, report) => {
+    f.previewAnswers.push({ requestId, report });
+    return ok(true);
+  },
+};
 
 export const fakeAppCommands: Pick<
   typeof RealCommands,
@@ -244,7 +456,8 @@ export const fakeAppCommands: Pick<
     f.prefs.set(id, saved);
     return ok(saved);
   },
-  grantAppCapability: (id, capability) => {
+  grantAppCapability: (ref, capability) => {
+    const id = ref.replace(/^draft:/, "");
     const p = prefsOf(id);
     if (!p.granted.includes(capability)) p.granted = [...p.granted, capability];
     f.prefs.set(id, p);
@@ -261,9 +474,11 @@ export const fakeAppCommands: Pick<
     f.storage.set(id, 0);
     return ok(null);
   },
-  appCall: (appId, _callId, method, paramsJson) => {
+  appCall: (ref, _callId, method, paramsJson) => {
     const params: unknown = JSON.parse(paramsJson);
-    const b = f.apps.get(appId);
+    // The builder's Preview runs the draft with the app's grants.
+    const appId = ref.replace(/^draft:/, "");
+    const b = ref.startsWith("draft:") ? f.drafts.get(appId) : f.apps.get(appId);
     const err = (e: AppCallError): Promise<Result<string, AppCallError>> =>
       Promise.resolve({ status: "error", error: e });
     if (!b) return err({ code: "failed", message: "app not found", capability: null });

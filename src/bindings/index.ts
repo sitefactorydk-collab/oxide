@@ -1658,6 +1658,139 @@ async saveAppOutput(name: string, dataBase64: string) : Promise<Result<string | 
 }
 },
 /**
+ * Opens the builder on an own app (`id`) or a new app from the template (`None`). The
+ * builder chat is made with `model` the first time.
+ */
+async openAppBuilder(id: string | null, model: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_app_builder", { id, model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * An app's draft as the builder shows it.
+ */
+async appDraft(id: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_draft", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Unsaved apps (drafts that were never saved to Utility Apps).
+ */
+async listAppDrafts() : Promise<Result<UtilityApp[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_app_drafts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Saves a file of a draft from Code (a checkpoint follows).
+ */
+async saveDraftFile(id: string, path: string, content: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_draft_file", { id, path, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Deletes a file of a draft from Code.
+ */
+async deleteDraftFile(id: string, path: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_draft_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Renames a file of a draft from Code.
+ */
+async renameDraftFile(id: string, from: string, to: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_draft_file", { id, from, to }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Changes a draft's name, description, icon and category (the builder's details dialog).
+ */
+async updateDraftDetails(id: string, name: string, description: string, icon: string, category: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_draft_details", { id, name, description, icon, category }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A draft's checkpoints, newest first.
+ */
+async appCheckpoints(id: string) : Promise<Result<AppCheckpoint[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_checkpoints", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Writes a checkpoint back into the draft (the current files are kept as a checkpoint).
+ */
+async restoreAppCheckpoint(id: string, checkpointId: string) : Promise<Result<AppDraft, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_app_checkpoint", { id, checkpointId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * **Save to Utility Apps**: the draft becomes the saved app.
+ */
+async publishAppDraft(id: string) : Promise<Result<UtilityApp, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("publish_app_draft", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Throws a draft away (a never-saved app goes with its chat and checkpoints).
+ */
+async discardAppDraft(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discard_app_draft", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The Preview's answer to `events.appPreviewRequest`. `false`: nobody waits for it.
+ */
+async answerPreviewRequest(requestId: string, report: PreviewReport) : Promise<Result<boolean, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("answer_preview_request", { requestId, report }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens a web or mail link in the default browser or mail app. Other schemes are refused.
  */
 async openExternal(url: string) : Promise<Result<null, CommandError>> {
@@ -1959,6 +2092,8 @@ async testProvider(input: TestProvider) : Promise<Result<ProviderTestResult, Com
 
 export const events = __makeEvents__<{
 appCallEvent: AppCallEvent,
+appDraftChanged: AppDraftChanged,
+appPreviewRequest: AppPreviewRequest,
 browserChanged: BrowserChanged,
 browserLive: BrowserLive,
 chatStream: ChatStream,
@@ -1975,6 +2110,8 @@ taskListChanged: TaskListChanged,
 updateChanged: UpdateChanged
 }>({
 appCallEvent: "app-call-event",
+appDraftChanged: "app-draft-changed",
+appPreviewRequest: "app-preview-request",
 browserChanged: "browser-changed",
 browserLive: "browser-live",
 chatStream: "chat-stream",
@@ -2061,6 +2198,47 @@ export type AppCapability =
  * The paired Chrome.
  */
 "chrome"
+/**
+ * A version of a draft.
+ */
+export type AppCheckpoint = { id: string; appId: string; 
+/**
+ * What happened (“Start”, “After: make the chart blue”, “Saved App.tsx”).
+ */
+label: string; kind: CheckpointKind; 
+/**
+ * Files in this version.
+ */
+files: number; createdAt: number }
+/**
+ * An app open in the builder.
+ */
+export type AppDraft = { 
+/**
+ * The draft's manifest (`folder` is the draft's folder; `problem` says why it can't run).
+ */
+app: UtilityApp; 
+/**
+ * The draft's text files (what Preview runs and Code shows).
+ */
+files: AppFile[]; 
+/**
+ * A saved copy exists in Utility Apps.
+ */
+published: boolean; 
+/**
+ * The draft differs from the saved copy (or there is none yet).
+ */
+unsaved: boolean; 
+/**
+ * The builder chat.
+ */
+conversationId: string }
+/**
+ * A Utility App draft's files changed in the builder (the model wrote, a checkpoint was
+ * restored): the builder reloads Preview and Code (`events.appDraftChanged`).
+ */
+export type AppDraftChanged = { appId: string }
 /**
  * Why an app's SDK call failed.
  */
@@ -2185,6 +2363,11 @@ keys: GenerationKind[];
  * Bytes in the app's storage.
  */
 storageBytes: number }
+/**
+ * The builder's model wants the Preview's state (`events.appPreviewRequest`); the builder
+ * answers with `answer_preview_request`.
+ */
+export type AppPreviewRequest = { requestId: string; appId: string; kind: PreviewRequestKind }
 export type AppSettings = { profile: ProfileSettings; appearance: AppearanceSettings; models: ModelSettings; tools: ToolSettings; webSearch: WebSearchSettings; projects: ProjectSettings; memory: MemorySettings; desktop: DesktopSettings; shell: ShellSettings; python: PythonSettings; sandbox: SandboxSettings; browser: BrowserSettings; 
 /**
  * Settings → Chrome (the extension and its bridge).
@@ -2569,6 +2752,26 @@ export type ChatWorkspace = { folders: ChatFolder[];
  * `delete_file` deletes for good. Off: it moves things into `_to_delete`.
  */
 allowDelete: boolean }
+/**
+ * What made a checkpoint.
+ */
+export type CheckpointKind = 
+/**
+ * The app as the builder opened it.
+ */
+"start" | 
+/**
+ * After a reply of the builder's model.
+ */
+"model" | 
+/**
+ * A save in Code.
+ */
+"manual" | 
+/**
+ * Before a restore (so a restore can be undone).
+ */
+"restore"
 /**
  * The Chrome link changed: listening, a Chrome connected or went, pairing
  * (`events.chromeChanged`).
@@ -3925,6 +4128,50 @@ grid: boolean;
  * When (ms since the epoch).
  */
 at: number }
+/**
+ * One console line of the preview.
+ */
+export type PreviewConsoleLine = { 
+/**
+ * `log`, `info`, `warn` or `error`.
+ */
+level: string; text: string }
+/**
+ * The Preview's answer to a [`PreviewRequestKind`].
+ */
+export type PreviewReport = { 
+/**
+ * The app compiled and rendered.
+ */
+rendered: boolean; 
+/**
+ * Compile errors and uncaught runtime errors, oldest first.
+ */
+errors: string[]; 
+/**
+ * The newest console lines.
+ */
+console: PreviewConsoleLine[]; 
+/**
+ * A screenshot as a `data:image/png;base64,…` URL.
+ */
+screenshot: string | null; 
+/**
+ * Why the preview couldn't answer (no preview open, the screenshot failed).
+ */
+note: string | null }
+/**
+ * What the builder asks the open Preview.
+ */
+export type PreviewRequestKind = 
+/**
+ * Reload the draft, then report build errors, runtime errors and the console.
+ */
+"status" | 
+/**
+ * Reload the draft, then take a PNG of the app.
+ */
+"screenshot"
 export type ProfileSettings = { 
 /**
  * What Oxide calls the user (greeting, avatar initials).

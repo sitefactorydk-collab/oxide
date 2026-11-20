@@ -253,3 +253,59 @@ pub struct AppCallEvent {
     pub call_id: String,
     pub event_json: String,
 }
+
+/// A Utility App draft's files changed in the builder (the model wrote, a checkpoint was
+/// restored): the builder reloads Preview and Code (`events.appDraftChanged`).
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDraftChanged {
+    pub app_id: String,
+}
+
+/// The builder's model wants the Preview's state (`events.appPreviewRequest`); the builder
+/// answers with `answer_preview_request`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPreviewRequest {
+    pub request_id: String,
+    pub app_id: String,
+    pub kind: oxide_core::PreviewRequestKind,
+}
+
+/// Forwards the builder's draft changes and Preview requests to every window.
+pub struct TauriBuilderSink {
+    app: AppHandle,
+}
+
+impl TauriBuilderSink {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl oxide_agent::BuilderSink for TauriBuilderSink {
+    fn draft_changed(&self, app_id: &str) {
+        let e = AppDraftChanged {
+            app_id: app_id.to_owned(),
+        };
+        if let Err(e) = e.emit(&self.app) {
+            tracing::warn!("couldn't send a draft update: {e}");
+        }
+    }
+
+    fn preview_request(
+        &self,
+        request_id: &str,
+        app_id: &str,
+        kind: oxide_core::PreviewRequestKind,
+    ) {
+        let e = AppPreviewRequest {
+            request_id: request_id.to_owned(),
+            app_id: app_id.to_owned(),
+            kind,
+        };
+        if let Err(e) = e.emit(&self.app) {
+            tracing::warn!("couldn't ask the Preview: {e}");
+        }
+    }
+}

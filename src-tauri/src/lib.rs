@@ -36,9 +36,9 @@ const BINDINGS_HEADER: &str =
 /// Builds the specta registry of every command and event exposed to the frontend.
 fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        apps, artifacts, attachments, browser, chats, chrome, computer, data, desktop, extensions,
-        generation, insights, mcp, memory, models, projects, providers, python, sandbox, schedule,
-        settings, system, tools, updates, workspace,
+        apps, artifacts, attachments, browser, builder, chats, chrome, computer, data, desktop,
+        extensions, generation, insights, mcp, memory, models, projects, providers, python,
+        sandbox, schedule, settings, system, tools, updates, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -56,7 +56,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             events::ComputerChanged,
             events::UpdateChanged,
             events::DesktopRequest,
-            events::AppCallEvent
+            events::AppCallEvent,
+            events::AppDraftChanged,
+            events::AppPreviewRequest
         ])
         .commands(collect_commands![
             commands::ping,
@@ -233,6 +235,18 @@ fn specta_builder() -> Builder<tauri::Wry> {
             apps::app_call,
             apps::cancel_app_call,
             apps::save_app_output,
+            builder::open_app_builder,
+            builder::app_draft,
+            builder::list_app_drafts,
+            builder::save_draft_file,
+            builder::delete_draft_file,
+            builder::rename_draft_file,
+            builder::update_draft_details,
+            builder::app_checkpoints,
+            builder::restore_app_checkpoint,
+            builder::publish_app_draft,
+            builder::discard_app_draft,
+            builder::answer_preview_request,
             // System
             system::open_external,
             // Desktop integration
@@ -428,6 +442,12 @@ pub fn run() -> anyhow::Result<()> {
                     tokens: Arc::new(mcp_bridge::KeychainTokens::new(secrets.clone())),
                 },
             ))?;
+            // The builder's draft changes and Preview requests go to the window (Phase 21).
+            state
+                .builder
+                .set_sink(Arc::new(events::TauriBuilderSink::new(
+                    app.handle().clone(),
+                )));
             let mcp = state.mcp.clone();
             let extensions = state.extensions.clone();
             let sandboxes = state.sandboxes.clone();

@@ -1,5 +1,5 @@
 import { Dialog } from "radix-ui";
-import { Download, LayoutGrid, Lock, TriangleAlert, X } from "lucide-react";
+import { Download, LayoutGrid, Lock, Plus, TriangleAlert, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { AppImportPreview, UtilityApp } from "@/bindings";
@@ -9,6 +9,8 @@ import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/time";
 import { toast } from "@/lib/toast";
+import { useAppDrafts, useOpenBuilder } from "@/features/builder/queries";
+import { useNewChatModel } from "@/features/models/queries";
 import { AppIcon } from "./AppIcon";
 import { CAPABILITY_TEXT, useApps, useInstallImport, usePickImport } from "./queries";
 
@@ -18,6 +20,10 @@ export function AppsPage() {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const pick = usePickImport();
+  const { data: drafts } = useAppDrafts();
+  const openBuilder = useOpenBuilder();
+  const [model] = useNewChatModel();
+  const navigate = useNavigate();
   const [preview, setPreview] = useState<AppImportPreview | null>(null);
 
   const categories = useMemo(
@@ -38,6 +44,20 @@ export function AppsPage() {
   const mine = list.filter((a) => !a.builtin);
   const builtIn = list.filter((a) => a.builtin);
 
+  const newApp = () => {
+    if (!model) {
+      toast("Add a chat model in Settings → Providers first: the builder needs one.", "error");
+      return;
+    }
+    openBuilder.mutate(
+      { id: null, model },
+      {
+        onSuccess: (d) => navigate(`/apps/${d.app.manifest.id}/build`),
+        onError: (e) => toast(errorMessage(e), "error"),
+      },
+    );
+  };
+
   const startImport = () =>
     pick.mutate(undefined, {
       onSuccess: (p) => p && setPreview(p),
@@ -50,10 +70,21 @@ export function AppsPage() {
         <PageHeader
           title="Utility Apps"
           action={
-            <PrimaryButton onClick={startImport} disabled={pick.isPending}>
-              <Download />
-              Import app
-            </PrimaryButton>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={startImport}
+                disabled={pick.isPending}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-3.5 text-base text-fg hover:bg-hover disabled:opacity-40 [&_svg]:size-4"
+              >
+                <Download />
+                Import app
+              </button>
+              <PrimaryButton onClick={newApp} disabled={openBuilder.isPending}>
+                <Plus />
+                New app
+              </PrimaryButton>
+            </div>
           }
         />
         <SearchField value={q} onChange={setQ} label="Search apps" placeholder="Search apps…" />
@@ -78,6 +109,9 @@ export function AppsPage() {
           </div>
         )}
         {error && <p className="text-danger">{errorMessage(error)}</p>}
+        {(drafts ?? []).length > 0 && !q && !category && (
+          <AppSection title="Drafts" apps={drafts ?? []} draft />
+        )}
         {mine.length > 0 && <AppSection title="My apps" apps={mine} />}
         {builtIn.length > 0 && <AppSection title="Built-in" apps={builtIn} />}
         {!isPending && list.length === 0 && (
@@ -92,14 +126,22 @@ export function AppsPage() {
   );
 }
 
-function AppSection({ title, apps }: { title: string; apps: UtilityApp[] }) {
+function AppSection({
+  title,
+  apps,
+  draft = false,
+}: {
+  title: string;
+  apps: UtilityApp[];
+  draft?: boolean;
+}) {
   return (
     <section className="mb-8" aria-label={title}>
       <h2 className="mb-3 text-sm font-medium text-fg-muted">{title}</h2>
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {apps.map((a) => (
           <li key={a.manifest.id}>
-            <AppCard app={a} />
+            <AppCard app={a} draft={draft} />
           </li>
         ))}
       </ul>
@@ -107,11 +149,11 @@ function AppSection({ title, apps }: { title: string; apps: UtilityApp[] }) {
   );
 }
 
-function AppCard({ app }: { app: UtilityApp }) {
+function AppCard({ app, draft }: { app: UtilityApp; draft: boolean }) {
   const m = app.manifest;
   return (
     <Link
-      to={`/apps/${m.id}`}
+      to={draft ? `/apps/${m.id}/build` : `/apps/${m.id}`}
       className="flex h-full gap-3 rounded-xl border border-line bg-raised p-4 shadow-sm transition-colors hover:border-line-strong"
     >
       <AppIcon icon={m.icon ?? "sparkles"} />
@@ -131,7 +173,9 @@ function AppCard({ app }: { app: UtilityApp }) {
             m.description || "No description"
           )}
         </span>
-        <span className="mt-auto text-sm text-fg-subtle">{m.category}</span>
+        <span className="mt-auto text-sm text-fg-subtle">
+          {draft ? "Not saved yet · opens in the builder" : m.category}
+        </span>
       </span>
     </Link>
   );

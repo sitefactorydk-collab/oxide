@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-draft-details"
+description = "Enables the update_draft_details command without any pre-configured scope."
+commands.allow = ["update_draft_details"]
+
+[[permission]]
+identifier = "deny-update-draft-details"
+description = "Denies the update_draft_details command without any pre-configured scope."
+commands.deny = ["update_draft_details"]
