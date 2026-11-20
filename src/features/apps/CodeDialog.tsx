@@ -81,7 +81,7 @@ export function CodeDialog({
                 Save{dirty.size > 0 ? ` (${dirty.size})` : ""}
               </button>
               <Dialog.Close asChild>
-                <IconButton size="sm" label="Close">
+                <IconButton tooltip={false} size="sm" label="Close">
                   <X className="size-4" />
                 </IconButton>
               </Dialog.Close>

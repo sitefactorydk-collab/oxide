@@ -87,7 +87,7 @@ export function SettingsDialog({
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="absolute right-3 top-3">
               <Dialog.Close asChild>
-                <IconButton label={t("settings.close")}>
+                <IconButton tooltip={false} label={t("settings.close")}>
                   <X className="size-[18px]" />
                 </IconButton>
               </Dialog.Close>

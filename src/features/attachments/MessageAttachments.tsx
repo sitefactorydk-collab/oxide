@@ -60,7 +60,7 @@ export function ImageThumb({ path, index }: { path: string; index: number }) {
             />
           )}
           <Dialog.Close asChild>
-            <IconButton label="Close" className="absolute right-0 top-0 bg-raised">
+            <IconButton tooltip={false} label="Close" className="absolute right-0 top-0 bg-raised">
               <X className="size-4" />
             </IconButton>
           </Dialog.Close>

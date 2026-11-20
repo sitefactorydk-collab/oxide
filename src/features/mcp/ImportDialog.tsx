@@ -62,7 +62,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
               Import from Claude desktop
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton label="Close">
+              <IconButton tooltip={false} label="Close">
                 <X className="size-[18px]" />
               </IconButton>
             </Dialog.Close>

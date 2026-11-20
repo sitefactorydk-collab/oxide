@@ -88,7 +88,8 @@ Deviations from PLAN.md (and why):
 - **Imports through a file picker** (no drag-drop onto the gallery yet).
 
 Known issues / TODO carried forward:
-- A few non-breaking visual bugs the user noticed during the manual checks (2026-11-20); to be listed and fixed later.
+- Visual bugs the user noticed during the manual checks (2026-11-20). Fixed so far: dialogs opened with a “Close” tooltip under their ✕ (they focus it on opening), so the tooltip is now off on every dialog's close button (`tooltip={false}`; the accessible name stays).
+- Check run 2026-11-20 14:19 (for the tooltip fix): the extension-update fallback kicked in (the old folder was busy) and worked, but uninstall then left that busy folder behind (held 25 s+), failing the extensions test. Uninstall now retries busy folders in the background for about two minutes (`remove_later`), each install sweeps folders of uninstalled extensions and superseded versions (`sweep_leftovers`, under the `busy` lock), and the test waits up to 60 s for the folders to go. Two old Vitest tests (Artifacts' sandboxed frame, ChatPhase4's branch navigator) timed out in that slow run; they passed in every earlier run today, so treated as load-related.
 - Only text files of an app reach the frame (images in an app's folder are kept and exported but not loadable yet).
 - Generated media reach the frame as base64 over IPC (as in Phase 19); fine for images and short clips.
 - An app's Python working folder (`<data>/app-work/<id>`) isn't removed when the app is deleted (Delete all removes it).

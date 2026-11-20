@@ -21,7 +21,7 @@ export function ShortcutsDialog() {
               Keyboard shortcuts
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton label="Close">
+              <IconButton tooltip={false} label="Close">
                 <X className="size-[18px]" />
               </IconButton>
             </Dialog.Close>

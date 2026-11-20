@@ -273,7 +273,25 @@ async fn install_configure_toggle_update_uninstall() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(s.manager.state("mock-ext").is_none());
-    assert!(!s.dir.path().join("extensions/mock-ext").exists());
+    // Every version folder goes; one Windows still holds (an antivirus scan, under load) is
+    // removed in the background shortly after.
+    let ext_root = s.dir.path().join("extensions");
+    let left = || {
+        std::fs::read_dir(&ext_root)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("mock-ext"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    for _ in 0..300 {
+        if left() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert_eq!(left(), 0, "extension folders left behind");
     assert!(config_json(&s)["oxide"].get("extensions").is_none());
     assert_eq!(
         s.tokens

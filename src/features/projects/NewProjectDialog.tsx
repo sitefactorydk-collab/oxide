@@ -27,7 +27,7 @@ export function NewProjectDialog({
               New project
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton size="sm" label="Close">
+              <IconButton tooltip={false} size="sm" label="Close">
                 <X className="size-4" />
               </IconButton>
             </Dialog.Close>

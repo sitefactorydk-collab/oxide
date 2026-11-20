@@ -446,6 +446,7 @@ impl Extensions {
             })
             .await?;
         self.refresh().await;
+        self.sweep_leftovers().await;
         self.get(&name).await
     }
 
@@ -546,6 +547,7 @@ impl Extensions {
             }
         }
         lock(&self.inner.problems).remove(name);
+        let mut busy_dirs = Vec::new();
         for dir in version_dirs(&self.inner.root, name) {
             // Move it aside first (that works once the server has let go), then delete.
             let aside = self.inner.root.join(STAGING_DIR).join(format!(
@@ -555,10 +557,42 @@ impl Extensions {
             ));
             match rename_retry(&dir, &aside).await {
                 Ok(()) => remove_dir(&aside).await,
-                Err(e) => tracing::warn!("couldn't remove {}: {e}", dir.display()),
+                Err(e) => {
+                    tracing::warn!("couldn't remove {} yet: {e}", dir.display());
+                    busy_dirs.push(dir);
+                }
             }
         }
+        // Windows (often an antivirus scan) can hold a folder for a while: keep trying in
+        // the background; whatever is still left goes with the next install or uninstall.
+        if !busy_dirs.is_empty() {
+            tokio::spawn(remove_later(busy_dirs));
+        }
         Ok(())
+    }
+
+    /// Removes folders of extensions that are no longer installed, and older versions an
+    /// update installed beside: leftovers of folders Windows kept busy. Call with `busy`
+    /// held, so no install is half done.
+    async fn sweep_leftovers(&self) {
+        let cfg = self.inner.manager.config_snapshot();
+        let current: Vec<PathBuf> = cfg
+            .extensions()
+            .into_iter()
+            .map(|(name, _)| self.dir_of(&name))
+            .collect();
+        let Ok(rd) = std::fs::read_dir(&self.inner.root) else {
+            return;
+        };
+        let leftovers: Vec<PathBuf> = rd
+            .flatten()
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() && !current.contains(p))
+            .collect();
+        for dir in leftovers {
+            remove_dir(&dir).await;
+        }
     }
 
     /// Removes leftovers of bundles that were opened long ago and never installed.
@@ -842,6 +876,26 @@ async fn rename_with_retries(from: &Path, to: &Path, delays_ms: &[u64]) -> std::
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
     Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
+}
+
+/// Keeps trying to delete folders for about two minutes (they were busy at uninstall).
+async fn remove_later(mut dirs: Vec<PathBuf>) {
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        dirs.retain(|d| match std::fs::remove_dir_all(d) {
+            Ok(()) => false,
+            Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        });
+        if dirs.is_empty() {
+            return;
+        }
+    }
+    for d in dirs {
+        tracing::warn!(
+            "couldn't delete {}; it goes with the next install",
+            d.display()
+        );
+    }
 }
 
 async fn remove_dir(dir: &Path) {
