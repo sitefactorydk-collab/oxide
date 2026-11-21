@@ -1,0 +1,39 @@
+# Phase 23 follow-up: download-and-run always asks, no Allow always on every-time cards,
+# PowerShell cmdlet errors count as failures, artifact type from its language.
+#  1. Stops a running dev app; npm install; regenerates the bindings (src\bindings\index.ts was
+#     edited by hand: logs\phase23b-bindings.diff shows what the generator changed).
+#  2. Every check (fmt, prettier, clippy, cargo test, typecheck, lint, Vitest) and vite build.
+#  3. Commits with logs\commit-msg-phase23b.txt only when all of that passed (no push).
+#  4. Starts the app for the manual exit checks (a chat in Auto with a shared folder).
+# Logs: logs\phase23b-prep*.log, logs\check*.log, logs\phase23b-build*.log, logs\commit*.log.
+. "$PSScriptRoot\_common.ps1"
+Get-Process -Name oxide, oxide-mcp-mock -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+
+Start-Log 'phase23b-prep'
+Run 'npm install' 'npm install --no-audit --no-fund'
+Run 'bindings' 'npm run bindings'
+Run 'prettier bindings' 'npx prettier --write src\bindings\index.ts --log-level warn'
+cmd /c 'git diff --stat -- src/bindings/index.ts > logs\phase23b-bindings.diff 2>&1'
+cmd /c 'git diff -- src/bindings/index.ts >> logs\phase23b-bindings.diff 2>&1'
+End-Log
+$prep = $script:Failures
+
+& "$PSScriptRoot\check.ps1"
+$checks = $LASTEXITCODE
+
+Start-Log 'phase23b-build'
+Run 'vite build' 'npx vite build --logLevel warn'
+End-Log
+$build = $script:Failures
+
+$msg = Join-Path $Root 'logs\commit-msg-phase23b.txt'
+if ($prep -eq 0 -and $checks -eq 0 -and $build -eq 0 -and (Test-Path $msg)) {
+  Copy-Item -Force $msg (Join-Path $Root 'logs\commit-msg.txt')
+  & "$PSScriptRoot\commit.ps1"
+  Write-Host 'All green and committed. Starting Oxide for the manual checks (close its window when done).' -ForegroundColor Green
+} else {
+  Write-Host 'Something failed: see logs\phase23b-prep-summary.log, check-summary.log, phase23b-build-summary.log. Not committed. Starting Oxide anyway.' -ForegroundColor Red
+}
+Start-Process -FilePath (Join-Path $PSScriptRoot 'dev.cmd')

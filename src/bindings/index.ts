@@ -4995,7 +4995,12 @@ computer?: ComputerApproval | null;
  * In Auto: why the call stopped to ask ("it sends the folder's files to an outside
  * server"), from the safety check or Oxide's own rules.
  */
-autoReason?: string | null; requestedAt: number }
+autoReason?: string | null; 
+/**
+ * Only Allow once and Deny: Auto asks for this every time (deleting for good, running
+ * downloaded code, the user's always-ask list), so Allow always would change nothing.
+ */
+onceOnly?: boolean; requestedAt: number }
 /**
  * Progress of a long tool call (a video being made), shown on its line.
  */

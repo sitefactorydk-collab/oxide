@@ -43,6 +43,10 @@ pub struct ToolApprovalRequest {
     /// server"), from the safety check or Oxide's own rules.
     #[serde(default)]
     pub auto_reason: Option<String>,
+    /// Only Allow once and Deny: Auto asks for this every time (deleting for good, running
+    /// downloaded code, the user's always-ask list), so Allow always would change nothing.
+    #[serde(default)]
+    pub once_only: bool,
     pub requested_at: Timestamp,
 }
 

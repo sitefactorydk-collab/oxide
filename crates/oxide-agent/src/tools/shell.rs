@@ -159,15 +159,26 @@ pub async fn run_command(
         Ok((stdout, stderr, status)) => {
             let status = status.map_err(|e| format!("The command failed: {e}"))?;
             let code = status.code();
-            Ok((
-                format_result(&command, &cwd, code, &stdout, &stderr, secs, false),
-                code != Some(0),
-            ))
+            // PowerShell ends with 0 when only cmdlets failed (non-terminating errors, e.g.
+            // a `Move-Item` whose file is gone): the errors on stderr still mean it failed.
+            let errors =
+                shell.is_powershell() && code == Some(0) && powershell_reported_errors(&stderr);
+            let text = format_result(&command, &cwd, code, &stdout, &stderr, secs, false, errors);
+            Ok((text, code != Some(0) || errors))
         }
         Err(_) => {
             kill_tree(pid).await;
             Ok((
-                format_result(&command, &cwd, None, b"", b"", timeout.as_secs_f32(), true),
+                format_result(
+                    &command,
+                    &cwd,
+                    None,
+                    b"",
+                    b"",
+                    timeout.as_secs_f32(),
+                    true,
+                    false,
+                ),
                 true,
             ))
         }
@@ -234,6 +245,15 @@ fn clip(text: &str) -> String {
     )
 }
 
+/// Whether PowerShell printed error records (`CategoryInfo` / `FullyQualifiedErrorId`) on
+/// stderr. Errors silenced with `-ErrorAction SilentlyContinue` aren't printed, so they don't
+/// count.
+fn powershell_reported_errors(stderr: &[u8]) -> bool {
+    let err = String::from_utf8_lossy(stderr);
+    err.contains("FullyQualifiedErrorId") || err.contains("+ CategoryInfo")
+}
+
+#[allow(clippy::too_many_arguments)]
 fn format_result(
     command: &str,
     cwd: &Path,
@@ -242,6 +262,7 @@ fn format_result(
     stderr: &[u8],
     secs: f32,
     timed_out: bool,
+    errors_reported: bool,
 ) -> String {
     let mut s = format!("$ {command}\n(in {})\n", display_path(cwd));
     if timed_out {
@@ -254,6 +275,12 @@ fn format_result(
     match code {
         Some(c) => s.push_str(&format!("Exit code {c} after {secs:.1} s\n")),
         None => s.push_str(&format!("Ended by a signal after {secs:.1} s\n")),
+    }
+    if errors_reported {
+        s.push_str(
+            "PowerShell reported errors (see stderr), so this counts as failed: some steps may \
+             not have run. Check the result before going on.\n",
+        );
     }
     let out = String::from_utf8_lossy(stdout);
     let err = String::from_utf8_lossy(stderr);
@@ -398,6 +425,34 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn powershell_error_records_count_as_failures() {
+        let stderr = b"move : Cannot find path 'C:\\x' because it does not exist.\r\n\
+            + CategoryInfo          : ObjectNotFound: (C:\\x:String) [Move-Item]\r\n\
+            + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.MoveItemCommand";
+        assert!(powershell_reported_errors(stderr));
+        assert!(!powershell_reported_errors(
+            b"warning: something native said"
+        ));
+        let text = format_result(
+            "move a b",
+            Path::new("/tmp"),
+            Some(0),
+            b"",
+            stderr,
+            1.0,
+            false,
+            true,
+        );
+        assert!(text.contains("Exit code 0"), "{text}");
+        assert!(text.contains("counts as failed"), "{text}");
+    }
+}
+
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
@@ -435,5 +490,30 @@ mod windows_tests {
         .await
         .expect("runs");
         assert!(failed && out.contains("Exit code 4"), "{out}");
+        // A cmdlet fails, then a later line works: PowerShell says 0, Oxide says failed.
+        let (out, failed) = run_command(
+            &sb,
+            &sh,
+            &json!({"command": "Move-Item nope.txt elsewhere.txt\nWrite-Output done"}),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("runs");
+        assert!(
+            failed && out.contains("Exit code 0") && out.contains("counts as failed"),
+            "{out}"
+        );
+        // Silenced errors don't count.
+        let (out, failed) = run_command(
+            &sb,
+            &sh,
+            &json!({
+                "command": "Move-Item nope.txt elsewhere.txt -ErrorAction SilentlyContinue\nWrite-Output done"
+            }),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("runs");
+        assert!(!failed, "{out}");
     }
 }

@@ -161,6 +161,7 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 **Packaging:** installers for all three OSes, auto-update, CI [P17].
 **Media generation:** images, video and music from chats (and Utility Apps) through OpenAI-compatible endpoints, with global default models per kind in Settings → Media generation [P19].
 **Permission modes:** Manual and Auto (runs on its own, pauses to ask when an action looks risky), per chat, also for scheduled tasks [P23].
+**Compact tool history:** a reply's tool calls fold into one quiet summary line that opens to a compact list, so long agentic replies don't fill the screen [P24].
 **Utility Apps:** a sidebar page (after Projects) with a gallery of AI utility apps — small React apps in a sandboxed frame that use everything a chat can (each capability asked once per app), per-app model overrides, clone, export/import — and an AI Studio-style builder (chat + Preview/Code) to create and edit them [P20–P22].
 
 ---
@@ -524,6 +525,17 @@ Requested by the user on 2026-11-21: an **Auto** mode like the Claude desktop ap
 **Exit:** on Windows, a chat with a granted folder in **Auto**: “organize this folder by file type and write a summary” runs to the end with no approval cards and Auto marks on its tool lines; asking it to delete the files for good, to write outside the folder, or to run a shell command that downloads and runs a script stops with a card and a sensible reason; switching to **Manual** brings today's cards back; the same works with a local model (LM Studio) and with Claude; a scheduled task in Auto runs and pauses on a stopped action.
 
 *Built 2026-11-21* (see PROGRESS.md). Deviations: generation runs in Auto once allowed always for the chat; file changes outside the shared folders always ask with a reason instead of going to the check (the file tools can't reach there in any mode); the shell allowlist and the browser, Chrome and sandbox "don't ask" switches don't skip the check in Auto; scheduled tasks keep "Run them without asking" as a third mode.
+
+### Phase 24 — Compact tool history in the transcript
+Requested by the user on 2026-11-21 (with side-by-side screenshots): in a long agentic reply every tool call is a full-width bordered card (icon, verb, target, Auto mark, chevron), each thinking step a line of its own, so twelve calls fill a whole screen before the answer. The Claude desktop app shows the same work as one quiet line. Oxide's version follows that visible behaviour; the wording is Oxide's own.
+- **Groups:** consecutive tool calls in a reply (and the thinking between them) form one group, ended by the model's prose. A finished group is **one muted line** with no card around it: a summary of what was done, built from the calls' kinds and counts in plain words (“Listed a folder 4 times, ran 3 commands, wrote a file”; failures counted, e.g. “1 failed”), and a chevron. Prose stays as it is.
+- **Opened:** the line opens a single bordered box with a compact row per step (no box per row, thin dividers, smaller text): thinking as a short muted line (its first sentence; click for all), each call as “Ran mkdir …”, “Listed C:\…\Downloads” with a chevron that opens its input and result as today. Auto marks shrink to a small ⚡ icon with the mark's text in a tooltip; **Failed** stays visible in red on its row and in the summary.
+- **While a reply runs:** the current group is open and shows its steps live, ending with the running one (“Running mkdir …”, “Safety check …”); when the model starts writing prose the group collapses to its summary line. A setting (Settings → Appearance: **Show tool steps** collapsed / expanded) keeps groups open for users who want them.
+- **Never hidden:** approval cards (also Auto's stops with their reason), computer-use cards, artifacts, generated images, video and music, and the browser's live screenshots stay outside the fold, in place, as now. A group with a waiting approval stays open.
+- **Elsewhere:** “jump to the tool call” from Used in this session opens the group and scrolls to the row; search, export (Markdown, JSON, HTML) and Copy are unchanged (they use the messages, not the view).
+- **Tests (Vitest):** grouping (prose splits groups; approvals, artifacts and media stay outside), the summary wording (kinds, counts, failures, singular/plural, Danish keys), open/close and the live group collapsing when prose starts, the setting, failures and Auto marks in compact rows, jump-to-call opens the group.
+
+**Exit:** on Windows, the “organize this folder” chat from Phase 23's checks shows its tool work as one or two summary lines above the answer; opening one shows the compact rows with their marks and failures; a running reply shows its steps live and folds them when the answer starts; approval cards still appear in full; Settings → Appearance → Show tool steps: expanded brings back open groups.
 
 ---
 

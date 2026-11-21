@@ -168,7 +168,14 @@ pub async fn run_artifact(
                 return ToolOutput::error(format!("{command} needs \"content\"."));
             };
             let prev = existing.as_ref().map(|(a, _)| a);
-            let Some(kind) = kind_arg.or(prev.map(|a| a.kind)) else {
+            // A new artifact without a type takes it from its language (`"language":
+            // "markdown"` is a common slip): a known type by name, else code.
+            let from_language = || {
+                language_arg
+                    .as_deref()
+                    .map(|l| ArtifactKind::parse(l).unwrap_or(ArtifactKind::Code))
+            };
+            let Some(kind) = kind_arg.or(prev.map(|a| a.kind)).or_else(from_language) else {
                 return ToolOutput::error(
                     "A new artifact needs a \"type\": markdown, code, html, svg, mermaid or react.",
                 );
@@ -269,6 +276,41 @@ mod tests {
                 _ => None,
             })
             .expect("an artifact reference")
+    }
+
+    #[tokio::test]
+    async fn a_missing_type_comes_from_the_language() {
+        let (s, cid) = chat().await;
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r1",
+            &json!({"command": "create", "id": "notes", "language": "markdown",
+                    "title": "Notes", "content": "# Hi"}),
+        )
+        .await;
+        assert!(!out.is_error, "{out:?}");
+        let text = oxide_core::message::plain_text(&out.content);
+        assert!(text.contains("type markdown"), "{text}");
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r2",
+            &json!({"command": "create", "id": "script", "language": "python",
+                    "content": "print(1)"}),
+        )
+        .await;
+        assert!(!out.is_error, "{out:?}");
+        assert!(oxide_core::message::plain_text(&out.content).contains("type code"));
+        // Neither: still an error.
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r3",
+            &json!({"command": "create", "id": "x", "content": "?"}),
+        )
+        .await;
+        assert!(out.is_error);
     }
 
     #[tokio::test]

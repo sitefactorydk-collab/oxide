@@ -144,9 +144,55 @@ describe("tool lines in Auto", () => {
     expect(card).toHaveTextContent(
       "Stopped because: it runs a script downloaded from the internet.",
     );
+    // The check's stops keep Allow always.
+    expect(
+      within(card).getByRole("button", { name: "Always allow this command" }),
+    ).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Deny" }));
     await waitFor(() => expect(fakeState().answers.at(-1)?.decision).toBe("deny"));
     expect(await within(live).findByLabelText("Auto: stopped")).toBeInTheDocument();
+  });
+
+  it("offers no Allow always on cards Auto asks for every time", async () => {
+    renderApp("/chat/c2", { backend: { replies: "hold" } });
+    await screen.findByText(/warm neutral palette/);
+    await send("Delete the Logs folder for good");
+    await screen.findByLabelText("Reply in progress");
+    const rid = heldReplyId("c2");
+    act(() => {
+      emitStream("c2", { type: "toolUse", id: "d1", name: "delete_file" });
+      emitStream("c2", {
+        type: "toolCall",
+        id: "d1",
+        name: "delete_file",
+        server: null,
+        tool: "delete_file",
+        title: "Delete file",
+        inputJson: '{"path":"Logs"}',
+      });
+      askApproval({
+        conversationId: "c2",
+        messageId: rid,
+        toolUseId: "d1",
+        server: null,
+        tool: "delete_file",
+        title: "Delete file",
+        description: "Delete a file or folder in a shared folder for good.",
+        inputJson: '{\n  "path": "Logs"\n}',
+        readOnly: false,
+        destructive: true,
+        skill: null,
+        computer: null,
+        autoReason: "it deletes files for good",
+        onceOnly: true,
+        requestedAt: Date.now(),
+      });
+    });
+    const card = await screen.findByRole("group", { name: "Approve Delete file" });
+    expect(card).toHaveTextContent("Delete a file or folder in a shared folder for good.");
+    expect(within(card).getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /Allow always|Always allow/ })).toBeNull();
   });
 
   it("marks saved calls from the chat's tool log and counts them in the session panel", async () => {

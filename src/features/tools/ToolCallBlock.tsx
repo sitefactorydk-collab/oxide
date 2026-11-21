@@ -247,7 +247,9 @@ function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
   const Icon = request.destructive ? ShieldAlert : ShieldCheck;
   // A skill shapes later chats: every save is asked about on its own.
   const skill = request.server === null && request.tool === "save_skill" ? request.skill : null;
-  const once = request.server === null && request.tool === "save_skill";
+  const isSkill = request.server === null && request.tool === "save_skill";
+  // Saving a skill, and what Auto asks for every time, offer no Allow always.
+  const once = isSkill || !!request.onceOnly;
   return (
     <div
       role="group"
@@ -286,7 +288,7 @@ function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
               {request.autoReason}.
             </p>
           )}
-          {request.description && !once && (
+          {request.description && !isSkill && (
             <p className="mt-0.5 line-clamp-3 text-sm text-fg-subtle">{request.description}</p>
           )}
           {request.destructive && (
