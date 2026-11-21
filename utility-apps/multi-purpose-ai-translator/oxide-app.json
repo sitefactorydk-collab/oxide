@@ -1,0 +1,11 @@
+{
+  "id": "multi-purpose-ai-translator",
+  "name": "Multi Purpose AI Translator",
+  "description": "Translates text, HTML, images and PDF files into 15 languages, in a style you choose, with optional translator comments.",
+  "icon": "languages",
+  "category": "Content",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

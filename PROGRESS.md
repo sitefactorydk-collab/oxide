@@ -17,7 +17,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
 - **Phase 21** — Utility App builder: **done** (2026-11-20). Committed `1ce2afe` (every check green on Windows on the third run), template fix `c606ab4`; the user passed every manual exit check (18:35), building the CSV chart app with LM Studio's `google/gemma-4-12b-qat`.
-- **Next phase:** Phase 22 — More Utility Apps: only **Multi Purpose AI Translator**, **AI Plugin Creator** and **llms.txt Generator** (the user's pick, 2026-11-20; PLAN.md updated).
+- **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **built, waiting for the Windows run** (2026-11-20). `scripts\win\phase22.cmd` runs every check, commits with `logs\commit-msg-phase22.txt` only when all pass, then starts Oxide for the manual exit check.
+- **Next phase:** none planned after Phase 22 (PLAN.md lists a community catalogue for sharing apps as “later”).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -46,6 +47,41 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
 - **Linux harness after Phase 18** (Phase 19): `logs\linux-vendor.tgz` has no `dbus-secret-service`, so in `~/oxide-linux` `crates/oxide-store` is a folder with symlinked `src` and `migrations` and a `Cargo.toml` whose `secret-service` feature is `[]`. Start without the repo's `Cargo.lock` (cargo resolves offline from the vendor folder). Mirror tarball: exclude `src-tauri/binaries`, `docs/ui-parity`, `docs/*.json` and `extension/dist` too (they are large). `src-tauri` files are formatted with `rustfmt --edition 2024 --config-path rustfmt.toml <files>`.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 22 — More Utility Apps (rest of AI-Toolkit) — 2026-11-20
+Status: **built, waiting for the Windows run** (`scripts\win\phase22.cmd`: every check, then a commit with `logs\commit-msg-phase22.txt` only when all pass, then the app for the manual check).
+
+Before starting: Phase 21's exit checks were passed (18:35) and its last commits (`0388cbb`, `5cea061`) are in, so the phase went ahead. The originals were read from `github.com/sitefactorydk-collab/ai-toolkit` (`src/components/Translator.tsx`, `AIPluginCreator.tsx`, `LLMSTxtGenerator.tsx`, `server.ts`'s `/api/crawl` and `/api/fetch-content`, `lib/gemini.ts`'s `categorizeUrls`).
+
+Exit criteria (Windows, by hand):
+- [ ] **Multi Purpose AI Translator** (Content): paste text → pick a language and style → **Translate** streams the translation (asks for *AI text* once); **Include translator comments** adds the 💡 section in the chosen language; **Copy**. **Document / Image**: a PDF and a picture with text (vision model) → the layout-style translation → **Save as Rich Text file** opens in Word. The ⚙ next to Style: add, edit and delete styles; they are still there after reopening the app.
+- [ ] **AI Plugin Creator** (Code): WordPress, a name and instructions → **Generate Extension** → the file tree and code → **Save to ZIP file** (`<name>-v1.0.0.zip`) installs in WordPress (or at least has a valid plugin header). Joomla shows Plugin/Module. Drop that ZIP back in with a change request → **Modify Extension** → the saved ZIP keeps the files the model didn't change.
+- [ ] **llms.txt Generator** (SEO): a site URL (several lines for several sites) → **Generate Files** (asks for *AI text* and *reading web pages* once each) → crawling, triage, the high/low value lists, the `llms.txt` / `llms-full.txt` preview → **Download .zip Bundle**. **Markdown Ready?** adds the Guidance section.
+
+Done:
+- `utility-apps/multi-purpose-ai-translator/`, `utility-apps/ai-plugin-creator/`, `utility-apps/llms-txt-generator/` (manifest + `App.tsx` each), listed in `crates/oxide-agent/src/apps/builtin.rs` (7 built-in apps now) and in `apps/tests.rs`' listing test.
+- **Translator** (`text`): the original's 15 languages, four default styles plus own ones (⚙: add, edit, delete; kept in the app's `storage` under `instructions`), the original's prompts word for word (text mode with or without translator comments in a chosen language; the layout format for images and PDFs), `ai.text` with streaming and **Stop**, images to `images` and PDFs to `documents` (base64), Markdown output with single line breaks kept, **Copy**, **Save as Rich Text file** (the original's RTF writer, now also for characters outside the BMP), the answering model under the output.
+- **Plugin Creator** (`text`): WordPress / Joomla (Plugin or Module) / Drupal, name, version, author, description, instructions; an optional ZIP to modify (picker or drop; its text files go into the prompt, binaries are kept aside); `ai.json` with the original's schema; paths cleaned (no `..`, no leading `/`); files the model didn't return are kept; file tree with folders, code view with **Copy**; **Save to ZIP file** merges the uploaded ZIP's untouched and binary files (JSZip, saved with `files.save`).
+- **llms.txt Generator** (`text`, `webFetch`): one or more site URLs; each site crawled with `web.crawl` (robots.txt followed, same origin, depth 5, **Pages per site** 10/25/50); media URLs filtered as in the original; the original's triage prompt and schema through `ai.json` (if the answer can't be read, every page counts as high value, as in the original); the model's grouping is kept only for crawled pages (real titles; invented URLs dropped; pages it left out become low value); `llms.txt` exactly as the original built it (`# host`, optional Guidance, `## High Value Pages (<lang>)`, `## Low Value Pages`) and `llms-full.txt` from the crawled Markdown of the high-value pages; a preview of both with **Copy**; **Download .zip Bundle** (`llms-pack.zip` via `files.zip` + `files.save`); **Stop**.
+- **Tests** (`src/features/apps/BuiltinApps.test.tsx`, fake SDK now with `web.crawl`, `files.zip/readText/toBase64`, `storage` and the `jszip` module): Translator text (language, style, prompt, streaming, line breaks, model, Copy) and PDF with a new saved style (storage, `documents`, layout prompt, RTF); Plugin Creator new (prompt, schema, tree, `..` cleaned, ZIP contents) and modify (uploaded ZIP in the prompt without binaries, the model's change and the untouched binary in the saved ZIP); llms.txt (invalid URL, crawl options, triage prompt without media, llms.txt/llms-full.txt contents, skipped count, preview, download). Rust: `built_in_apps_are_valid` (7 apps, imports only what the frame provides) and the listing test.
+
+Deviations from the originals (and why):
+- **No token counts in the Translator**: the SDK's `ai.text` reports the model, not usage; the model is shown instead.
+- **Text files in the Translator's Document tab** (TXT, HTML, Markdown, XML, JSON, CSV) are read in the app and translated like pasted text, with comments; the original sent them to Gemini as inline data with the image-layout format, which doesn't fit text.
+- **Styles live in the app's storage** (kept by Oxide) instead of the browser's localStorage, which the app frame doesn't keep.
+- **No `temperature: 0.2`** in the Plugin Creator: the SDK has no temperature option.
+- **llms.txt crawling is Oxide's `web.crawl`**: at most 50 pages per site (the original 100), the same origin rather than the same host name, robots.txt read for the agent `oxide` (the original's `SignalPathBot`), and Oxide's own main-content Markdown instead of a second fetch with cheerio + Turndown. No sitefactory.dk fetch proxy is used.
+- Added: Stop buttons (Translator, llms.txt), Copy per file (Plugin Creator), the llms.txt preview and Pages per site.
+- Not ported (as decided with the user): AI Web Auditor, AI SEO Recommendations, AI Schema Markup Generator, AI FAQ Questions Generator, Markdown for AI Agents testing tool, AI SFT Dataset Generator, SP Page Builder - AI.
+
+Known issues / TODO carried forward:
+- Big plugins depend on the model returning all files in one JSON answer; small local models may cut it off (the SDK retries once on unreadable JSON).
+- A 50-page crawl sends all page titles to the model in one request; very long titles on big sites use much of a small model's context.
+- `llms-full.txt` holds what Oxide's web fetcher reads (pages capped by the fetcher's size limit).
+
+Verified (agent side): tsc ✅ (app, utility-apps) eslint ✅ prettier ✅ on the device. Windows (`phase22.cmd`): pending. Manual exit checks: pending.
+
+**Windows run 1 (`phase22.cmd`, 2026-11-21 15:26–15:29):** fmt, Prettier, clippy, typecheck, lint and Vitest (all the new app tests included) passed; `cargo test` failed only on `apps::tests::a_clone_is_an_editable_own_app`, which still counted 4 built-in apps (6 with two clones). It now counts from `builtin::all()`. Not committed; run `phase22.cmd` again.
 
 ## Phase 21 — Utility App builder (build mode) — 2026-11-20
 Status: **done** (2026-11-20). Committed `1ce2afe` (17:09, every check green on Windows) and `c606ab4` (template); the user passed every manual exit check (18:35).

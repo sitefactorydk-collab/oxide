@@ -503,6 +503,8 @@ Requested by the user: creating and editing apps “much like AI Studio's build 
 
 **Exit:** each of the three ported apps does on Windows what its AI-Toolkit original does, using Oxide's models and capabilities.
 
+*Built 2026-11-20* (see PROGRESS.md). Deviations: llms.txt crawls with Oxide's `web.crawl` (≤ 50 pages per site, same origin, robots.txt); the Translator shows the model instead of token counts and translates text files like pasted text; translation styles live in the app's storage; no temperature option in the Plugin Creator.
+
 ---
 
 ## 4. Phase hand-off template (append to PROGRESS.md)

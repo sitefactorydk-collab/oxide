@@ -1,0 +1,11 @@
+{
+  "id": "llms-txt-generator",
+  "name": "llms.txt Generator",
+  "description": "Crawls your website (following robots.txt), lets AI pick the pages worth reading, and bundles llms.txt and llms-full.txt for its root folder.",
+  "icon": "globe",
+  "category": "SEO",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text", "webFetch"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

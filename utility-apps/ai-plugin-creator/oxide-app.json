@@ -1,0 +1,11 @@
+{
+  "id": "ai-plugin-creator",
+  "name": "AI Plugin Creator",
+  "description": "Generates installable WordPress plugins, Joomla plugins and modules, and Drupal modules from a description, or modifies one you upload as a ZIP.",
+  "icon": "puzzle",
+  "category": "Code",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text"],
+  "author": "Oxide (ported from AI-Toolkit)"
+}

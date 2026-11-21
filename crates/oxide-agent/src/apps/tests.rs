@@ -110,7 +110,15 @@ async fn built_in_apps_are_listed_and_read_only() {
     let ids: Vec<&str> = list.iter().map(|a| a.manifest.id.as_str()).collect();
     assert_eq!(
         ids,
-        vec![META, "readability-tone-analyzer", TABLE, "ai-svg-creator"]
+        vec![
+            META,
+            "readability-tone-analyzer",
+            TABLE,
+            "ai-svg-creator",
+            "multi-purpose-ai-translator",
+            "ai-plugin-creator",
+            "llms-txt-generator",
+        ]
     );
     assert!(list.iter().all(|a| a.builtin && a.problem.is_none()));
     let b = f.apps.bundle(META).await.expect("bundle");
@@ -153,11 +161,12 @@ async fn a_clone_is_an_editable_own_app() {
     assert!(f.apps.save_file(&id, "../escape.ts", "x").await.is_err());
 
     let list = f.apps.list().await;
-    assert_eq!(list.len(), 6);
-    assert!(list[4].manifest.name.contains("(copy)"));
+    let builtin = super::builtin::all().len();
+    assert_eq!(list.len(), builtin + 2);
+    assert!(list[builtin].manifest.name.contains("(copy)"));
 
     f.apps.delete(&again.manifest.id).await.expect("deletes");
-    assert_eq!(f.apps.list().await.len(), 5);
+    assert_eq!(f.apps.list().await.len(), builtin + 1);
 }
 
 #[tokio::test]
