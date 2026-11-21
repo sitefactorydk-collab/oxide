@@ -22,9 +22,10 @@ import {
   Sparkles,
   SquareTerminal,
   X,
+  Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { commands, type Message, type TaskItem } from "@/bindings";
+import { commands, type Message, type TaskItem, type ToolUsage } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { attachmentsOf } from "@/features/chat/thread";
@@ -289,6 +290,39 @@ function UsedInSession({ id }: { id: string }) {
   if (rows.length === 0) {
     return <p className="text-sm text-fg-subtle">Nothing yet.</p>;
   }
+  return (
+    <>
+      <AutoSummary usage={data ?? []} />
+      <UsageList rows={rows} />
+    </>
+  );
+}
+
+/** "Auto: 12 ran on their own · 1 stopped to ask" (Phase 23), when Auto handled any call. */
+export function AutoSummary({ usage }: { usage: ToolUsage[] }) {
+  const ran = usage.filter((u) => u.auto && u.auto !== "stopped").length;
+  const stopped = usage.filter((u) => u.auto === "stopped").length;
+  if (ran === 0 && stopped === 0) return null;
+  return (
+    <p
+      aria-label="Auto mode summary"
+      className="mb-1.5 flex items-center gap-1.5 px-2 text-sm text-fg-muted"
+    >
+      <Zap aria-hidden className="size-3.5 shrink-0 text-accent" />
+      <span>
+        Auto: {ran} {ran === 1 ? "action" : "actions"} ran on {ran === 1 ? "its" : "their"} own
+        {stopped > 0 && (
+          <>
+            {" · "}
+            <span className="text-accent">{stopped} stopped to ask</span>
+          </>
+        )}
+      </span>
+    </p>
+  );
+}
+
+function UsageList({ rows }: { rows: UsageRow[] }) {
   return (
     <ul aria-label="Used in this session" className="flex flex-col gap-1">
       {rows.map((r) => (

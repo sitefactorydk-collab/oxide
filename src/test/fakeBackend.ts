@@ -42,6 +42,7 @@ import type {
   TaskList,
   ToolApprovalRequest,
   ToolUsage,
+  PermissionMode,
   UpdateStatus,
   WebSearchKeys,
 } from "@/bindings";
@@ -121,6 +122,8 @@ interface FakeState {
   answers: Array<{ conversationId: string; toolUseId: string; decision: ApprovalDecision }>;
   toolUsage: ToolUsage[];
   grants: Map<string, string[]>;
+  /** Permission modes picked per chat (Phase 23). */
+  permissionModes: Map<string, PermissionMode>;
   /** Granted folders per chat. */
   workspaces: Map<string, ChatWorkspace>;
   tasks: Map<string, TaskList>;
@@ -170,6 +173,8 @@ export interface FakeSeed {
     dictation: Partial<AppSettings["dictation"]>;
     /** Changes to Settings → Generation. */
     generation: Partial<AppSettings["generation"]>;
+    /** Changes to Settings → Permissions (approvals, permission modes). */
+    tools: Partial<AppSettings["tools"]>;
   }>;
   empty?: boolean;
   replies?: ReplyMode;
@@ -207,7 +212,15 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         images: [],
         ...seed.settings?.models,
       },
-      tools: { autoAllowReadOnly: false, askBeforeWeb: false, maxSteps: 25 },
+      tools: {
+        autoAllowReadOnly: false,
+        askBeforeWeb: false,
+        maxSteps: 25,
+        defaultMode: "manual",
+        safetyModel: null,
+        alwaysAsk: [],
+        ...seed.settings?.tools,
+      },
       webSearch: { provider: "none", searxngUrl: "", anthropicNative: true, maxResults: 5 },
       projects: { knowledgeBudget: 40000 },
       memory: { enabled: false, model: null },
@@ -290,6 +303,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
     answers: [],
     toolUsage: [],
     grants: new Map(),
+    permissionModes: new Map(),
     workspaces: new Map(),
     tasks: new Map(),
     compactions: [],
@@ -865,7 +879,7 @@ export const fakeCommands: typeof RealCommands = {
 
   listConversations: () => ok(sorted(state.conversations.filter((c) => !builderChats.has(c.id)))),
   getConversation: (id) => withConversation(id, (c) => c),
-  startConversation: (input, options) => {
+  startConversation: (input, options, permissionMode) => {
     const now = Date.now();
     const firstLine = input.text.trim().split("\n")[0] || (input.attachments[0]?.name ?? "");
     const c: Conversation = {
@@ -879,6 +893,7 @@ export const fakeCommands: typeof RealCommands = {
     };
     state.conversations.push(c);
     if (input.tools) fakeMcpState().chatTools.set(c.id, input.tools);
+    if (permissionMode) state.permissionModes.set(c.id, permissionMode);
     for (const f of input.folders ?? []) {
       const r = resolvePath(f);
       if (r.status === "ok") grantFolder(c.id, r.data);
@@ -888,6 +903,16 @@ export const fakeCommands: typeof RealCommands = {
     startReply(c.id, first.id, options);
     return result;
   },
+  chatPermissionMode: (conversationId) =>
+    withConversation(
+      conversationId,
+      () => state.permissionModes.get(conversationId) ?? state.settings.tools.defaultMode,
+    ),
+  setChatPermissionMode: (conversationId, mode) =>
+    withConversation(conversationId, () => {
+      state.permissionModes.set(conversationId, mode);
+      return null;
+    }),
   renameConversation: (id, title) =>
     title.trim()
       ? withConversation(id, (c) => {

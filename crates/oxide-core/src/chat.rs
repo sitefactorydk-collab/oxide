@@ -155,6 +155,15 @@ pub enum StreamEvent {
     ToolApproval {
         request: ToolApprovalRequest,
     },
+    /// Auto's safety check is looking at a tool call.
+    ToolChecking {
+        id: String,
+    },
+    /// How Auto handled a tool call (its **Auto** mark).
+    ToolAuto {
+        id: String,
+        mark: crate::AutoMark,
+    },
     /// A tool call was approved (or needed no approval) and is running.
     ToolRunning {
         id: String,

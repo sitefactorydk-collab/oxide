@@ -40,7 +40,8 @@ import { useMcpUi } from "@/features/mcp/store";
 import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { useAnswerApproval } from "./queries";
+import { AutoMarkBadge } from "@/features/permissions/AutoMarkBadge";
+import { useAnswerApproval, useToolUsage } from "./queries";
 import {
   browserGoal,
   callHeadline,
@@ -95,6 +96,14 @@ function StatusBadge({ call }: { call: ToolCallView }) {
   const frame = useBrowserFrame(call.id);
   const isPython = toolKind(call) === "python";
   const settingUp = usePythonInstalling(isPython) && isPython;
+  if (call.checking && (call.status === "ready" || call.status === "streaming")) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-subtle">
+        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        Safety check
+      </span>
+    );
+  }
   switch (call.status) {
     case "streaming":
     case "ready":
@@ -269,6 +278,12 @@ function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
                 </>
               ) : null}
               ?
+            </p>
+          )}
+          {request.autoReason && (
+            <p className="mt-1 text-sm text-accent">
+              <strong className="font-semibold">Auto stopped this.</strong> Stopped because:{" "}
+              {request.autoReason}.
             </p>
           )}
           {request.description && !once && (
@@ -447,6 +462,7 @@ function ToolLine({ call }: { call: ToolCallView }) {
           </span>
         )}
         <span className="ml-auto" />
+        <AutoMarkOf call={call} />
         <StatusBadge call={call} />
         <ChevronRight
           aria-hidden
@@ -492,6 +508,15 @@ function ToolLine({ call }: { call: ToolCallView }) {
       {waiting && call.approval && <ApprovalCard request={call.approval} />}
     </div>
   );
+}
+
+/** The call's **Auto** mark: live from the stream, else from the chat's tool log. */
+function AutoMarkOf({ call }: { call: ToolCallView }) {
+  const { id: conversationId = "" } = useParams();
+  const { data } = useToolUsage(call.auto ? "" : conversationId);
+  const mark = call.auto ?? data?.find((u) => u.toolUseId === call.id)?.auto ?? null;
+  if (!mark || call.status === "awaitingApproval") return null;
+  return <AutoMarkBadge mark={mark} />;
 }
 
 /**

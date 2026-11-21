@@ -36,9 +36,32 @@ async getConversation(id: string) : Promise<Result<Conversation, CommandError>> 
  * Creates a chat with its first user message (the title comes from the message) and starts
  * the reply. Progress arrives as `chatStream` events.
  */
-async startConversation(input: StartConversation, options: GenerateOptions) : Promise<Result<Conversation, CommandError>> {
+async startConversation(input: StartConversation, options: GenerateOptions, permissionMode: PermissionMode | null) : Promise<Result<Conversation, CommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_conversation", { input, options }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_conversation", { input, options, permissionMode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A chat's permission mode (Manual or Auto): its own, else the default from Settings →
+ * Permissions.
+ */
+async chatPermissionMode(conversationId: string) : Promise<Result<PermissionMode, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_permission_mode", { conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets a chat's permission mode. A running reply follows it from its next tool call.
+ */
+async setChatPermissionMode(conversationId: string, mode: PermissionMode) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_chat_permission_mode", { conversationId, mode }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2420,13 +2443,19 @@ export type ApprovalDecision = "allowOnce" |
  */
 export type ApprovalMode = 
 /**
- * As in a chat: calls that ask wait for the user, and Oxide sends a notification.
+ * As in a chat in Manual: calls that ask wait for the user, and Oxide sends a
+ * notification.
  */
 "ask" | 
 /**
- * Every tool call runs without asking (saving a skill still asks).
+ * As a chat in Auto (Phase 23): runs on its own; an action the safety check stops
+ * pauses the run as "needs approval" and notifies.
  */
-"auto"
+"auto" | 
+/**
+ * Every tool call runs without asking (saving a skill and computer use still ask).
+ */
+"allowAll"
 /**
  * An artifact: its latest state. `key` is the id the model chose (unique in the chat).
  */
@@ -2547,6 +2576,34 @@ export type AttachmentSource =
  * Bytes from the clipboard or a browser file input, base64-encoded.
  */
 { kind: "bytes"; name: string; data: string }
+/**
+ * Why a tool call ran (or didn't) without a card in Auto: the small **Auto** mark on its line.
+ */
+export type AutoMark = 
+/**
+ * The tool only reads or searches.
+ */
+"readOnly" | 
+/**
+ * A change inside a folder shared with the chat (or a copy between it and the sandbox).
+ */
+"inFolder" | 
+/**
+ * Inside the chat's Docker sandbox, which has no network.
+ */
+"sandboxed" | 
+/**
+ * The user allowed this tool for the chat (Allow always).
+ */
+"allowed" | 
+/**
+ * The safety check looked at it and let it run.
+ */
+"checked" | 
+/**
+ * The safety check stopped it and asked the user (whatever they answered).
+ */
+"stopped"
 /**
  * One axis of a model's pointing: it reports `true × scale + offset` (screenshot pixels).
  */
@@ -4098,6 +4155,20 @@ export type PairingCode = {
  */
 code: string; expiresAt: number }
 /**
+ * How a chat handles tool calls that would ask for approval.
+ */
+export type PermissionMode = 
+/**
+ * Oxide asks before tools that change things (Allow once / Allow always / Deny).
+ */
+"manual" | 
+/**
+ * Oxide works on its own: reads, changes inside shared folders and what was allowed run
+ * at once; a few things always ask; the rest goes to the safety check, which stops to
+ * ask when an action looks risky.
+ */
+"auto"
+/**
  * What a picker should choose.
  */
 export type PickKind = 
@@ -4756,6 +4827,14 @@ export type StreamEvent =
  */
 { type: "toolApproval"; request: ToolApprovalRequest } | 
 /**
+ * Auto's safety check is looking at a tool call.
+ */
+{ type: "toolChecking"; id: string } | 
+/**
+ * How Auto handled a tool call (its **Auto** mark).
+ */
+{ type: "toolAuto"; id: string; mark: AutoMark } | 
+/**
  * A tool call was approved (or needed no approval) and is running.
  */
 { type: "toolRunning"; id: string } | 
@@ -4911,7 +4990,12 @@ skill: SkillSavePreview | null;
 /**
  * For computer use: the card that starts it in a chat, or one for an app.
  */
-computer?: ComputerApproval | null; requestedAt: number }
+computer?: ComputerApproval | null; 
+/**
+ * In Auto: why the call stopped to ask ("it sends the folder's files to an outside
+ * server"), from the safety check or Oxide's own rules.
+ */
+autoReason?: string | null; requestedAt: number }
 /**
  * Progress of a long tool call (a video being made), shown on its line.
  */
@@ -4939,7 +5023,19 @@ askBeforeWeb: boolean;
 /**
  * Most model → tools → model rounds in one reply.
  */
-maxSteps: number }
+maxSteps: number; 
+/**
+ * The permission mode new chats start in (Phase 23).
+ */
+defaultMode: PermissionMode; 
+/**
+ * The model Auto's safety check asks (`<providerId>/<model>`); `None`: the chat's own.
+ */
+safetyModel: string | null; 
+/**
+ * Tools that ask even in Auto: a tool's name, `server/tool` or a whole `server`.
+ */
+alwaysAsk: string[] }
 /**
  * One tool call, logged per chat.
  */
@@ -4947,7 +5043,11 @@ export type ToolUsage = { id: string; conversationId: string; messageId: string;
 /**
  * A short label: the search query, the URL, a file path.
  */
-label: string | null; isError: boolean; createdAt: number }
+label: string | null; isError: boolean; 
+/**
+ * How Auto handled it (`None`: Manual, or a call Auto doesn't mark).
+ */
+auto?: AutoMark | null; createdAt: number }
 /**
  * What kind of thing a chat used (the "Used in this chat" list).
  */

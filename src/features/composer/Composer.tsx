@@ -27,6 +27,7 @@ import { inTauri } from "@/lib/platform";
 import { EffortMenu, ThinkingToggle } from "./ReasoningControls";
 import { ModelPicker } from "./ModelPicker";
 import { PlusMenu } from "./PlusMenu";
+import { PermissionModeMenu } from "@/features/permissions/PermissionModeMenu";
 import { useFileDrop } from "./useFileDrop";
 
 const MAX_HEIGHT = 320;
@@ -237,6 +238,7 @@ export function Composer({
             <div className="mt-2 flex items-center gap-1">
               {tools}
               <div className="flex-1" />
+              <PermissionModeMenu conversationId={conversationId} />
               <ModelPicker value={modelId} onChange={onModelChange} />
               {mic}
               {sendButton}
@@ -265,6 +267,7 @@ export function Composer({
               streaming={streaming}
             />
           )}
+          <PermissionModeMenu conversationId={conversationId} />
           <ModelPicker value={modelId} onChange={onModelChange} />
         </div>
       )}

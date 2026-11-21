@@ -17,6 +17,8 @@
     "allow-list-conversations",
     "allow-get-conversation",
     "allow-start-conversation",
+    "allow-chat-permission-mode",
+    "allow-set-chat-permission-mode",
     "allow-rename-conversation",
     "allow-set-conversation-starred",
     "allow-set-conversation-model",

@@ -1,6 +1,6 @@
 //! Tool approvals saved per chat, and the log of tool calls each chat made.
 
-use oxide_core::{ToolUsage, ToolUsageKind};
+use oxide_core::{AutoMark, PermissionMode, ToolUsage, ToolUsageKind};
 
 use crate::{Result, Store, new_id, now_ms};
 
@@ -57,6 +57,8 @@ pub struct NewToolUsage {
     pub tool: String,
     pub label: Option<String>,
     pub is_error: bool,
+    /// How Auto handled the call.
+    pub auto: Option<AutoMark>,
 }
 
 type UsageRow = (
@@ -69,6 +71,7 @@ type UsageRow = (
     String,
     Option<String>,
     bool,
+    Option<String>,
     i64,
 );
 
@@ -124,6 +127,38 @@ impl Store {
         Ok(())
     }
 
+    /// A chat's permission mode, if one was picked for it (Phase 23).
+    pub async fn chat_permission_mode(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<PermissionMode>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT mode FROM chat_permission_modes WHERE conversation_id = ?")
+                .bind(conversation_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(m,)| PermissionMode::parse(&m)))
+    }
+
+    /// Sets a chat's permission mode.
+    pub async fn set_chat_permission_mode(
+        &self,
+        conversation_id: &str,
+        mode: PermissionMode,
+    ) -> Result<()> {
+        // NotFound for unknown chats rather than a foreign key error.
+        self.get_conversation(conversation_id).await?;
+        sqlx::query(
+            "INSERT INTO chat_permission_modes (conversation_id, mode) VALUES (?, ?)
+             ON CONFLICT(conversation_id) DO UPDATE SET mode = excluded.mode",
+        )
+        .bind(conversation_id)
+        .bind(mode.as_str())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Records a finished tool call.
     pub async fn log_tool_use(&self, u: NewToolUsage) -> Result<ToolUsage> {
         let usage = ToolUsage {
@@ -136,12 +171,13 @@ impl Store {
             tool: u.tool,
             label: u.label.map(|l| l.chars().take(300).collect()),
             is_error: u.is_error,
+            auto: u.auto,
             created_at: now_ms(),
         };
         sqlx::query(
             "INSERT INTO tool_usage (id, conversation_id, message_id, tool_use_id, kind, server,
-                                     tool, label, is_error, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     tool, label, is_error, auto, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&usage.id)
         .bind(&usage.conversation_id)
@@ -152,6 +188,7 @@ impl Store {
         .bind(&usage.tool)
         .bind(&usage.label)
         .bind(usage.is_error)
+        .bind(usage.auto.map(AutoMark::as_str))
         .bind(usage.created_at)
         .execute(&self.pool)
         .await?;
@@ -162,7 +199,7 @@ impl Store {
     pub async fn tool_usage(&self, conversation_id: &str) -> Result<Vec<ToolUsage>> {
         let rows: Vec<UsageRow> = sqlx::query_as(
             "SELECT id, conversation_id, message_id, tool_use_id, kind, server, tool, label,
-                    is_error, created_at
+                    is_error, auto, created_at
              FROM tool_usage WHERE conversation_id = ? ORDER BY created_at, rowid",
         )
         .bind(conversation_id)
@@ -181,6 +218,7 @@ impl Store {
                     tool,
                     label,
                     is_error,
+                    auto,
                     created_at,
                 )| {
                     ToolUsage {
@@ -193,6 +231,7 @@ impl Store {
                         tool,
                         label,
                         is_error,
+                        auto: auto.as_deref().and_then(AutoMark::parse),
                         created_at,
                     }
                 },
@@ -203,7 +242,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use oxide_core::{StartConversation, ToolUsageKind};
+    use oxide_core::{AutoMark, PermissionMode, StartConversation, ToolUsageKind};
 
     use super::NewToolUsage;
     use crate::Store;
@@ -252,9 +291,13 @@ mod tests {
         );
         assert!(store.grant_chat_tool("nope", "x/y").await.is_err());
 
-        for (kind, label) in [
-            (ToolUsageKind::WebSearch, "rust tauri"),
-            (ToolUsageKind::Connector, "C:/x"),
+        for (kind, label, auto) in [
+            (
+                ToolUsageKind::WebSearch,
+                "rust tauri",
+                Some(AutoMark::ReadOnly),
+            ),
+            (ToolUsageKind::Connector, "C:/x", None),
         ] {
             store
                 .log_tool_use(NewToolUsage {
@@ -266,6 +309,7 @@ mod tests {
                     tool: "web_search".into(),
                     label: Some(label.into()),
                     is_error: false,
+                    auto,
                 })
                 .await
                 .expect("logs");
@@ -274,9 +318,47 @@ mod tests {
         assert_eq!(used.len(), 2);
         assert_eq!(used[0].kind, ToolUsageKind::WebSearch);
         assert_eq!(used[1].label.as_deref(), Some("C:/x"));
+        assert_eq!(used[0].auto, Some(AutoMark::ReadOnly));
+        assert_eq!(used[1].auto, None);
+
+        // Permission modes: none until picked, then kept per chat.
+        assert_eq!(
+            store.chat_permission_mode(&chat.id).await.expect("mode"),
+            None
+        );
+        store
+            .set_chat_permission_mode(&chat.id, PermissionMode::Auto)
+            .await
+            .expect("sets");
+        assert_eq!(
+            store.chat_permission_mode(&chat.id).await.expect("mode"),
+            Some(PermissionMode::Auto)
+        );
+        store
+            .set_chat_permission_mode(&chat.id, PermissionMode::Manual)
+            .await
+            .expect("sets");
+        assert_eq!(
+            store.chat_permission_mode(&chat.id).await.expect("mode"),
+            Some(PermissionMode::Manual)
+        );
+        assert!(
+            store
+                .set_chat_permission_mode("nope", PermissionMode::Auto)
+                .await
+                .is_err()
+        );
+        store
+            .set_chat_permission_mode(&chat.id, PermissionMode::Auto)
+            .await
+            .expect("sets");
 
         store.delete_conversation(&chat.id).await.expect("deletes");
         assert!(store.tool_usage(&chat.id).await.expect("usage").is_empty());
+        assert_eq!(
+            store.chat_permission_mode(&chat.id).await.expect("mode"),
+            None
+        );
         assert!(
             store
                 .chat_tool_grants(&chat.id)

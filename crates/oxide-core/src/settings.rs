@@ -190,6 +190,12 @@ pub struct ToolSettings {
     pub ask_before_web: bool,
     /// Most model → tools → model rounds in one reply.
     pub max_steps: u32,
+    /// The permission mode new chats start in (Phase 23).
+    pub default_mode: crate::PermissionMode,
+    /// The model Auto's safety check asks (`<providerId>/<model>`); `None`: the chat's own.
+    pub safety_model: Option<String>,
+    /// Tools that ask even in Auto: a tool's name, `server/tool` or a whole `server`.
+    pub always_ask: Vec<String>,
 }
 
 impl Default for ToolSettings {
@@ -198,6 +204,9 @@ impl Default for ToolSettings {
             auto_allow_read_only: false,
             ask_before_web: false,
             max_steps: DEFAULT_MAX_STEPS,
+            default_mode: crate::PermissionMode::Manual,
+            safety_model: None,
+            always_ask: Vec::new(),
         }
     }
 }
@@ -387,6 +396,20 @@ impl AppSettings {
         images.truncate(500);
         self.models.images = images;
         self.tools.max_steps = self.tools.max_steps.clamp(1, MAX_MAX_STEPS);
+        self.tools.safety_model = self
+            .tools
+            .safety_model
+            .map(|m| m.trim().to_owned())
+            .filter(|m| crate::model::split_model_id(m).is_some());
+        let mut always: Vec<String> = Vec::new();
+        for e in &self.tools.always_ask {
+            let e: String = e.trim().chars().take(200).collect();
+            if !e.is_empty() && !always.iter().any(|a| a.eq_ignore_ascii_case(&e)) {
+                always.push(e);
+            }
+        }
+        always.truncate(crate::MAX_ALWAYS_ASK);
+        self.tools.always_ask = always;
         self.web_search.max_results = self.web_search.max_results.clamp(1, 10);
         self.projects.knowledge_budget = self
             .projects

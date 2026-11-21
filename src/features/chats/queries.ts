@@ -18,6 +18,8 @@ import {
 import { unwrap } from "@/lib/api";
 import { applyDraftChatTools, draftChatTools } from "@/features/mcp/chatTools";
 import { useDraftFolders } from "@/features/workspace/store";
+import { applyDraftPermissionMode } from "@/features/permissions/queries";
+import { useDraftPermissionMode } from "@/features/permissions/store";
 
 /** Query keys for chat data. */
 export const chatKeys = {
@@ -175,13 +177,16 @@ export function useStartConversation() {
             tools: v.input.tools ?? draftChatTools(),
           },
           v.options,
+          // The permission mode picked before the chat existed (Phase 23).
+          useDraftPermissionMode.getState().mode,
         ),
       ),
     onSuccess: (c, v) => {
       if (v.input.folders === undefined) useDraftFolders.getState().clear();
       patchList(qc, (list) => sortByUpdated([c, ...list.filter((x) => x.id !== c.id)]));
-      // Tool switches chosen before the chat existed.
+      // Tool switches and the permission mode chosen before the chat existed.
       applyDraftChatTools(qc, c.id);
+      applyDraftPermissionMode(qc, c.id);
       return qc.invalidateQueries({ queryKey: chatKeys.all });
     },
   });

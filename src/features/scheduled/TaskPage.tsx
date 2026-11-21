@@ -145,9 +145,11 @@ function TaskView({ task }: { task: ScheduledTask }) {
           )}
           <dt className="text-fg-muted">Approvals</dt>
           <dd className="text-fg">
-            {task.approval === "auto"
+            {task.approval === "allowAll"
               ? "Tools run without asking"
-              : "Asks me (the run waits and Oxide notifies me)"}
+              : task.approval === "auto"
+                ? "Auto (the safety check pauses the run when an action looks risky)"
+                : "Asks me (the run waits and Oxide notifies me)"}
           </dd>
           <dt className="text-fg-muted">Missed runs</dt>
           <dd className="text-fg">

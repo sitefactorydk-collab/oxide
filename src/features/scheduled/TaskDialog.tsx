@@ -421,8 +421,15 @@ function TaskForm({
             name="approval"
             checked={approval === "auto"}
             onChange={() => setApproval("auto")}
+            label="Auto"
+            hint="Runs on its own like a chat in Auto: the safety check pauses the run to ask (and Oxide notifies you) when an action looks risky."
+          />
+          <Radio
+            name="approval"
+            checked={approval === "allowAll"}
+            onChange={() => setApproval("allowAll")}
             label="Run them without asking"
-            hint="For tasks you trust: nobody checks what the model does. Saving a skill still asks."
+            hint="For tasks you trust: nobody checks what the model does. Saving a skill and computer use still ask."
           />
         </fieldset>
 

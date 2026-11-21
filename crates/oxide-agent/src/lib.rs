@@ -32,6 +32,7 @@ pub mod generation;
 pub mod knowledge;
 pub mod markdown_html;
 pub mod memory;
+mod permissions;
 mod registry;
 pub mod sampling;
 pub mod scheduler;

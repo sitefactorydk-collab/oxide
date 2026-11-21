@@ -39,6 +39,10 @@ pub struct ToolApprovalRequest {
     /// For computer use: the card that starts it in a chat, or one for an app.
     #[serde(default)]
     pub computer: Option<Box<crate::computer::ComputerApproval>>,
+    /// In Auto: why the call stopped to ask ("it sends the folder's files to an outside
+    /// server"), from the safety check or Oxide's own rules.
+    #[serde(default)]
+    pub auto_reason: Option<String>,
     pub requested_at: Timestamp,
 }
 
@@ -107,6 +111,9 @@ pub struct ToolUsage {
     /// A short label: the search query, the URL, a file path.
     pub label: Option<String>,
     pub is_error: bool,
+    /// How Auto handled it (`None`: Manual, or a call Auto doesn't mark).
+    #[serde(default)]
+    pub auto: Option<crate::AutoMark>,
     pub created_at: Timestamp,
 }
 

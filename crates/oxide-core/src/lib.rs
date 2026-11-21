@@ -21,6 +21,7 @@ pub mod mcp;
 pub mod memory;
 pub mod message;
 pub mod model;
+pub mod permission;
 pub mod project;
 pub mod provider;
 pub mod python;
@@ -84,6 +85,7 @@ pub use mcp::{
 pub use memory::{MemoryItem, NewMemory};
 pub use message::{ContentBlock, Feedback, MediaSource, Message, Rating, Role};
 pub use model::{Effort, ModelCapabilities, ModelInfo, ProviderModels, ThinkingStyle};
+pub use permission::{AutoMark, MAX_ALWAYS_ASK, PermissionMode, always_ask_matches};
 pub use project::{
     KnowledgeFile, KnowledgeHit, KnowledgeKind, KnowledgeMode, KnowledgeText, NewProject, Project,
     ProjectKnowledge, ProjectPatch,

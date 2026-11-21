@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AutoMark,
   ChatStreamEvent,
   Compaction,
   ContentBlock,
@@ -43,6 +44,10 @@ export interface ToolCallView {
   provider: boolean;
   /** How far a long call has come (a video being made). */
   progress?: ToolProgress | null;
+  /** How Auto handled it (its **Auto** mark), live. */
+  auto?: AutoMark | null;
+  /** Auto's safety check is looking at it. */
+  checking?: boolean;
 }
 
 /** One piece of a live reply, in the order it arrived. */
@@ -228,6 +233,22 @@ export function reduceStream(
           approval: event.request,
         })),
       });
+    case "toolChecking":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({ ...c, checking: true })),
+      });
+    case "toolAuto":
+      if (!live) return state;
+      return put({
+        ...live,
+        blocks: updateTool(live.blocks, event.id, (c) => ({
+          ...c,
+          auto: event.mark,
+          checking: false,
+        })),
+      });
     case "toolRunning":
       if (!live) return state;
       return put({
@@ -236,6 +257,7 @@ export function reduceStream(
           ...c,
           status: "running",
           approval: null,
+          checking: false,
         })),
       });
     case "toolProgress":

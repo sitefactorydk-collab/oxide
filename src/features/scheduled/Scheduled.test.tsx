@@ -54,7 +54,7 @@ describe("Scheduled tasks", () => {
       name: "Inbox digest",
       schedule: { kind: "cron", expr: "30 7 * * 1-5" },
       folders: ["C:\\Users\\me\\Inbox"],
-      approval: "auto",
+      approval: "allowAll",
       missed: "skip",
       enabled: true,
     });

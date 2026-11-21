@@ -21,10 +21,17 @@ pub fn on_stream_event(app: &AppHandle, event: &ChatStreamEvent) {
     let body = match &event.event {
         StreamEvent::Done { message: Some(m) } => oxide_core::desktop::reply_preview(&m.content),
         StreamEvent::Failed { .. } => "The reply stopped with an error.".to_owned(),
-        StreamEvent::ToolApproval { request } => format!(
-            "Waiting for your approval to use {}.",
-            request.title.as_deref().unwrap_or(&request.tool)
-        ),
+        StreamEvent::ToolApproval { request } => match &request.auto_reason {
+            // Auto stopped it (Phase 23): say why.
+            Some(why) => format!(
+                "Auto stopped {}: {why}.",
+                request.title.as_deref().unwrap_or(&request.tool)
+            ),
+            None => format!(
+                "Waiting for your approval to use {}.",
+                request.title.as_deref().unwrap_or(&request.tool)
+            ),
+        },
         _ => return,
     };
     let kind = match &event.event {

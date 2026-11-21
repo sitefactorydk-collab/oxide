@@ -6,7 +6,7 @@ use oxide_agent::export::{
 use oxide_agent::path_to;
 use oxide_core::{
     Attachment, Compaction, ContentBlock, ContextUsage, Conversation, Feedback, GenerateOptions,
-    MediaSource, Message, SearchHit, StartConversation,
+    MediaSource, Message, PermissionMode, SearchHit, StartConversation,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -38,6 +38,7 @@ pub async fn start_conversation(
     state: State<'_, AppState>,
     mut input: StartConversation,
     options: GenerateOptions,
+    permission_mode: Option<PermissionMode>,
 ) -> CmdResult<Conversation> {
     if input.text.trim().is_empty() && input.attachments.is_empty() {
         return Err(CommandError::Invalid("the message is empty".into()));
@@ -52,11 +53,43 @@ pub async fn start_conversation(
     state.attachments.blocks(&input.attachments)?;
     let (conversation, first) = state.store.start_conversation(input).await?;
     tracing::debug!(id = %conversation.id, "conversation started");
+    // The mode picked in the composer before the chat existed (Phase 23).
+    if let Some(mode) = permission_mode {
+        state
+            .chat
+            .set_permission_mode(&conversation.id, mode)
+            .await?;
+    }
     // The chat exists either way; a reply that can't start shows up as a retry in the UI.
     if let Err(e) = state.chat.reply(&conversation.id, &first.id, options).await {
         tracing::warn!(id = %conversation.id, "couldn't start the first reply: {e}");
     }
     Ok(conversation)
+}
+
+/// A chat's permission mode (Manual or Auto): its own, else the default from Settings →
+/// Permissions.
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_permission_mode(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> CmdResult<PermissionMode> {
+    Ok(state.chat.permission_mode(&conversation_id).await?)
+}
+
+/// Sets a chat's permission mode. A running reply follows it from its next tool call.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_chat_permission_mode(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    mode: PermissionMode,
+) -> CmdResult<()> {
+    Ok(state
+        .chat
+        .set_permission_mode(&conversation_id, mode)
+        .await?)
 }
 
 #[tauri::command]

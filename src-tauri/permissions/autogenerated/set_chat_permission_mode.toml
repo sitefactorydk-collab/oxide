@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-chat-permission-mode"
+description = "Enables the set_chat_permission_mode command without any pre-configured scope."
+commands.allow = ["set_chat_permission_mode"]
+
+[[permission]]
+identifier = "deny-set-chat-permission-mode"
+description = "Denies the set_chat_permission_mode command without any pre-configured scope."
+commands.deny = ["set_chat_permission_mode"]

@@ -19,10 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oxide_core::{
-    ApprovalMode, ChatStreamEvent, ContentBlock, Conversation, GenerateOptions, LocalZone,
-    MAX_RUN_OUTPUT_CHARS, MAX_RUNS_KEPT, MAX_TASKS, MISSED_AFTER_MS, Message, MissedRunPolicy,
-    RunStatus, RunTrigger, ScheduleChange, ScheduledTask, StartConversation, StopReason,
-    StreamEvent, TaskInput, TaskRun, TaskSchedule, Timestamp,
+    ChatStreamEvent, ContentBlock, Conversation, GenerateOptions, LocalZone, MAX_RUN_OUTPUT_CHARS,
+    MAX_RUNS_KEPT, MAX_TASKS, MISSED_AFTER_MS, Message, MissedRunPolicy, RunStatus, RunTrigger,
+    ScheduleChange, ScheduledTask, StartConversation, StopReason, StreamEvent, TaskInput, TaskRun,
+    TaskSchedule, Timestamp,
 };
 use oxide_store::{Store, StoreError, new_id, now_ms};
 use tokio::sync::{Notify, broadcast};
@@ -416,8 +416,7 @@ impl Scheduler {
             }
         };
         self.sink.chat_started(conversation);
-        self.chat
-            .set_unattended(&cid, &task.name, task.approval == ApprovalMode::Auto);
+        self.chat.set_unattended(&cid, &task.name, task.approval);
         lock(&self.active).insert(
             cid.clone(),
             ActiveRun {
@@ -612,7 +611,7 @@ mod tests {
     use crate::chat::tests::{FakeProvider, Recorder, Step, fake_connector};
     use crate::tools::tests::{FakeMcp, tool};
     use crate::{ModelRegistry, Tools};
-    use oxide_core::{ChatTools, FixedZone, Usage};
+    use oxide_core::{ApprovalMode, ChatTools, FixedZone, Usage};
     use oxide_llm::ChatEvent;
     use oxide_store::{MemorySecrets, SecretStore};
 
@@ -865,7 +864,7 @@ mod tests {
         assert_eq!(lock(&f.mcp.calls).len(), 1);
 
         let mut input = daily("Runs alone");
-        input.approval = ApprovalMode::Auto;
+        input.approval = ApprovalMode::AllowAll;
         let auto = f.sched.create(input).await.expect("creates");
         f.sched.run_now(&auto.id).await.expect("starts");
         ended(&f, 2).await;
@@ -891,6 +890,69 @@ mod tests {
                 .expect("grants")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn auto_mode_runs_checked_calls_and_pauses_on_a_stopped_one() {
+        let f = fx(vec![
+            write_call(),
+            answer("Saved the note."),
+            write_call(),
+            answer("Saved it again."),
+        ])
+        .await;
+        let mut input = daily("Checks");
+        input.approval = ApprovalMode::Auto;
+        let task = f.sched.create(input).await.expect("creates");
+        assert_eq!(task.approval, ApprovalMode::Auto);
+
+        // The check lets the first run's write through: no card, no pause.
+        f.sched.run_now(&task.id).await.expect("starts");
+        ended(&f, 1).await;
+        let run = f
+            .store
+            .task_runs(&task.id, 1)
+            .await
+            .expect("runs")
+            .remove(0);
+        assert_eq!(run.status, RunStatus::Done);
+        assert_eq!(lock(&f.mcp.calls).len(), 1);
+        assert_eq!(f.fake.safety_requests().len(), 1);
+        let cid = run.conversation_id.clone().expect("chat");
+        let used = f.store.tool_usage(&cid).await.expect("usage");
+        assert_eq!(used[0].auto, Some(oxide_core::AutoMark::Checked));
+
+        // The second run's check stops it: the run waits for approval, with the reason.
+        f.fake.safety_says(vec![
+            crate::chat::tests::SafetyAnswer::Text("FLAG"),
+            crate::chat::tests::SafetyAnswer::Text(
+                "DECISION: ASK | it overwrites a note the user didn't mention",
+            ),
+        ]);
+        f.sched.run_now(&task.id).await.expect("starts");
+        f.heard
+            .wait_for(|h| {
+                h.statuses()
+                    .iter()
+                    .filter(|s| **s == RunStatus::WaitingApproval)
+                    .count()
+                    >= 1
+            })
+            .await;
+        let pending = f.chat.pending_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].auto_reason.as_deref(),
+            Some("it overwrites a note the user didn't mention")
+        );
+        assert_eq!(lock(&f.mcp.calls).len(), 1);
+        assert!(f.chat.answer_approval(
+            &pending[0].conversation_id,
+            &pending[0].tool_use_id,
+            oxide_core::tools::ApprovalDecision::AllowOnce
+        ));
+        ended(&f, 2).await;
+        assert_eq!(lock(&f.mcp.calls).len(), 2);
     }
 
     #[tokio::test]

@@ -66,6 +66,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             chats::list_conversations,
             chats::get_conversation,
             chats::start_conversation,
+            chats::chat_permission_mode,
+            chats::set_chat_permission_mode,
             chats::rename_conversation,
             chats::set_conversation_starred,
             chats::set_conversation_model,

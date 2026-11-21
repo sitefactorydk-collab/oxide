@@ -78,24 +78,32 @@ impl TaskSchedule {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ApprovalMode {
-    /// As in a chat: calls that ask wait for the user, and Oxide sends a notification.
+    /// As in a chat in Manual: calls that ask wait for the user, and Oxide sends a
+    /// notification.
     #[default]
     Ask,
-    /// Every tool call runs without asking (saving a skill still asks).
+    /// As a chat in Auto (Phase 23): runs on its own; an action the safety check stops
+    /// pauses the run as "needs approval" and notifies.
     Auto,
+    /// Every tool call runs without asking (saving a skill and computer use still ask).
+    AllowAll,
 }
 
 impl ApprovalMode {
+    /// The value stored in the database. `"auto"` meant "run everything without asking"
+    /// before Phase 23, so that stays [`ApprovalMode::AllowAll`]'s.
     pub fn as_str(self) -> &'static str {
         match self {
             ApprovalMode::Ask => "ask",
-            ApprovalMode::Auto => "auto",
+            ApprovalMode::Auto => "autoCheck",
+            ApprovalMode::AllowAll => "auto",
         }
     }
 
     pub fn parse(s: &str) -> Self {
         match s {
-            "auto" => ApprovalMode::Auto,
+            "auto" => ApprovalMode::AllowAll,
+            "autoCheck" => ApprovalMode::Auto,
             _ => ApprovalMode::Ask,
         }
     }

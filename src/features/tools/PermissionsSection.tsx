@@ -9,6 +9,10 @@ import {
   useSettings,
 } from "@/features/settings/queries";
 import { platform } from "@/lib/platform";
+import { allModels, isUsable } from "@/features/models/models";
+import { useModels } from "@/features/models/queries";
+import { MODE_HINTS, MODE_LABELS } from "@/features/permissions/labels";
+import type { PermissionMode } from "@/bindings";
 
 const MAX_STEPS = 200;
 
@@ -36,6 +40,7 @@ export function PermissionsSection() {
         onChange={(askBeforeWeb) => set({ askBeforeWeb })}
       />
       <StepsField value={tools.maxSteps} onChange={(maxSteps) => set({ maxSteps })} />
+      <AutoModeSection />
       <p className="text-base text-fg-muted">
         In folders you share with a chat, Oxide lists, reads and searches files without asking, and
         asks before it writes, edits, moves or deletes anything. Deleted files go to a{" "}
@@ -44,6 +49,101 @@ export function PermissionsSection() {
       <ShellSection />
       <PythonToolSection />
     </div>
+  );
+}
+
+/** Permission modes (Phase 23): the default for new chats, the safety check, always ask. */
+function AutoModeSection() {
+  const { data } = useSettings();
+  const tools = (data ?? DEFAULT_SETTINGS).tools;
+  const set = useSetToolSettings();
+  const { data: lists } = useModels();
+  const usable = allModels(lists ?? []).filter(isUsable);
+  const joined = tools.alwaysAsk.join("\n");
+  const [draft, setDraft] = useState(joined);
+  useEffect(() => setDraft(joined), [joined]);
+  const save = () => {
+    const alwaysAsk = [
+      ...new Set(
+        draft
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (alwaysAsk.join("\n") !== joined) set({ alwaysAsk });
+  };
+  const providerName = (providerId: string) =>
+    lists?.find((l) => l.providerId === providerId)?.providerName ?? providerId;
+  return (
+    <section
+      aria-label="Permission modes"
+      className="flex flex-col gap-4 border-t border-line pt-5"
+    >
+      <h3 className="text-md font-semibold text-fg">Permission modes</h3>
+      <p className="text-sm text-fg-subtle">
+        Each chat runs in <em>Manual</em> or <em>Auto</em>, picked beside the model in the composer.
+        In Auto, reads, changes inside shared folders and tools you allowed for the chat run on
+        their own; deleting for good, computer use, media generation and saving skills always ask;
+        everything else goes to the safety check, which stops to ask when an action looks risky. The
+        check sees your messages and the tool calls, never the model’s own text or what tools
+        returned.
+      </p>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-1 text-md font-medium text-fg">New chats start in</legend>
+        {(["manual", "auto"] as PermissionMode[]).map((m) => (
+          <label key={m} className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="radio"
+              name="default-mode"
+              checked={tools.defaultMode === m}
+              onChange={() => set({ defaultMode: m })}
+              className="mt-1 accent-[var(--ox-accent)]"
+            />
+            <span>
+              <span className="text-md text-fg">{MODE_LABELS[m]}</span>
+              <span className="block text-sm text-fg-subtle">{MODE_HINTS[m]}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex flex-col gap-2">
+        <span className="text-md font-medium text-fg">Safety check model</span>
+        <span className="text-sm text-fg-subtle">
+          The model that judges risky actions in Auto. A local model (LM Studio, Strata) keeps the
+          cost down; it is asked once per checked action, twice when it flags one.
+        </span>
+        <select
+          aria-label="Safety check model"
+          value={tools.safetyModel ?? ""}
+          onChange={(e) => set({ safetyModel: e.target.value || null })}
+          className="h-10 w-96 max-w-full rounded-lg border border-line bg-raised px-3 text-md text-fg outline-none focus:border-accent"
+        >
+          <option value="">The chat’s own model</option>
+          {usable.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label} ({providerName(m.providerId)})
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-md font-medium text-fg">Always ask</span>
+        <span className="text-sm text-fg-subtle">
+          Tools that ask even in Auto, one per line: a tool’s name (<code>run_command</code>), a
+          connector’s tool as <code>server/tool</code>, or a whole connector by its name.
+        </span>
+        <textarea
+          aria-label="Tools that always ask"
+          value={draft}
+          rows={3}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          placeholder={"github/create_pull_request\nslack"}
+          className="rounded-lg border border-line bg-raised px-3 py-2 font-mono text-sm text-fg outline-none focus:border-line-strong"
+        />
+      </label>
+    </section>
   );
 }
 
