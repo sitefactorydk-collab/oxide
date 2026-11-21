@@ -163,7 +163,7 @@ export function Composer({
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       className={cn(
-        "block w-full resize-none bg-transparent text-md leading-6 text-fg outline-none",
+        "block w-full resize-none bg-transparent text-prose leading-6 text-fg outline-none",
         variant === "home" ? "min-h-12 px-1" : "min-h-6 py-1",
       )}
     />
@@ -254,7 +254,7 @@ export function Composer({
       {variant === "reply" && (
         <div className="mt-1.5 flex items-center gap-1 px-1">
           {tools}
-          <p className="flex-1 truncate px-2 text-center text-xs text-fg-subtle">
+          <p className="flex-1 truncate px-2 text-center text-sm text-fg-subtle">
             AI can be wrong. Check anything important.
           </p>
           {conversationId && (

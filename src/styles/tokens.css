@@ -26,8 +26,10 @@
   --ox-text-xs: 12px;
   --ox-text-sm: 13px;
   --ox-text-base: 14px;
-  --ox-text-md: 15px;
-  --ox-text-prose: 16.5px;
+  /* md and prose match the Claude desktop app's measured sizes (2026-11-21): 14px UI text
+     (sidebar, title bar, menus) and 15px chat prose and composer. */
+  --ox-text-md: 14px;
+  --ox-text-prose: 15px;
   --ox-text-lg: 18px;
   --ox-text-xl: 22px;
   --ox-text-2xl: 28px;

@@ -162,7 +162,7 @@ function Section({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex h-7 items-center gap-1 rounded-md px-2.5 text-sm font-medium text-fg-subtle hover:text-fg-muted"
+        className="flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-fg-subtle hover:text-fg-muted"
       >
         {title}
         <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
