@@ -14,6 +14,7 @@ import * as Lucide from "lucide-react";
 import * as ReactMarkdown from "react-markdown";
 import * as RemarkGfm from "remark-gfm";
 import type { Transform } from "@/frame/run";
+import { drop, dragLeave, dragOver } from "./drop";
 import { AppLoadError, appComponent, loadApp } from "./loader";
 import { isHostToFrame, type ConsoleLevel, type FrameToHost, type Theme } from "./protocol";
 import { snapshot } from "./snapshot";
@@ -191,6 +192,13 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "result":
     case "event":
       sdk.deliver(d);
+      break;
+    case "drag":
+      if (d.phase === "over") dragOver(d.x, d.y, d.names);
+      else dragLeave();
+      break;
+    case "drop":
+      drop(d.x, d.y, d.files);
       break;
   }
 });

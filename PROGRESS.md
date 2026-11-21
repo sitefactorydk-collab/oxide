@@ -17,7 +17,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
 - **Phase 21** — Utility App builder: **done** (2026-11-20). Committed `1ce2afe` (every check green on Windows on the third run), template fix `c606ab4`; the user passed every manual exit check (18:35), building the CSV chart app with LM Studio's `google/gemma-4-12b-qat`.
-- **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **built, waiting for the Windows run** (2026-11-20). `scripts\win\phase22.cmd` runs every check, commits with `logs\commit-msg-phase22.txt` only when all pass, then starts Oxide for the manual exit check.
+- **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); manual checks: all fine but drag and drop into apps, fixed by `scripts\win\phase22-drop.cmd` (waiting for its run).
 - **Next phase:** none planned after Phase 22 (PLAN.md lists a community catalogue for sharing apps as “later”).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -49,7 +49,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 22 — More Utility Apps (rest of AI-Toolkit) — 2026-11-20
-Status: **built, waiting for the Windows run** (`scripts\win\phase22.cmd`: every check, then a commit with `logs\commit-msg-phase22.txt` only when all pass, then the app for the manual check).
+Status: **committed `0af1306`** (2026-11-21 15:48, every check green on Windows, second run); manual exit checks pending.
 
 Before starting: Phase 21's exit checks were passed (18:35) and its last commits (`0388cbb`, `5cea061`) are in, so the phase went ahead. The originals were read from `github.com/sitefactorydk-collab/ai-toolkit` (`src/components/Translator.tsx`, `AIPluginCreator.tsx`, `LLMSTxtGenerator.tsx`, `server.ts`'s `/api/crawl` and `/api/fetch-content`, `lib/gemini.ts`'s `categorizeUrls`).
 
@@ -82,6 +82,14 @@ Known issues / TODO carried forward:
 Verified (agent side): tsc ✅ (app, utility-apps) eslint ✅ prettier ✅ on the device. Windows (`phase22.cmd`): pending. Manual exit checks: pending.
 
 **Windows run 1 (`phase22.cmd`, 2026-11-21 15:26–15:29):** fmt, Prettier, clippy, typecheck, lint and Vitest (all the new app tests included) passed; `cargo test` failed only on `apps::tests::a_clone_is_an_editable_own_app`, which still counted 4 built-in apps (6 with two clones). It now counts from `builtin::all()`. Not committed; run `phase22.cmd` again.
+
+**Windows run 2 (15:44–15:48):** fmt ✅ Prettier ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅; committed `0af1306`.
+
+**After the commit (manual check, 2026-11-21 16:29):** everything worked except drag and drop: an image dropped on the Translator's Document / Image panel, or a ZIP on the Plugin Creator, did nothing (clicking to pick worked). Cause: Tauri takes every file drop on the window and hands over paths, so the frame's own drag and drop events never fire (the HTML Table from Image app had the same problem since Phase 20). Fix (`scripts\win\phase22-drop.cmd`, message `logs\commit-msg-phase22-drop.txt`):
+- `read_dropped_files` (`src-tauri/src/commands/apps.rs`): reads dropped files for an app as `DroppedFile { name, mediaType, dataBase64 }`; only paths `chosen.rs` remembered from a drop or picker (waits 300 ms once in case the window event comes later), folders skipped, 20 files, 50 MB each, 100 MB together.
+- `onNativeFileDrop` events carry the pointer position in CSS pixels; `AppFrame` forwards drags over its iframe (`drag` over/leave with the files' names) and drops (`drop` with the files) to the frame; the frame (`src/appframe/drop.ts`) dispatches `dragenter`/`dragover`/`dragleave`/`drop` with a real `DataTransfer` at the element under the pointer, so apps' `onDrop` code works unchanged. A failed read shows a bar above the app.
+- The composer's `useFileDrop` ignores drags and drops over an element marked `data-native-drop-zone` (the app frame), so a drop on the builder's Preview isn't attached to the builder chat.
+- Tests: `AppFrameDrop.test.tsx` (forwarded inside the frame only, frame coordinates, files read; the composer skips the frame); Rust `dropped_files_get_a_media_type_from_their_extension`. tsc, ESLint and Prettier pass on the device.
 
 ## Phase 21 — Utility App builder (build mode) — 2026-11-20
 Status: **done** (2026-11-20). Committed `1ce2afe` (17:09, every check green on Windows) and `c606ab4` (template); the user passed every manual exit check (18:35).

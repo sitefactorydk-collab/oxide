@@ -8,7 +8,8 @@ use oxide_core::{
     APP_FILE_EXT, AppBundle, AppCallError, AppCapability, AppImportPreview, AppPrefs, AppPrefsView,
     GenerationKind, UtilityApp,
 };
-use tauri::{AppHandle, State};
+use serde::Serialize;
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_specta::Event;
 
@@ -285,4 +286,125 @@ pub async fn save_app_output(
         .map_err(|_| CommandError::Invalid("The file's data isn't valid.".into()))?;
     let name = file_name(&name, "download");
     save_with_dialog(&app, "Save", &name, bytes).await
+}
+
+/// A file dropped on the window, read for a Utility App's drop zone.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DroppedFile {
+    pub name: String,
+    pub media_type: String,
+    pub data_base64: String,
+}
+
+/// Most files one drop hands to an app, and how large they may be.
+const MAX_DROPPED_FILES: usize = 20;
+const MAX_DROPPED_FILE: u64 = 50 * 1024 * 1024;
+const MAX_DROPPED_TOTAL: u64 = 100 * 1024 * 1024;
+
+/// The media type an app sees for a dropped file (by its extension).
+fn dropped_media_type(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "txt" => "text/plain",
+        "md" | "markdown" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "csv" => "text/csv",
+        "xml" => "application/xml",
+        "json" => "application/json",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Reads files the user dropped on the main window, for the app frame the drop landed on
+/// (Tauri gives the window paths, never the page's own drop event). Only paths Oxide saw
+/// dropped or picked are read; folders are skipped.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_dropped_files(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<DroppedFile>> {
+    let chosen = |p: &std::path::Path| {
+        app.try_state::<crate::chosen::ChosenPaths>()
+            .is_some_and(|c| c.contains(p))
+    };
+    let mut out = Vec::new();
+    let mut total = 0u64;
+    for raw in paths.into_iter().take(MAX_DROPPED_FILES) {
+        let path = std::path::PathBuf::from(&raw);
+        if !chosen(&path) {
+            // The window event that remembers drops can arrive just after the page's.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            if !chosen(&path) {
+                tracing::warn!("an app frame asked for a file that wasn't dropped");
+                return Err(CommandError::Invalid(
+                    "Only files dropped on Oxide can be handed to an app.".into(),
+                ));
+            }
+        }
+        let meta = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| CommandError::NotFound("The dropped file".into()))?;
+        if meta.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".into());
+        if meta.len() > MAX_DROPPED_FILE {
+            return Err(CommandError::Invalid(format!(
+                "{name} is larger than 50 MB."
+            )));
+        }
+        total += meta.len();
+        if total > MAX_DROPPED_TOTAL {
+            return Err(CommandError::Invalid(
+                "The dropped files are larger than 100 MB together.".into(),
+            ));
+        }
+        let bytes = tokio::fs::read(&path).await.map_err(|e| {
+            tracing::warn!("a dropped file couldn't be read: {e}");
+            CommandError::Invalid(format!("{name} couldn't be read."))
+        })?;
+        out.push(DroppedFile {
+            media_type: dropped_media_type(&path).to_owned(),
+            name,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::dropped_media_type;
+    use std::path::Path;
+
+    #[test]
+    fn dropped_files_get_a_media_type_from_their_extension() {
+        assert_eq!(dropped_media_type(Path::new("a/Photo.JPG")), "image/jpeg");
+        assert_eq!(
+            dropped_media_type(Path::new("plugin.zip")),
+            "application/zip"
+        );
+        assert_eq!(dropped_media_type(Path::new("doc.pdf")), "application/pdf");
+        assert_eq!(
+            dropped_media_type(Path::new("README")),
+            "application/octet-stream"
+        );
+    }
 }

@@ -1,8 +1,9 @@
 import { ShieldQuestion, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { events, type AppBundle, type AppCapability } from "@/bindings";
+import { commands, events, type AppBundle, type AppCapability } from "@/bindings";
 import { useResolvedTheme } from "@/app/useThemeSync";
 import { isFrameToHost, type ConsoleLevel, type HostToFrame } from "@/appframe/protocol";
+import { onNativeFileDrop, type DropPoint } from "@/lib/window";
 import { APP_FRAME_SANDBOX, APP_FRAME_URL } from "./frameUrl";
 import { createAppHost } from "./host";
 import { CAPABILITY_TEXT } from "./queries";
@@ -56,6 +57,7 @@ export function AppFrame({
   themeRef.current = theme;
   const [questions, setQuestions] = useState<Question[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dropProblem, setDropProblem] = useState<string | null>(null);
   const app = bundle.app.manifest;
   const callId = appRef ?? app.id;
   const instance = useMemo(
@@ -190,6 +192,61 @@ export function AppFrame({
     );
   }, [theme]);
 
+  // Tauri takes file drops on the window (the frame's own drop events never fire), so drags
+  // and drops over the frame are forwarded to it with the files read by Oxide.
+  useEffect(() => {
+    const send = (m: HostToFrame) => frame.current?.contentWindow?.postMessage(m, "*");
+    const local = (p: DropPoint) => {
+      const r = frame.current?.getBoundingClientRect();
+      if (!r) return null;
+      const x = p.x - r.left;
+      const y = p.y - r.top;
+      return x >= 0 && y >= 0 && x <= r.width && y <= r.height ? { x, y } : null;
+    };
+    let inside = false;
+    let names: string[] = [];
+    const leave = () => {
+      if (inside) send({ source: "oxide-host", type: "drag", phase: "leave" });
+      inside = false;
+    };
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    onNativeFileDrop((e) => {
+      if (e.type === "leave") return leave();
+      if (e.type === "enter") names = e.paths.map((p) => p.split(/[\\/]/).pop() ?? p);
+      const at = local(e.position);
+      if (e.type === "drop") {
+        inside = false;
+        if (!at) return;
+        setDropProblem(null);
+        void commands
+          .readDroppedFiles(e.paths)
+          .then((r) => {
+            if (r.status === "ok") {
+              send({ source: "oxide-host", type: "drop", x: at.x, y: at.y, files: r.data });
+            } else {
+              send({ source: "oxide-host", type: "drag", phase: "leave" });
+              setDropProblem(r.error.message);
+            }
+          })
+          .catch(() => send({ source: "oxide-host", type: "drag", phase: "leave" }));
+        return;
+      }
+      if (!at) return leave();
+      inside = true;
+      send({ source: "oxide-host", type: "drag", phase: "over", x: at.x, y: at.y, names });
+    })
+      .then((u) => {
+        if (alive) unlisten = u;
+        else u();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [instance]);
+
   const question = questions[0];
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -248,7 +305,19 @@ export function AppFrame({
           </button>
         </div>
       )}
+      {dropProblem && (
+        <div className="flex items-start gap-2 border-b border-line bg-sunken px-4 py-2 text-sm text-fg-muted">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
+          <span className="min-w-0 flex-1 break-words">
+            The dropped files couldn't be handed to the app: {dropProblem}
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => setDropProblem(null)}>
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
       <iframe
+        data-native-drop-zone=""
         key={instance}
         ref={frame}
         title={app.name}

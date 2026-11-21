@@ -382,6 +382,7 @@ export const fakeAppCommands: Pick<
   | "appCall"
   | "cancelAppCall"
   | "saveAppOutput"
+  | "readDroppedFiles"
 > = {
   listApps: () => ok(list()),
   appBundle: (id) => {
@@ -511,4 +512,13 @@ export const fakeAppCommands: Pick<
   },
   cancelAppCall: () => ok(null),
   saveAppOutput: (name) => ok(`/Users/test/Downloads/${name}`),
+  // Dropped files read back: "png" as their content.
+  readDroppedFiles: (paths) =>
+    ok(
+      paths.map((p) => ({
+        name: p.split(/[\\/]/).pop() ?? p,
+        mediaType: p.endsWith(".zip") ? "application/zip" : "image/png",
+        dataBase64: "cG5n",
+      })),
+    ),
 };

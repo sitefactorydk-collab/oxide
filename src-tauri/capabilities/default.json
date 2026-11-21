@@ -171,6 +171,7 @@
     "allow-app-call",
     "allow-cancel-app-call",
     "allow-save-app-output",
+    "allow-read-dropped-files",
     "allow-open-app-builder",
     "allow-app-draft",
     "allow-list-app-drafts",

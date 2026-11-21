@@ -52,7 +52,22 @@ export type HostToFrame =
   | { source: "oxide-host"; type: "snapshot"; id: string }
   | { source: "oxide-host"; type: "result"; id: string; ok: true; value: unknown }
   | { source: "oxide-host"; type: "result"; id: string; ok: false; error: SdkError }
-  | { source: "oxide-host"; type: "event"; id: string; event: unknown };
+  | { source: "oxide-host"; type: "event"; id: string; event: unknown }
+  /**
+   * Files are dragged over the frame (Tauri takes the window's drops, so the frame's own
+   * drag events never fire; the frame replays these as `dragenter`/`dragover`/`dragleave`).
+   * `x`/`y` are in the frame's CSS pixels; `names` are the dragged files' names.
+   */
+  | { source: "oxide-host"; type: "drag"; phase: "over"; x: number; y: number; names: string[] }
+  | { source: "oxide-host"; type: "drag"; phase: "leave" }
+  /** Files dropped on the frame, replayed as a `drop` event at `x`/`y`. */
+  | {
+      source: "oxide-host";
+      type: "drop";
+      x: number;
+      y: number;
+      files: Array<{ name: string; mediaType: string; dataBase64: string }>;
+    };
 
 export function isFrameToHost(data: unknown): data is FrameToHost {
   return (

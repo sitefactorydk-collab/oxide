@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { inTauri } from "@/lib/platform";
-import { onNativeFileDrop } from "@/lib/window";
+import { onNativeFileDrop, overOwnDropZone } from "@/lib/window";
 
 export interface FileDropHandlers {
   /** Real paths (Tauri: the webview intercepts drops and reports paths). */
@@ -24,11 +24,12 @@ export function useFileDrop(handlers: FileDropHandlers): boolean {
       let alive = true;
       let unlisten: (() => void) | undefined;
       onNativeFileDrop((e) => {
-        if (e.type === "enter" || e.type === "over") setDragging(true);
+        // Drags over a Utility App's frame are the app's (AppFrame forwards them).
+        if (e.type === "enter" || e.type === "over") setDragging(!overOwnDropZone(e.position));
         else if (e.type === "leave") setDragging(false);
         else {
           setDragging(false);
-          if (e.paths.length) cb.current.onPaths(e.paths);
+          if (e.paths.length && !overOwnDropZone(e.position)) cb.current.onPaths(e.paths);
         }
       })
         .then((u) => {

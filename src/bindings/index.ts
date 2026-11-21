@@ -1658,6 +1658,19 @@ async saveAppOutput(name: string, dataBase64: string) : Promise<Result<string | 
 }
 },
 /**
+ * Reads files the user dropped on the main window, for the app frame the drop landed on
+ * (Tauri gives the window paths, never the page's own drop event). Only paths Oxide saw
+ * dropped or picked are read; folders are skipped.
+ */
+async readDroppedFiles(paths: string[]) : Promise<Result<DroppedFile[], CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_dropped_files", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Opens the builder on an own app (`id`) or a new app from the template (`None`). The
  * builder chat is made with `model` the first time.
  */
@@ -3330,6 +3343,10 @@ cpus: number | null; memoryBytes: number | null; images: SandboxImage[];
  * An image is being downloaded (its name).
  */
 pulling: string | null; installUrl: string; checkedAt: number }
+/**
+ * A file dropped on the window, read for a Utility App's drop zone.
+ */
+export type DroppedFile = { name: string; mediaType: string; dataBase64: string }
 /**
  * How much effort a model puts into an answer (thinking, length, tool use). The names match
  * Anthropic's `output_config.effort`; OpenAI-compatible servers get the nearest
