@@ -17,7 +17,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 19 follow-up 3 (2026-11-19 late evening):** video failed on the user's server, which has only the synchronous `POST /videos/generations`. `generate_video` now falls back to it when `/videos` is missing, and images, music and that video wait up to 30 min. Follow-ups 2 and 3 were committed together as `727d13e` (2026-11-19 23:35, every check green on Windows on the second run of `scripts\win\phase19-music.cmd`; pushed 2026-11-20).
 - **Phase 20** — Utility Apps: runtime and gallery: **done** (2026-11-20). Committed `1915243` after four Windows runs (every check green on the fourth); the user passed every manual exit check at 11:14. A few non-breaking visual bugs were noticed; the dialog tooltip one was fixed in `0839fa8` (with extension-folder cleanup).
 - **Phase 21** — Utility App builder: **done** (2026-11-20). Committed `1ce2afe` (every check green on Windows on the third run), template fix `c606ab4`; the user passed every manual exit check (18:35), building the CSV chart app with LM Studio's `google/gemma-4-12b-qat`.
-- **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); manual checks: all fine but drag and drop into apps, fixed by `scripts\win\phase22-drop.cmd` (waiting for its run).
+- **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); **done**: drag and drop fixed in `be4b80a`, every check green, and the user passed every manual exit check (2026-11-21 16:53).
 - **Next phase:** none planned after Phase 22 (PLAN.md lists a community catalogue for sharing apps as “later”).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -49,14 +49,14 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 22 — More Utility Apps (rest of AI-Toolkit) — 2026-11-20
-Status: **committed `0af1306`** (2026-11-21 15:48, every check green on Windows, second run); manual exit checks pending.
+Status: **done** (2026-11-21). Committed `0af1306` (15:48) and the drag-and-drop fix `be4b80a` (16:50, every check and vite build green on Windows); the user passed every manual exit check (16:53).
 
 Before starting: Phase 21's exit checks were passed (18:35) and its last commits (`0388cbb`, `5cea061`) are in, so the phase went ahead. The originals were read from `github.com/sitefactorydk-collab/ai-toolkit` (`src/components/Translator.tsx`, `AIPluginCreator.tsx`, `LLMSTxtGenerator.tsx`, `server.ts`'s `/api/crawl` and `/api/fetch-content`, `lib/gemini.ts`'s `categorizeUrls`).
 
 Exit criteria (Windows, by hand):
-- [ ] **Multi Purpose AI Translator** (Content): paste text → pick a language and style → **Translate** streams the translation (asks for *AI text* once); **Include translator comments** adds the 💡 section in the chosen language; **Copy**. **Document / Image**: a PDF and a picture with text (vision model) → the layout-style translation → **Save as Rich Text file** opens in Word. The ⚙ next to Style: add, edit and delete styles; they are still there after reopening the app.
-- [ ] **AI Plugin Creator** (Code): WordPress, a name and instructions → **Generate Extension** → the file tree and code → **Save to ZIP file** (`<name>-v1.0.0.zip`) installs in WordPress (or at least has a valid plugin header). Joomla shows Plugin/Module. Drop that ZIP back in with a change request → **Modify Extension** → the saved ZIP keeps the files the model didn't change.
-- [ ] **llms.txt Generator** (SEO): a site URL (several lines for several sites) → **Generate Files** (asks for *AI text* and *reading web pages* once each) → crawling, triage, the high/low value lists, the `llms.txt` / `llms-full.txt` preview → **Download .zip Bundle**. **Markdown Ready?** adds the Guidance section.
+- [x] **Multi Purpose AI Translator** (Content): paste text → pick a language and style → **Translate** streams the translation (asks for *AI text* once); **Include translator comments** adds the 💡 section in the chosen language; **Copy**. **Document / Image**: a PDF and a picture with text (vision model) → the layout-style translation → **Save as Rich Text file** opens in Word. The ⚙ next to Style: add, edit and delete styles; they are still there after reopening the app.
+- [x] **AI Plugin Creator** (Code): WordPress, a name and instructions → **Generate Extension** → the file tree and code → **Save to ZIP file** (`<name>-v1.0.0.zip`) installs in WordPress (or at least has a valid plugin header). Joomla shows Plugin/Module. Drop that ZIP back in with a change request → **Modify Extension** → the saved ZIP keeps the files the model didn't change.
+- [x] **llms.txt Generator** (SEO): a site URL (several lines for several sites) → **Generate Files** (asks for *AI text* and *reading web pages* once each) → crawling, triage, the high/low value lists, the `llms.txt` / `llms-full.txt` preview → **Download .zip Bundle**. **Markdown Ready?** adds the Guidance section.
 
 Done:
 - `utility-apps/multi-purpose-ai-translator/`, `utility-apps/ai-plugin-creator/`, `utility-apps/llms-txt-generator/` (manifest + `App.tsx` each), listed in `crates/oxide-agent/src/apps/builtin.rs` (7 built-in apps now) and in `apps/tests.rs`' listing test.
@@ -79,7 +79,7 @@ Known issues / TODO carried forward:
 - A 50-page crawl sends all page titles to the model in one request; very long titles on big sites use much of a small model's context.
 - `llms-full.txt` holds what Oxide's web fetcher reads (pages capped by the fetcher's size limit).
 
-Verified (agent side): tsc ✅ (app, utility-apps) eslint ✅ prettier ✅ on the device. Windows (`phase22.cmd`): pending. Manual exit checks: pending.
+Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows); manual exit checks ✅ (by the user, drag and drop included).
 
 **Windows run 1 (`phase22.cmd`, 2026-11-21 15:26–15:29):** fmt, Prettier, clippy, typecheck, lint and Vitest (all the new app tests included) passed; `cargo test` failed only on `apps::tests::a_clone_is_an_editable_own_app`, which still counted 4 built-in apps (6 with two clones). It now counts from `builtin::all()`. Not committed; run `phase22.cmd` again.
 
