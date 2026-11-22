@@ -245,12 +245,35 @@ fn clip(text: &str) -> String {
     )
 }
 
-/// Whether PowerShell printed error records (`CategoryInfo` / `FullyQualifiedErrorId`) on
-/// stderr. Errors silenced with `-ErrorAction SilentlyContinue` aren't printed, so they don't
-/// count.
+/// Whether PowerShell printed error records on stderr: Windows PowerShell's full view
+/// (`CategoryInfo` / `FullyQualifiedErrorId`), or PowerShell 7's concise view, where a record
+/// is a line starting with the command's name (`Move-Item: Cannot find path …`), sometimes
+/// followed by a `Line |` block. Errors silenced with `-ErrorAction SilentlyContinue` aren't
+/// printed, so they don't count.
 fn powershell_reported_errors(stderr: &[u8]) -> bool {
     let err = String::from_utf8_lossy(stderr);
-    err.contains("FullyQualifiedErrorId") || err.contains("+ CategoryInfo")
+    err.contains("FullyQualifiedErrorId")
+        || err.contains("+ CategoryInfo")
+        || err.lines().any(|line| {
+            let line = line.trim_end();
+            line == "Line |" || is_concise_error_line(line)
+        })
+}
+
+/// `Verb-Noun: message`, as PowerShell 7 writes an error record (`Move-Item: …`,
+/// `Write-Error: …`), not a native program's own `name: message`.
+fn is_concise_error_line(line: &str) -> bool {
+    let Some((name, _)) = line.split_once(':') else {
+        return false;
+    };
+    let Some((verb, noun)) = name.split_once('-') else {
+        return false;
+    };
+    let word = |w: &str| {
+        w.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && w.chars().all(|c| c.is_ascii_alphanumeric())
+    };
+    word(verb) && word(noun)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -438,6 +461,27 @@ mod error_tests {
         assert!(!powershell_reported_errors(
             b"warning: something native said"
         ));
+        // PowerShell 7's concise view (found on GitHub's Windows runner, 2026-11-22).
+        assert!(powershell_reported_errors(
+            b"Move-Item: Cannot find path 'C:\\x\\nope.txt' because it does not exist.\r\n"
+        ));
+        assert!(powershell_reported_errors(
+            b"Get-Content:\r\nLine |\r\n   1 |  Get-Content nope\r\n     | Cannot find path.\r\n"
+        ));
+        // Native programs' own messages don't count.
+        let natives: [&[u8]; 4] = [
+            b"npm-cli: warn deprecated",
+            b"error: could not compile",
+            b"git-lfs: not installed",
+            b"x-y: z",
+        ];
+        for native in natives {
+            assert!(
+                !powershell_reported_errors(native),
+                "{}",
+                String::from_utf8_lossy(native)
+            );
+        }
         let text = format_result(
             "move a b",
             Path::new("/tmp"),
