@@ -40,6 +40,8 @@ interface FakeApps {
   checkpoints: Map<string, Array<AppCheckpoint & { snapshot: AppFile[] }>>;
   /** The Preview's answers to the builder model (`answerPreviewRequest`). */
   previewAnswers: Array<{ requestId: string; report: PreviewReport }>;
+  /** What the next folder pick (`chooseAppFolder`) returns (`null`: cancelled). */
+  nextFolder: string | null;
 }
 
 /** How the fake builder reaches the fake backend's chats and events. */
@@ -65,6 +67,12 @@ const NEEDS: Record<string, AppCapability> = {
   "connectors.call": "connectors",
   "python.run": "python",
   "sandbox.exec": "sandbox",
+  "folder.list": "folder",
+  "folder.read": "folder",
+  "folder.write": "folder",
+  "folder.mkdir": "folder",
+  "folder.delete": "folder",
+  "folder.rename": "folder",
 };
 
 export function fakeManifest(over: Partial<AppManifest> & { id: string }): AppManifest {
@@ -148,6 +156,7 @@ export function resetFakeApps(): void {
     builderChats: new Map(),
     checkpoints: new Map(),
     previewAnswers: [],
+    nextFolder: null,
   };
 }
 resetFakeApps();
@@ -167,6 +176,7 @@ const emptyPrefs = (): AppPrefs => ({
   video: { providerId: null, baseUrl: "", model: "" },
   music: { providerId: null, baseUrl: "", model: "" },
   granted: [],
+  folder: null,
 });
 const prefsOf = (id: string) => f.prefs.get(id) ?? emptyPrefs();
 
@@ -383,6 +393,8 @@ export const fakeAppCommands: Pick<
   | "cancelAppCall"
   | "saveAppOutput"
   | "readDroppedFiles"
+  | "chooseAppFolder"
+  | "clearAppFolder"
 > = {
   listApps: () => ok(list()),
   appBundle: (id) => {
@@ -453,7 +465,11 @@ export const fakeAppCommands: Pick<
     }),
   saveAppPrefs: (id, prefs) => {
     const old = prefsOf(id);
-    const saved = { ...prefs, granted: prefs.granted.filter((c) => old.granted.includes(c)) };
+    const saved = {
+      ...prefs,
+      granted: prefs.granted.filter((c) => old.granted.includes(c)),
+      folder: old.folder,
+    };
     f.prefs.set(id, saved);
     return ok(saved);
   },
@@ -512,6 +528,24 @@ export const fakeAppCommands: Pick<
   },
   cancelAppCall: () => ok(null),
   saveAppOutput: (name) => ok(`/Users/test/Downloads/${name}`),
+  chooseAppFolder: (ref) => {
+    const id = ref.replace(/^draft:/, "");
+    const folder = f.nextFolder;
+    if (folder === null) return ok(null);
+    const p = prefsOf(id);
+    f.prefs.set(id, {
+      ...p,
+      folder,
+      granted: p.granted.includes("folder") ? p.granted : [...p.granted, "folder"],
+    });
+    return ok(folder);
+  },
+  clearAppFolder: (ref) => {
+    const id = ref.replace(/^draft:/, "");
+    const p = prefsOf(id);
+    f.prefs.set(id, { ...p, folder: null, granted: p.granted.filter((c) => c !== "folder") });
+    return ok(null);
+  },
   // Dropped files read back: "png" as their content.
   readDroppedFiles: (paths) =>
     ok(

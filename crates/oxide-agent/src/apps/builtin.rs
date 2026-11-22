@@ -28,6 +28,8 @@ static APPS: &[Builtin] = &[
     app!("multi-purpose-ai-translator": "oxide-app.json", "App.tsx"),
     app!("ai-plugin-creator": "oxide-app.json", "App.tsx"),
     app!("llms-txt-generator": "oxide-app.json", "App.tsx"),
+    app!("sp-page-builder-addon-creator": "oxide-app.json", "App.tsx", "Workbench.tsx"),
+    app!("elementor-widget-creator": "oxide-app.json", "App.tsx", "Workbench.tsx"),
 ];
 
 pub fn all() -> &'static [Builtin] {
@@ -85,7 +87,7 @@ mod tests {
 
     #[test]
     fn built_in_apps_are_valid() {
-        assert_eq!(all().len(), 7);
+        assert_eq!(all().len(), 9);
         for b in all() {
             let m = b.manifest().unwrap_or_else(|e| panic!("{}: {e}", b.id));
             assert_eq!(m.id, b.id);

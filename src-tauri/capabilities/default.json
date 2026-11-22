@@ -173,6 +173,8 @@
     "allow-app-call",
     "allow-cancel-app-call",
     "allow-save-app-output",
+    "allow-choose-app-folder",
+    "allow-clear-app-folder",
     "allow-read-dropped-files",
     "allow-open-app-builder",
     "allow-app-draft",

@@ -17,6 +17,8 @@ import { toast } from "@/lib/toast";
 import {
   CAPABILITY_TEXT,
   useAppPrefs,
+  useChooseAppFolder,
+  useClearAppFolder,
   useClearAppStorage,
   useSaveAppPrefs,
   useSetAppKey,
@@ -72,6 +74,8 @@ function SettingsBody({ app, onDone }: { app: UtilityApp; onDone: () => void }) 
   const { data: models } = useModels();
   const save = useSaveAppPrefs(id);
   const clear = useClearAppStorage(id);
+  const chooseFolder = useChooseAppFolder(id);
+  const clearFolder = useClearAppFolder(id);
   const [prefs, setPrefs] = useState<AppPrefs | null>(null);
   useEffect(() => {
     if (view && !prefs) setPrefs(view.prefs);
@@ -82,6 +86,15 @@ function SettingsBody({ app, onDone }: { app: UtilityApp; onDone: () => void }) 
   const kinds = KINDS.filter((k) => declared.includes(k.cap));
   const setOverride = (kind: GenerationKind, o: AppGenerationOverride) =>
     setPrefs({ ...prefs, [kind]: o });
+  // The folder is changed by its own commands (the picker), not by Save.
+  const folderChanged = (folder: string | null) =>
+    setPrefs({
+      ...prefs,
+      folder,
+      granted: folder
+        ? [...new Set<AppCapability>([...prefs.granted, "folder"])]
+        : prefs.granted.filter((c) => c !== "folder"),
+    });
   const revoke = (cap: AppCapability) => {
     const next = { ...prefs, granted: prefs.granted.filter((c) => c !== cap) };
     setPrefs(next);
@@ -134,6 +147,52 @@ function SettingsBody({ app, onDone }: { app: UtilityApp; onDone: () => void }) 
             onChange={(o) => setOverride(k.kind, o)}
           />
         ))}
+
+        {declared.includes("folder") && (
+          <section className="flex flex-col gap-1.5">
+            <h3 className="font-medium text-fg">Folder</h3>
+            <div className="flex items-center gap-2">
+              <span
+                className="min-w-0 flex-1 truncate rounded-lg border border-line bg-sunken px-3 py-1.5 text-sm text-fg"
+                title={prefs.folder ?? undefined}
+              >
+                {prefs.folder ?? <span className="text-fg-subtle">No folder chosen</span>}
+              </span>
+              <button
+                type="button"
+                disabled={chooseFolder.isPending}
+                onClick={() =>
+                  chooseFolder.mutate(undefined, {
+                    onSuccess: (folder) => folder && folderChanged(folder),
+                    onError: (e) => toast(errorMessage(e), "error"),
+                  })
+                }
+                className="h-8 shrink-0 rounded-lg border border-line px-3 text-sm text-fg hover:bg-hover disabled:opacity-40"
+              >
+                {prefs.folder ? "Change…" : "Choose…"}
+              </button>
+              {prefs.folder && (
+                <button
+                  type="button"
+                  disabled={clearFolder.isPending}
+                  onClick={() =>
+                    clearFolder.mutate(undefined, {
+                      onSuccess: () => folderChanged(null),
+                      onError: (e) => toast(errorMessage(e), "error"),
+                    })
+                  }
+                  className="h-8 shrink-0 rounded-lg border border-line px-3 text-sm text-fg hover:bg-hover disabled:opacity-40"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-fg-subtle">
+              The app reads and writes files only inside this folder. Removing it leaves the files
+              where they are.
+            </p>
+          </section>
+        )}
 
         <section className="flex flex-col gap-2">
           <h3 className="font-medium text-fg">Permissions</h3>

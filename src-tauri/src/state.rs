@@ -200,7 +200,9 @@ impl AppState {
         .with_chrome(chrome.clone())
         .with_generation(generation.clone());
         // Utility Apps (Phase 20) and their builder (Phase 21), whose chats get its tools.
-        let utility_apps = UtilityApps::new(data_dir.join("apps"), store.clone(), secrets.clone());
+        // Apps' own folders (`oxide.folder`) never reach Oxide's data, config or logs.
+        let utility_apps = UtilityApps::new(data_dir.join("apps"), store.clone(), secrets.clone())
+            .with_protected(vec![dirs.config.clone(), dirs.logs.clone()]);
         let builder = AppBuilder::new(utility_apps.clone());
         let tools = tools.with_builder(builder.clone());
         // Computer use: the real screen, mouse and keyboard, where Oxide can control them.

@@ -617,7 +617,7 @@ impl Sandbox {
 
 /// Resolves the longest existing part of `p` and appends the rest. `..` after the
 /// existing part is refused (it could step out once the folders exist).
-fn resolve_existing_prefix(p: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve_existing_prefix(p: &Path) -> Result<PathBuf, String> {
     let mut existing = p.to_path_buf();
     let mut rest: Vec<std::ffi::OsString> = Vec::new();
     loop {

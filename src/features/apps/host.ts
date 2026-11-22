@@ -4,8 +4,8 @@
  * Most calls go to the backend (`app_call`), which checks the app's manifest and grants.
  * When a capability isn't allowed yet the backend says `needsPermission`; this asks the user
  * once (concurrent calls share the question), grants it on “Allow” and calls again. “Deny”
- * holds for the rest of this visit (the next visit asks again). Saving files and copying
- * are done here; generated media come back as paths and are read into Blobs for the frame.
+ * holds for the rest of this visit (the next visit asks again). Saving files, picking the
+ * app's folder and copying are done here; generated media come back as paths and are read into Blobs for the frame.
  */
 import { commands, type AppCallError, type AppCapability } from "@/bindings";
 import { unwrap } from "@/lib/api";
@@ -76,6 +76,15 @@ export function createAppHost(appId: string, ask: Ask, instance: string): AppHos
       const text = (params as { text?: unknown })?.text;
       await navigator.clipboard.writeText(typeof text === "string" ? text : "");
       return null;
+    }
+    if (method === "folder.choose") {
+      // The system's folder picker; picking also allows the app to use the folder.
+      const path = await unwrap(commands.chooseAppFolder(appId));
+      if (path === null) return null;
+      const r = await commands.appCall(appId, backendId(id), "folder.get", "{}");
+      return r.status === "ok"
+        ? (JSON.parse(r.data) as unknown)
+        : { path, name: path, exists: true };
     }
     if (method === "files.save") {
       const p = params as { name?: string; data?: string };

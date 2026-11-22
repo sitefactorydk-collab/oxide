@@ -237,6 +237,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             apps::app_call,
             apps::cancel_app_call,
             apps::save_app_output,
+            apps::choose_app_folder,
+            apps::clear_app_folder,
             apps::read_dropped_files,
             builder::open_app_builder,
             builder::app_draft,

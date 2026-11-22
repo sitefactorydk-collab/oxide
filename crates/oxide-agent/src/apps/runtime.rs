@@ -51,8 +51,10 @@ pub fn method_capability(method: &str) -> Option<Option<AppCapability>> {
         "sandbox.exec" => AppCapability::Sandbox,
         "browser.tools" | "browser.call" => AppCapability::Browser,
         "chrome.tools" | "chrome.call" => AppCapability::Chrome,
+        "folder.list" | "folder.read" | "folder.write" | "folder.mkdir" | "folder.delete"
+        | "folder.rename" => AppCapability::Folder,
         "app.info" | "storage.get" | "storage.set" | "storage.delete" | "storage.keys"
-        | "storage.clear" => return Some(None),
+        | "storage.clear" | "folder.get" => return Some(None),
         _ => return None,
     }))
 }
@@ -454,6 +456,9 @@ impl AppRuntime {
                     .map_err(|e| failed(e.to_string()))?;
                 Ok(tool_result_json(&r))
             }
+            m if m.starts_with("folder.") => {
+                super::folder::call(prefs, self.apps.protected(), m, p).await
+            }
             "storage.get" => {
                 let key = storage_key(p)?;
                 let v = self.apps.store().app_storage_get(app_id, key).await.map_err(|e| failed(e.to_string()))?;
@@ -815,6 +820,11 @@ mod tests {
             Some(Some(AppCapability::WebFetch))
         );
         assert_eq!(method_capability("storage.set"), Some(None));
+        assert_eq!(method_capability("folder.get"), Some(None));
+        assert_eq!(
+            method_capability("folder.write"),
+            Some(Some(AppCapability::Folder))
+        );
         assert_eq!(method_capability("fs.readHostFile"), None);
     }
 }

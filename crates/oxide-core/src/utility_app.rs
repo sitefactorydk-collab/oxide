@@ -27,7 +27,8 @@ pub const MAX_APP_STORAGE_BYTES: u64 = 10 * 1024 * 1024;
 /// Something an app may do that asks the user first (once per app).
 ///
 /// Picking and saving files and the app's own storage don't ask: the user picks every file
-/// and every save location, and storage belongs to the app.
+/// and every save location, and storage belongs to the app. [`AppCapability::Folder`] is
+/// granted when the user picks the app's folder (asked again only after a revoke).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type,
 )]
@@ -55,10 +56,13 @@ pub enum AppCapability {
     Browser,
     /// The paired Chrome.
     Chrome,
+    /// Reading and writing files inside one folder the user picked for the app
+    /// ([`AppPrefs::folder`]).
+    Folder,
 }
 
 impl AppCapability {
-    pub const ALL: [AppCapability; 11] = [
+    pub const ALL: [AppCapability; 12] = [
         AppCapability::Text,
         AppCapability::Image,
         AppCapability::Video,
@@ -70,6 +74,7 @@ impl AppCapability {
         AppCapability::Sandbox,
         AppCapability::Browser,
         AppCapability::Chrome,
+        AppCapability::Folder,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -85,6 +90,7 @@ impl AppCapability {
             AppCapability::Sandbox => "sandbox",
             AppCapability::Browser => "browser",
             AppCapability::Chrome => "chrome",
+            AppCapability::Folder => "folder",
         }
     }
 
@@ -106,6 +112,7 @@ impl AppCapability {
             AppCapability::Sandbox => "run commands in its Docker sandbox",
             AppCapability::Browser => "control the browser agent",
             AppCapability::Chrome => "control your paired Chrome",
+            AppCapability::Folder => "read and write files in the folder you chose for it",
         }
     }
 
@@ -362,6 +369,9 @@ pub struct AppPrefs {
     pub music: AppGenerationOverride,
     /// Capabilities the user allowed for this app.
     pub granted: Vec<AppCapability>,
+    /// The folder the user picked for the app (apps that declare
+    /// [`AppCapability::Folder`]); set only through Oxide's folder picker.
+    pub folder: Option<String>,
 }
 
 impl AppPrefs {

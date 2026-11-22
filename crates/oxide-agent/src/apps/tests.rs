@@ -118,6 +118,8 @@ async fn built_in_apps_are_listed_and_read_only() {
             "multi-purpose-ai-translator",
             "ai-plugin-creator",
             "llms-txt-generator",
+            "sp-page-builder-addon-creator",
+            "elementor-widget-creator",
         ]
     );
     assert!(list.iter().all(|a| a.builtin && a.problem.is_none()));
@@ -636,4 +638,74 @@ async fn a_running_call_can_be_cancelled() {
     };
     let (r, ()) = tokio::join!(run, stop);
     assert_eq!(r.unwrap_err().code, AppErrorCode::Cancelled);
+}
+
+#[tokio::test]
+async fn the_apps_folder_is_set_by_the_picker_and_reached_with_its_grant() {
+    let f = fixture(vec![]).await;
+    let id = own_app(&f, r#"["folder"]"#).await;
+    let picked = tempfile::tempdir().expect("tempdir");
+    let get = f
+        .runtime
+        .call(&id, "c1", "folder.get", json!({}), quiet())
+        .await
+        .expect("get");
+    assert_eq!(get, Value::Null);
+    let e = f
+        .runtime
+        .call(&id, "c2", "folder.list", json!({}), quiet())
+        .await
+        .expect_err("asks first");
+    assert_eq!(e.code, AppErrorCode::NeedsPermission);
+
+    // Picking the folder allows the app to use it.
+    let prefs = f
+        .apps
+        .set_folder(&id, Some(picked.path()))
+        .await
+        .expect("sets");
+    assert!(prefs.allows(AppCapability::Folder));
+    f.runtime
+        .call(
+            &id,
+            "c3",
+            "folder.write",
+            json!({ "path": "plg_x/x.xml", "text": "<extension/>" }),
+            quiet(),
+        )
+        .await
+        .expect("writes");
+    assert_eq!(
+        std::fs::read_to_string(picked.path().join("plg_x/x.xml")).expect("file"),
+        "<extension/>"
+    );
+    let list = f
+        .runtime
+        .call(&id, "c4", "folder.list", json!({ "depth": 3 }), quiet())
+        .await
+        .expect("lists");
+    assert_eq!(list["entries"][1]["path"], "plg_x/x.xml");
+    let get = f
+        .runtime
+        .call(&id, "c5", "folder.get", json!({}), quiet())
+        .await
+        .expect("get");
+    assert_eq!(get["exists"], true);
+
+    // The settings dialog can't move the folder; Oxide's own data can't be picked; an app
+    // that doesn't declare the capability can't get a folder.
+    let sneaky = AppPrefs {
+        folder: Some("/".into()),
+        granted: prefs.granted.clone(),
+        ..AppPrefs::default()
+    };
+    let saved = f.apps.save_prefs(&id, sneaky).await.expect("saves");
+    assert_eq!(saved.folder, prefs.folder);
+    assert!(f.apps.set_folder(&id, Some(f._dir.path())).await.is_err());
+    assert!(f.apps.set_folder(META, Some(picked.path())).await.is_err());
+
+    // Forgetting it takes the grant too.
+    let cleared = f.apps.set_folder(&id, None).await.expect("clears");
+    assert!(cleared.folder.is_none());
+    assert!(!cleared.allows(AppCapability::Folder));
 }

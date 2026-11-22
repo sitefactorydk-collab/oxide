@@ -1681,6 +1681,30 @@ async saveAppOutput(name: string, dataBase64: string) : Promise<Result<string | 
 }
 },
 /**
+ * Picks the folder a Utility App works in (`oxide.folder`) with the system's folder picker.
+ * Choosing it also allows the app to use it. `id` may be a draft's reference
+ * (`draft:<id>`). Returns the folder, or `None` when cancelled.
+ */
+async chooseAppFolder(id: string) : Promise<Result<string | null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("choose_app_folder", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forgets a Utility App's folder (and its permission to use it). The folder's files stay.
+ */
+async clearAppFolder(id: string) : Promise<Result<null, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_app_folder", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Reads files the user dropped on the main window, for the app frame the drop landed on
  * (Tauri gives the window paths, never the page's own drop event). Only paths Oxide saw
  * dropped or picked are read; folders are skipped.
@@ -2187,7 +2211,8 @@ export type AppCallEvent = { callId: string; eventJson: string }
  * Something an app may do that asks the user first (once per app).
  * 
  * Picking and saving files and the app's own storage don't ask: the user picks every file
- * and every save location, and storage belongs to the app.
+ * and every save location, and storage belongs to the app. [`AppCapability::Folder`] is
+ * granted when the user picks the app's folder (asked again only after a revoke).
  */
 export type AppCapability = 
 /**
@@ -2233,7 +2258,12 @@ export type AppCapability =
 /**
  * The paired Chrome.
  */
-"chrome"
+"chrome" | 
+/**
+ * Reading and writing files inside one folder the user picked for the app
+ * ([`AppPrefs::folder`]).
+ */
+"folder"
 /**
  * A version of a draft.
  */
@@ -2382,7 +2412,12 @@ textModel: string | null; image: AppGenerationOverride; video: AppGenerationOver
 /**
  * Capabilities the user allowed for this app.
  */
-granted: AppCapability[] }
+granted: AppCapability[]; 
+/**
+ * The folder the user picked for the app (apps that declare
+ * [`AppCapability::Folder`]); set only through Oxide's folder picker.
+ */
+folder: string | null }
 /**
  * Settings → the app's settings dialog.
  */

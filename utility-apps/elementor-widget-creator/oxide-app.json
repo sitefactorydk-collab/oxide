@@ -1,0 +1,11 @@
+{
+  "id": "elementor-widget-creator",
+  "name": "Elementor Widget Creator",
+  "description": "Makes and edits Elementor widgets as installable WordPress plugins, from a description and screenshots: a browser of your widgets folder (edit, clone, delete, import a ZIP), a file tree and code editor, and Download installable zip.",
+  "icon": "code",
+  "category": "Code",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text", "folder"],
+  "author": "Oxide"
+}

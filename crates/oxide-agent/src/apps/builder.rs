@@ -266,8 +266,8 @@ pub fn builder_entry(op: BuilderOp) -> ToolEntry {
             "Update app manifest",
             "Change the app's oxide-app.json. Give only the fields to change. `capabilities` \
              replaces the list: declare every capability the app's code uses (text, image, \
-             video, music, webSearch, webFetch, connectors, python, sandbox, browser, chrome); \
-             calls for undeclared ones fail. `icon` is one of the icon names in your \
+             video, music, webSearch, webFetch, connectors, python, sandbox, browser, chrome, \
+             folder); calls for undeclared ones fail. `icon` is one of the icon names in your \
              instructions or one emoji.",
             json!({"type": "object", "properties": {
                 "name": {"type": "string"},
@@ -1213,9 +1213,12 @@ impl AppBuilder {
                dark mode with `dark:` variants (the frame follows Oxide's theme). Make the app \
                look clean and modern, with clear empty, loading and error states.\n\
              - Every capability the code uses (text, image, video, music, webSearch, \
-               webFetch, connectors, python, sandbox, browser, chrome) must be declared in the \
-               manifest with app_update_manifest; calls for undeclared ones fail. The user is \
-               asked once per capability. Files and storage need no capability.\n\
+               webFetch, connectors, python, sandbox, browser, chrome, folder) must be declared \
+               in the manifest with app_update_manifest; calls for undeclared ones fail. The \
+               user is asked once per capability. Files and storage need no capability.\n\
+             - `folder` works in one folder on the computer that the user picks \
+               (`folder.choose()`, or the app's Settings): `folder.get`, `list`, `readText`, \
+               `readBytes`, `write`, `mkdir`, `delete`, `rename`, with relative `/` paths.\n\
              - Catch `OxideError` from SDK calls and show its message in the app.\n\
              - Downloads: `files.save(name, blob)`. Copying: `app.copy(text)`.\n\
              - The browser's own APIs all work without a package: `<canvas>` with \

@@ -117,6 +117,24 @@ export function useClearAppStorage(id: string) {
   });
 }
 
+/** Picks the app's folder (`oxide.folder`) with the system's picker; `null` when cancelled. */
+export function useChooseAppFolder(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(commands.chooseAppFolder(id)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: appKeys.prefs(id) }),
+  });
+}
+
+/** Forgets the app's folder (its files stay). */
+export function useClearAppFolder(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(commands.clearAppFolder(id)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: appKeys.prefs(id) }),
+  });
+}
+
 /** What each capability lets an app do, for approval cards and the settings dialog. */
 export const CAPABILITY_TEXT: Record<AppCapability, { label: string; ask: string }> = {
   text: { label: "AI text", ask: "use your AI models to write text (this may cost money)" },
@@ -130,4 +148,5 @@ export const CAPABILITY_TEXT: Record<AppCapability, { label: string; ask: string
   sandbox: { label: "Docker sandbox", ask: "run commands in its Docker sandbox" },
   browser: { label: "Browser agent", ask: "control the browser agent" },
   chrome: { label: "Chrome", ask: "control your paired Chrome" },
+  folder: { label: "Its folder", ask: "read and write files in the folder you chose for it" },
 };

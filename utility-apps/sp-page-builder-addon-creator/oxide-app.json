@@ -1,0 +1,11 @@
+{
+  "id": "sp-page-builder-addon-creator",
+  "name": "SP Page Builder Addon Creator",
+  "description": "Makes and edits SP Page Builder 6 addons as installable Joomla 5/6 plugins, from a description and screenshots: a browser of your addons folder (edit, clone, delete, import a ZIP), a file tree and code editor, and Download installable zip.",
+  "icon": "layout-grid",
+  "category": "Code",
+  "version": "1.0.0",
+  "entry": "App.tsx",
+  "capabilities": ["text", "folder"],
+  "author": "Oxide"
+}

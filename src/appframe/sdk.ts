@@ -4,7 +4,8 @@
  *
  * Calls that use models, the web, connectors or the computer need a capability the app's
  * manifest declares (`oxide-app.json` → `capabilities`). The first such call asks the user
- * (“Allow for this app” / “Deny”); after that it just runs. Files and storage never ask.
+ * (“Allow for this app” / “Deny”); after that it just runs. Files and storage never ask;
+ * the app's own folder (`folder`) is allowed when the user picks it.
  *
  * ```tsx
  * import { ai, web } from "oxide";
@@ -511,6 +512,85 @@ export const storage = {
   },
   clear(): Promise<void> {
     return call("storage.clear", {});
+  },
+};
+
+// ---------------------------------------------------------------- folder
+
+/** The folder the user picked for the app. */
+export interface FolderInfo {
+  /** Its full path on this computer. */
+  path: string;
+  /** Its name (the last part of the path). */
+  name: string;
+  /** Whether it still exists. */
+  exists: boolean;
+}
+
+export interface FolderEntry {
+  /** Relative to the app's folder, `/`-separated (`plg_x/x.xml`). */
+  path: string;
+  kind: "file" | "dir";
+  /** Bytes (0 for folders). */
+  size: number;
+  /** Last change, in milliseconds since 1970 (null when unknown). */
+  modified: number | null;
+}
+
+function bytesOf(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * One folder on this computer that the user picks for the app (declare `"folder"` in the
+ * manifest). Paths are relative to it and `/`-separated; nothing outside it can be reached.
+ * Picking the folder allows the app to use it; until then, calls other than `get` and
+ * `choose` fail.
+ */
+export const folder = {
+  /** The app's folder, or `null` when none is chosen yet. */
+  get(): Promise<FolderInfo | null> {
+    return call("folder.get", {});
+  },
+  /** Lets the user pick the app's folder (the system's folder picker). `null` when cancelled. */
+  choose(): Promise<FolderInfo | null> {
+    return call("folder.choose", {});
+  },
+  /** What a folder holds (`""`: the app's folder), `depth` levels deep (default 1, at most 12). */
+  async list(path = "", o: { depth?: number } = {}): Promise<FolderEntry[]> {
+    const r = await call<{ entries: FolderEntry[] }>("folder.list", { path, depth: o.depth });
+    return r.entries;
+  },
+  /** A text file's content (UTF-8). */
+  async readText(path: string): Promise<string> {
+    const r = await call<{ content: string }>("folder.read", { path });
+    return r.content;
+  },
+  /** A file's bytes. */
+  async readBytes(path: string): Promise<Uint8Array> {
+    const r = await call<{ content: string }>("folder.read", { path, as: "base64" });
+    return bytesOf(r.content);
+  },
+  /** Writes a file (making its folders), replacing what was there. At most 20 MB. */
+  async write(path: string, data: string | Blob | Uint8Array): Promise<void> {
+    if (typeof data === "string") return call("folder.write", { path, text: data });
+    const blob = data instanceof Blob ? data : new Blob([data as BlobPart]);
+    return call("folder.write", { path, base64: await toBase64(blob) });
+  },
+  /** Makes a folder (and its parents). */
+  mkdir(path: string): Promise<void> {
+    return call("folder.mkdir", { path });
+  },
+  /** Deletes a file, or a folder with everything in it, for good. */
+  delete(path: string): Promise<void> {
+    return call("folder.delete", { path });
+  },
+  /** Renames or moves a file or folder (`to` must not exist yet). */
+  rename(from: string, to: string): Promise<void> {
+    return call("folder.rename", { from, to });
   },
 };
 

@@ -9,6 +9,7 @@
 pub mod builder;
 pub mod builtin;
 pub mod crawl;
+pub mod folder;
 pub mod runtime;
 
 use std::collections::HashMap;
@@ -45,6 +46,8 @@ struct Inner {
     store: Store,
     secrets: Arc<dyn SecretStore>,
     imports: Mutex<HashMap<String, PendingImport>>,
+    /// Folders apps may never reach through `oxide.folder` (Oxide's data, config, logs).
+    protected: Vec<PathBuf>,
 }
 
 struct PendingImport {
@@ -135,14 +138,40 @@ fn text_files(files: Vec<(String, Vec<u8>)>) -> Vec<AppFile> {
 
 impl UtilityApps {
     pub fn new(dir: impl Into<PathBuf>, store: Store, secrets: Arc<dyn SecretStore>) -> Self {
+        let dir: PathBuf = dir.into();
+        // `<app data>` (the apps folder's parent) is never reachable through `oxide.folder`.
+        let protected = dir.parent().map(Path::to_path_buf).into_iter().collect();
         Self {
             inner: Arc::new(Inner {
-                dir: dir.into(),
+                dir,
                 store,
                 secrets,
                 imports: Mutex::new(HashMap::new()),
+                protected,
             }),
         }
+    }
+
+    /// Folders apps' own folders may contain but never reach (Oxide's data, config and
+    /// logs; `<app data>` is always among them).
+    pub fn with_protected(self, folders: Vec<PathBuf>) -> Self {
+        let mut protected = self.inner.protected.clone();
+        protected.extend(folders);
+        let inner = Inner {
+            dir: self.inner.dir.clone(),
+            store: self.inner.store.clone(),
+            secrets: self.inner.secrets.clone(),
+            imports: Mutex::new(HashMap::new()),
+            protected,
+        };
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+
+    /// What `oxide.folder` may never reach: the given folders and `<app data>`.
+    pub fn protected(&self) -> &[PathBuf] {
+        &self.inner.protected
     }
 
     /// `<app data>/apps`.
@@ -526,6 +555,8 @@ impl UtilityApps {
     pub async fn save_prefs(&self, id: &str, mut prefs: AppPrefs) -> Result<AppPrefs, AgentError> {
         let old = self.inner.store.app_prefs(id).await?;
         prefs.granted.retain(|c| old.granted.contains(c));
+        // The folder is set only through Oxide's picker (`set_folder`).
+        prefs.folder = old.folder;
         prefs.text_model = prefs.text_model.filter(|m| !m.trim().is_empty());
         self.inner.store.save_app_prefs(id, &prefs).await?;
         Ok(prefs)
@@ -551,6 +582,58 @@ impl UtilityApps {
         }
         self.inner.store.save_app_prefs(id, &prefs).await?;
         Ok(prefs)
+    }
+
+    /// Sets the app's folder (`oxide.folder`) to one the user picked with Oxide's folder
+    /// picker, which also allows the app to use it; `None` forgets the folder and the grant.
+    /// `id` may be a draft's reference (`draft:<id>`); the setting is the app's.
+    pub async fn set_folder(
+        &self,
+        id: &str,
+        folder: Option<&Path>,
+    ) -> Result<AppPrefs, AgentError> {
+        let (id, draft) = builder::split_ref(id);
+        let manifest = self.manifest_at(id, draft).await?;
+        let mut prefs = self.inner.store.app_prefs(id).await?;
+        match folder {
+            Some(p) => {
+                if !manifest.declares(AppCapability::Folder) {
+                    return Err(invalid(format!(
+                        "{} doesn't declare “folder” in its manifest.",
+                        manifest.name
+                    )));
+                }
+                let path =
+                    crate::tools::files::resolve_grant(&p.to_string_lossy()).map_err(invalid)?;
+                // Compared resolved (on Windows `\\?\C:\…`), like the protected folders.
+                let real = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+                if self.protected_dirs().iter().any(|x| real.starts_with(x)) {
+                    return Err(invalid(
+                        "That folder is inside Oxide's own data. Choose another folder.",
+                    ));
+                }
+                prefs.folder = Some(path);
+                if !prefs.granted.contains(&AppCapability::Folder) {
+                    prefs.granted.push(AppCapability::Folder);
+                    prefs.granted.sort();
+                }
+            }
+            None => {
+                prefs.folder = None;
+                prefs.granted.retain(|c| *c != AppCapability::Folder);
+            }
+        }
+        self.inner.store.save_app_prefs(id, &prefs).await?;
+        Ok(prefs)
+    }
+
+    /// The protected folders, resolved.
+    fn protected_dirs(&self) -> Vec<PathBuf> {
+        self.inner
+            .protected
+            .iter()
+            .filter_map(|p| std::fs::canonicalize(p).ok())
+            .collect()
     }
 
     /// Kinds of generation with an app-own key.

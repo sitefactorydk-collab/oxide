@@ -140,6 +140,7 @@ describe("Utility Apps", () => {
       video: { providerId: null, baseUrl: "", model: "" },
       music: { providerId: null, baseUrl: "", model: "" },
       granted: ["image"],
+      folder: null,
     });
     fakeApps().answer = () => ({
       files: [{ name: "cat.png", mediaType: "image/png", path: "/att/cat.png" }],
@@ -230,6 +231,7 @@ describe("Utility Apps", () => {
       video: { providerId: null, baseUrl: "", model: "" },
       music: { providerId: null, baseUrl: "", model: "" },
       granted: ["text", "webFetch"],
+      folder: null,
     });
     renderApp("/apps/ai-meta-tag-generator");
     await screen.findByTitle("AI Meta Tag Generator");
@@ -244,5 +246,61 @@ describe("Utility Apps", () => {
     await waitFor(() =>
       expect(fakeApps().prefs.get("ai-meta-tag-generator")?.granted).toEqual(["webFetch"]),
     );
+  });
+  it("an app's folder is picked in the app or in its settings, which allows it", async () => {
+    const id = "folder-app";
+    fakeApps().apps.set(
+      id,
+      fakeBundle(fakeManifest({ id, name: "Folder app", capabilities: ["folder"] }), false),
+    );
+    fakeApps().answer = (appId, method) =>
+      method === "folder.get"
+        ? { path: fakeApps().prefs.get(appId)?.folder, name: "addons", exists: true }
+        : null;
+    renderApp(`/apps/${id}`);
+    const f = await frame("Folder app");
+    // Without a folder, the folder's methods need the permission picking it gives.
+    await f.send({
+      source: "oxide-app",
+      type: "call",
+      id: "c0",
+      method: "folder.choose",
+      params: {},
+    });
+    expect(await f.result("c0")).toMatchObject({ ok: true, value: null });
+    fakeApps().nextFolder = "C:\\work\\addons";
+    await f.send({
+      source: "oxide-app",
+      type: "call",
+      id: "c1",
+      method: "folder.choose",
+      params: {},
+    });
+    expect(await f.result("c1")).toMatchObject({
+      ok: true,
+      value: { path: "C:\\work\\addons", name: "addons" },
+    });
+    expect(fakeApps().prefs.get(id)?.granted).toContain("folder");
+    await f.send({
+      source: "oxide-app",
+      type: "call",
+      id: "c2",
+      method: "folder.write",
+      params: { path: "a/b.txt", text: "hi" },
+    });
+    expect(await f.result("c2")).toMatchObject({ ok: true });
+
+    // The settings dialog shows it; Remove forgets it and the permission.
+    fireEvent.click(actions().getByRole("button", { name: /Settings/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Folder app settings" });
+    expect(await within(dialog).findByText("C:\\work\\addons")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(await within(dialog).findByText("No folder chosen")).toBeInTheDocument();
+    expect(fakeApps().prefs.get(id)?.folder).toBeNull();
+    expect(fakeApps().prefs.get(id)?.granted).not.toContain("folder");
+    fakeApps().nextFolder = "D:\\other";
+    fireEvent.click(within(dialog).getByRole("button", { name: "Choose…" }));
+    expect(await within(dialog).findByText("D:\\other")).toBeInTheDocument();
+    expect(fakeApps().prefs.get(id)?.folder).toBe("D:\\other");
   });
 });

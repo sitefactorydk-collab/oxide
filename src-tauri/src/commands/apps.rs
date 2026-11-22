@@ -288,6 +288,41 @@ pub async fn save_app_output(
     save_with_dialog(&app, "Save", &name, bytes).await
 }
 
+/// Picks the folder a Utility App works in (`oxide.folder`) with the system's folder picker.
+/// Choosing it also allows the app to use it. `id` may be a draft's reference
+/// (`draft:<id>`). Returns the folder, or `None` when cancelled.
+#[tauri::command]
+#[specta::specta]
+pub async fn choose_app_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose the app's folder")
+        .pick_folder(move |p| {
+            let _ = tx.send(p);
+        });
+    let picked = rx
+        .await
+        .map_err(|_| CommandError::Internal("the picker closed unexpectedly".into()))?;
+    let Some(dir) = picked.and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    let prefs = state.apps.apps().set_folder(&id, Some(&dir)).await?;
+    Ok(prefs.folder)
+}
+
+/// Forgets a Utility App's folder (and its permission to use it). The folder's files stay.
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_app_folder(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.apps.apps().set_folder(&id, None).await?;
+    Ok(())
+}
+
 /// A file dropped on the window, read for a Utility App's drop zone.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
