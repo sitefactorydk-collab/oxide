@@ -20,8 +20,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); **done**: drag and drop fixed in `be4b80a`, every check green, and the user passed every manual exit check (2026-11-21 16:53).
 - **Font sizes (2026-11-21 evening, user's request):** UI text matched to the Claude desktop app from side-by-side screenshots: `--ox-text-md` 15 → 14px (sidebar, title bar, menus), `--ox-text-prose` 16.5 → 15px (chat prose; the composer now uses `text-prose`, still 15px), sidebar section headers 13 → 12px, the composer's note 12 → 13px. Fonts stay Inter / Source Serif 4 / JetBrains Mono (Claude's typeface is Anthropic's own; clean-room rule). Script `scripts\win\fontsize.cmd`.
 - **Phase 23** — Permission modes: Manual and Auto: **done** (2026-11-22). Committed `92fea14` and the fixes from the manual checks `7487f34` (every check green on Windows); the user passed every manual exit check (Gemma and Claude in Auto, the stop cards, Manual, a scheduled task in Auto pausing on download-and-run) on 2026-11-22 12:20.
-- **Phase 24** — Compact tool history in the transcript: **committed `28b955f`** (2026-11-22 13:18, every check green on the second Windows run). Follow-up from the user's recorded manual check (13:35): `scripts\win\phase24c.cmd` (message `logs\commit-msg-phase24c.txt`); manual exit checks still open. Before it: the Scheduled page's **Open the chat to approve** link (after Phase 23, user's request) was committed as `369e3ef`.
-- **Next phase:** none planned after Phase 24 (PLAN.md).
+- **Phase 24** — Compact tool history in the transcript: **done** (2026-11-22). Committed `28b955f` and the follow-up from the user's recorded manual check `4f527db` (13:42, every check green on Windows); the user confirmed the checks at 13:53. Before it: the Scheduled page's **Open the chat to approve** link (after Phase 23, user's request) was committed as `369e3ef`.
+- **Next phase:** none planned after Phase 24 (PLAN.md); ask the user what comes next.
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -52,17 +52,17 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
 
 ## Phase 24 — Compact tool history in the transcript — 2026-11-22
-Status: **built, waiting for the Windows run** (`scripts\win\phase24.cmd`, message `logs\commit-msg-phase24.txt`) and the manual exit checks.
+Status: **done** (2026-11-22). Committed `28b955f` (13:18) and `4f527db` (steadier status line, 13:42), every check green on Windows; the user tested a recorded Auto run (13:34) and confirmed the follow-up (13:53: “All tests OK”).
 
 Before starting: Phase 23 was done (`7487f34`) and its close-out with the Scheduled page's approve link committed (`369e3ef`, every check green at 12:38); the working tree was clean.
 
 Exit criteria (Windows, by hand):
-- [ ] The “organize this folder” chat from Phase 23's checks (Auto, a shared folder): its tool work shows as one or two muted summary lines above the answer (“Listed a folder 2 times, ran 3 commands, wrote a file”, failures as “· 1 failed” in red).
-- [ ] Opening a line shows one box of compact rows (thinking as its first sentence, each call as “Ran mkdir …” / “Listed C:\…”), small ⚡ marks with the Auto text in a tooltip, **Failed** in red on its row; a row's chevron opens its request and result.
-- [ ] A running reply shows its group as **one status line** (as in the user's recording of the Claude desktop app): dot spinner on the left, a label that fades between the running step (“Running mkdir …”, “Safety check”), the newest sentence of the current thought, and the work so far, then the elapsed time and a chevron; clicking it shows the rows live; when the answer starts, the group folds to its summary.
-- [ ] Approval cards still appear in full (a group with a waiting card stays open); artifacts, generated media, computer use and the browser's live screenshots stay outside the fold.
-- [ ] Settings → Appearance → **Show tool steps: Expanded** brings back open groups; Collapsed folds them again.
-- [ ] Used in this session → a row opens the folded group and scrolls to the call.
+- [x] The “organize this folder” chat from Phase 23's checks (Auto, a shared folder): its tool work shows as one or two muted summary lines above the answer (“Listed a folder 2 times, ran 3 commands, wrote a file”, failures as “· 1 failed” in red).
+- [x] Opening a line shows one box of compact rows (thinking as its first sentence, each call as “Ran mkdir …” / “Listed C:\…”), small ⚡ marks with the Auto text in a tooltip, **Failed** in red on its row; a row's chevron opens its request and result.
+- [x] A running reply shows its group as **one status line** (as in the user's recording of the Claude desktop app): dot spinner on the left, a label that fades between the running step (“Running mkdir …”, “Safety check”), the newest sentence of the current thought, and the work so far, then the elapsed time and a chevron; clicking it shows the rows live; when the answer starts, the group folds to its summary.
+- [x] Approval cards still appear in full (a group with a waiting card stays open); artifacts, generated media, computer use and the browser's live screenshots stay outside the fold.
+- [x] Settings → Appearance → **Show tool steps: Expanded** brings back open groups; Collapsed folds them again.
+- [x] Used in this session → a row opens the folded group and scrolls to the call.
 
 **Changed during the phase (12:57, the user's request with a screen recording of the Claude desktop app):** the running group isn't an open list but one status line — a dot spinner (a square of four blinking in turn for tool work, a row of three while thinking), a label that fades in on every change (the running step, else the newest finished sentence of the thought being written, else the work so far), the reply's time (“42s”, “12m 53s”) and a chevron. Opened (or with Show tool steps: expanded), the rows show the running step, so the line then says what is done. The separate “Working” line is hidden while that status line shows.
 
@@ -97,7 +97,12 @@ Known issues / TODO carried forward:
 - Task-list updates are left out of a summary that has other work (“updated the task list 4 times” was noise).
 - Tests: the recording's fragments as `latestSentence` cases, the task-list rule, `liveStatus` with `thought`. tsc, ESLint and Prettier pass on the device.
 
-Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `28b955f`); follow-up checks with `phase24c.cmd`; manual exit checks open.
+Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `28b955f`); every check green again for `4f527db` (`phase24c.cmd`, 13:41); manual checks ✅ (by the user).
+
+Notes for the next phase:
+- Grouping and wording live in `features/tools/toolGroups.ts` (pure; a new tool kind needs a `SumKind` and `toolsum.<kind>.one|many` keys in `en.ts` and `da.ts`, and a line in `staysOutside` if its output must stay visible).
+- The running reply's line: `features/tools/StatusLine.tsx` (spinner, clock, label) and `useSteadyLabel.ts`; thought labels come from `latestSentence`.
+- The test fake starts with Show tool steps: expanded (`fakeBackend.ts`); seed `settings: { toolSteps: "collapsed" }` to test folding.
 
 ## Phase 23 — Permission modes: Manual and Auto — 2026-11-21
 Status: **done** (2026-11-22). Committed `92fea14` (21:36) and `7487f34` (fixes, 22:39), every check green on Windows; the user passed every manual exit check.
