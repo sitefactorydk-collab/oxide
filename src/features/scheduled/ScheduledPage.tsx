@@ -1,4 +1,4 @@
-import { CalendarClock, Info, Play, Plus } from "lucide-react";
+import { CalendarClock, Info, MessageSquare, Play, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { ScheduledTask } from "@/bindings";
@@ -102,6 +102,15 @@ function TaskRow({ task }: { task: ScheduledTask }) {
           {describeSchedule(task.schedule)} · {when}
         </span>
       </Link>
+      {task.lastRun?.status === "waitingApproval" && task.lastRun.conversationId && (
+        <Link
+          to={`/chat/${task.lastRun.conversationId}`}
+          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-accent hover:underline"
+        >
+          <MessageSquare className="size-4" />
+          Open the chat to approve
+        </Link>
+      )}
       {task.lastRun && <RunStatusBadge status={task.lastRun.status} />}
       <IconButton
         label={`Run ${task.name} now`}

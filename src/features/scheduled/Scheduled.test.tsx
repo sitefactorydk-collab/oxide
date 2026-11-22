@@ -139,6 +139,19 @@ describe("Scheduled tasks", () => {
     await waitFor(() => expect(location.pathname).toBe("/scheduled/task1"));
   });
 
+  it("links a run waiting for approval to its chat from the list", async () => {
+    const { location } = renderApp("/scheduled");
+    await screen.findByText("No scheduled tasks yet");
+    act(() => void seedTask(input()));
+    await screen.findByRole("link", { name: /Morning brief/ });
+    expect(screen.queryByRole("link", { name: "Open the chat to approve" })).toBeNull();
+    act(() => void fakeRun("task1", { status: "waitingApproval", conversationId: "c1" }));
+    const open = await screen.findByRole("link", { name: "Open the chat to approve" });
+    expect(open).toHaveAttribute("href", "/chat/c1");
+    fireEvent.click(open);
+    await waitFor(() => expect(location.pathname).toBe("/chat/c1"));
+  });
+
   it("drops a run from the history when its chat is deleted", async () => {
     renderApp("/scheduled");
     await screen.findByText("No scheduled tasks yet");
