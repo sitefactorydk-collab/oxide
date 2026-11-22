@@ -249,15 +249,51 @@ fn clip(text: &str) -> String {
 /// (`CategoryInfo` / `FullyQualifiedErrorId`), or PowerShell 7's concise view, where a record
 /// is a line starting with the command's name (`Move-Item: Cannot find path …`), sometimes
 /// followed by a `Line |` block. Errors silenced with `-ErrorAction SilentlyContinue` aren't
-/// printed, so they don't count.
+/// printed, so they don't count. Colour codes (PowerShell 7 colours its errors) are ignored.
 fn powershell_reported_errors(stderr: &[u8]) -> bool {
-    let err = String::from_utf8_lossy(stderr);
+    let err = strip_ansi(&String::from_utf8_lossy(stderr));
     err.contains("FullyQualifiedErrorId")
         || err.contains("+ CategoryInfo")
         || err.lines().any(|line| {
             let line = line.trim_end();
             line == "Line |" || is_concise_error_line(line)
         })
+}
+
+/// Text without terminal escape sequences: colours and other CSI codes (`ESC [ … letter`),
+/// titles and links (`ESC ] … BEL` or `ESC ] … ESC \`), and two-character escapes.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                // Parameters and intermediates, then one final byte in `@`..=`~`.
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// `Verb-Noun: message`, as PowerShell 7 writes an error record (`Move-Item: …`,
@@ -305,8 +341,8 @@ fn format_result(
              not have run. Check the result before going on.\n",
         );
     }
-    let out = String::from_utf8_lossy(stdout);
-    let err = String::from_utf8_lossy(stderr);
+    let out = strip_ansi(&String::from_utf8_lossy(stdout));
+    let err = strip_ansi(&String::from_utf8_lossy(stderr));
     if !out.trim().is_empty() {
         s.push_str(&format!(
             "\n<stdout>\n{}\n</stdout>\n",
@@ -468,6 +504,14 @@ mod error_tests {
         assert!(powershell_reported_errors(
             b"Get-Content:\r\nLine |\r\n   1 |  Get-Content nope\r\n     | Cannot find path.\r\n"
         ));
+        // As GitHub's runner prints it: in red (found on CI for v1.0.2, 2026-11-22).
+        assert!(powershell_reported_errors(
+            b"\x1b[31;1mMove-Item: \x1b[31;1mCannot find path 'C:\\x\\nope.txt' because it does not exist.\x1b[0m\r\n"
+        ));
+        assert_eq!(
+            strip_ansi("\u{1b}[31;1mred\u{1b}[0m \u{1b}]0;title\u{7}plain \u{1b}]8;;x\u{1b}\\link"),
+            "red plain link"
+        );
         // Native programs' own messages don't count.
         let natives: [&[u8]; 4] = [
             b"npm-cli: warn deprecated",
