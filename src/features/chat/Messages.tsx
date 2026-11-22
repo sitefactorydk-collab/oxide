@@ -21,7 +21,15 @@ import { cn } from "@/lib/cn";
 import { useCopy } from "@/lib/useCopy";
 import { ToolCallBlock } from "@/features/tools/ToolCallBlock";
 import { ToolGroup } from "@/features/tools/ToolGroup";
-import { groupItems, type TranscriptEntry, type TranscriptItem } from "@/features/tools/toolGroups";
+import { Clock, Spinner, StatusLabel } from "@/features/tools/StatusLine";
+import { useSteadyLabel } from "@/features/tools/useSteadyLabel";
+import { useT } from "@/i18n";
+import {
+  groupItems,
+  latestSentence,
+  type TranscriptEntry,
+  type TranscriptItem,
+} from "@/features/tools/toolGroups";
 import { replySegments } from "@/features/tools/toolView";
 import { useStreams } from "./streams";
 import { attachmentsOf, messageText, thinkingOf, type ThinkingInfo } from "./thread";
@@ -398,7 +406,10 @@ function Entry({
     case "text":
       return <Markdown text={entry.text} streaming={streaming} className="ox-prose select-text" />;
     case "thinking":
-      return (
+      // A thought still being written before any tool: the reply's status line.
+      return entry.liveSince !== undefined && startedAt !== undefined ? (
+        <LiveThought text={entry.text} startedAt={startedAt} />
+      ) : (
         <ThinkingBlock
           thinking={{ seconds: entry.seconds, text: entry.text }}
           liveSince={entry.liveSince}
@@ -558,7 +569,10 @@ function Elapsed({ since }: { since: number }) {
   return <span className="tabular-nums text-fg-subtle">{secs}s</span>;
 }
 
-/** Live status line while a reply is being generated, before any text arrives. */
+/**
+ * Live status line while a reply is being generated and nothing else shows its progress: the
+ * same spinner and clock (time since the reply started) as a running tool group's line.
+ */
 export function WorkingLine({
   startedAt,
   label = "Working",
@@ -567,10 +581,45 @@ export function WorkingLine({
   label?: string;
 }) {
   return (
-    <div role="status" className="inline-flex items-center gap-2 py-1 text-md text-fg-muted">
-      <WorkingDots />
-      {label}
-      <Elapsed since={startedAt} />
+    <div role="status" className="inline-flex items-center gap-2.5 py-1 text-md text-fg-muted">
+      <Spinner thinking={false} />
+      <StatusLabel label={label} />
+      <Clock since={startedAt} />
+    </div>
+  );
+}
+
+/**
+ * A thought being written before any tool: “Thinking”, then its newest finished sentence
+ * (held a moment each), the reply's clock, and a chevron that shows the whole thought.
+ */
+function LiveThought({ text, startedAt }: { text: string; startedAt: number }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const sentence = latestSentence(text);
+  const label = useSteadyLabel(sentence || t("toolsteps.thinking"), sentence !== "");
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex w-fit max-w-full items-center gap-2.5 rounded-md py-1 text-left text-md text-fg-muted hover:text-fg"
+      >
+        <Spinner thinking />
+        <StatusLabel label={label} />
+        <Clock since={startedAt} />
+        <ChevronRight
+          aria-hidden
+          className={cn("size-4 shrink-0 transition-transform", open && "rotate-90")}
+        />
+      </button>
+      {open && (
+        <div className="ml-[5px] mt-1 select-text whitespace-pre-wrap border-l-2 border-line pl-4 text-base leading-6 text-fg-muted">
+          {text}
+        </div>
+      )}
     </div>
   );
 }

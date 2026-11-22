@@ -212,7 +212,10 @@ export function summarizeSteps(steps: GroupStep[]): GroupSummary {
     parts.set(key, part);
     if (s.call.status === "error") failed += 1;
   }
-  return { parts: [...parts.values()], failed };
+  // Updating the task list is bookkeeping: named only when it is all the group did.
+  const all = [...parts.values()];
+  const work = all.filter((p) => p.kind !== "tasks");
+  return { parts: work.length > 0 ? work : all, failed };
 }
 
 function capitalize(text: string): string {
@@ -242,11 +245,28 @@ export function firstSentence(text: string): string {
   return chars.length > 120 ? `${chars.slice(0, 120).join("")}…` : sentence;
 }
 
-/** The newest finished sentence of a thought still being written (≤ 90 characters), or "". */
+/** A thought in plain words: code spans unwrapped, Markdown marks and list numbers gone. */
+function plainThought(text: string): string {
+  return text
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*+|(^|\s)[#>]+(?=\s)/g, "$1")
+    .replace(/(^|\s)(\d{1,2}[.)]|[-•])(?=\s)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The newest finished sentence of a thought still being written (≤ 90 characters), or "".
+ * A sentence ends at `.`, `!` or `?` followed by a space (so `SUMMARY.md` or `v1.2` don't end
+ * one); fragments shorter than three words are skipped.
+ */
 export function latestSentence(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const sentences = flat.match(/[^.!?]+[.!?]+(?=\s|$)/g) ?? [];
-  const last = sentences[sentences.length - 1]?.trim() ?? "";
+  const flat = plainThought(text);
+  const pieces = flat.split(/(?<=[.!?]["')\]]*)\s+(?=["'([]?[A-Z0-9ÆØÅ])/u);
+  const finished = /[.!?]["')\]]*$/.test(flat) ? pieces : pieces.slice(0, -1);
+  const good = finished.filter((p) => p.split(" ").length >= 3 && p.length >= 15);
+  const last = good[good.length - 1]?.trim() ?? "";
   const chars = [...last];
   return chars.length > 90 ? `${chars.slice(0, 90).join("")}…` : last;
 }
@@ -254,7 +274,10 @@ export function latestSentence(text: string): string {
 /** What a running group's status line says, and which spinner it shows. */
 export interface LiveStatus {
   label: string;
+  /** The three-dot spinner (a thought is being written). */
   thinking: boolean;
+  /** The label is a sentence of that thought (it is held a moment before the next). */
+  thought: boolean;
 }
 
 /**
@@ -271,23 +294,26 @@ export function liveStatus(steps: GroupStep[], t: T, open = false): LiveStatus {
     return {
       label: done.parts.length > 0 ? summaryText(done, t) : t("toolsum.working"),
       thinking: thinkingNow && !busy,
+      thought: false,
     };
   }
   if (busy) {
     if (busy.status === "awaitingApproval")
-      return { label: t("toolsteps.waiting"), thinking: false };
+      return { label: t("toolsteps.waiting"), thinking: false, thought: false };
     if (busy.checking && (busy.status === "ready" || busy.status === "streaming")) {
-      return { label: t("toolsteps.safetyCheck"), thinking: false };
+      return { label: t("toolsteps.safetyCheck"), thinking: false, thought: false };
     }
     const { action, detail } = callHeadline(busy);
-    return { label: detail ? `${action} ${detail}` : action, thinking: false };
+    return { label: detail ? `${action} ${detail}` : action, thinking: false, thought: false };
   }
   if (last?.kind === "thinking" && thinkingNow) {
-    return { label: latestSentence(last.text) || t("toolsteps.thinking"), thinking: true };
+    const sentence = latestSentence(last.text);
+    return { label: sentence || t("toolsteps.thinking"), thinking: true, thought: sentence !== "" };
   }
   const done = summarizeSteps(steps);
   return {
     label: done.parts.length > 0 ? summaryText(done, t) : t("toolsum.working"),
     thinking: false,
+    thought: false,
   };
 }

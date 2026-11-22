@@ -17,6 +17,8 @@ import {
   type GroupStep,
 } from "./toolGroups";
 import { useToolReveal } from "./reveal";
+import { Clock, Spinner, StatusLabel } from "./StatusLine";
+import { useSteadyLabel } from "./useSteadyLabel";
 import { useAutoMark } from "./useAutoMark";
 import { callHeadline, savedSkillFolder, toolKind } from "./toolView";
 
@@ -58,6 +60,7 @@ export function ToolGroup({
   const text = finished.parts.length > 0 ? summaryText(finished, t) : t("toolsum.working");
   const failed = failedText(all, t);
   const status = live ? liveStatus(steps, t, open) : null;
+  const shownLabel = useSteadyLabel(status?.label ?? text, status?.thought ?? false);
 
   return (
     <div role="group" aria-label={t("toolsteps.label")} className="flex flex-col gap-1.5">
@@ -65,16 +68,14 @@ export function ToolGroup({
         <button
           type="button"
           aria-expanded={open}
-          aria-label={status.label}
+          aria-label={shownLabel}
           onClick={() => {
             if (!waiting) setUserOpen(!open);
           }}
           className="inline-flex w-fit max-w-full items-center gap-2.5 rounded-md py-1 text-left text-md text-fg-muted hover:text-fg"
         >
           <Spinner thinking={status.thinking} />
-          <span key={status.label} className="ox-swap min-w-0 truncate">
-            {status.label}
-          </span>
+          <StatusLabel label={shownLabel} />
           {startedAt !== undefined && <Clock since={startedAt} />}
           <ChevronRight
             aria-hidden
@@ -116,43 +117,6 @@ export function ToolGroup({
       )}
     </div>
   );
-}
-
-/** Dots that blink in turn: a square of four for tool work, a row of three while thinking. */
-function Spinner({ thinking }: { thinking: boolean }) {
-  const dot = "size-[4px] rounded-full bg-current";
-  return thinking ? (
-    <span
-      aria-hidden
-      className="ox-spin ox-spin-row inline-flex w-3.5 shrink-0 items-center justify-between text-accent"
-    >
-      <span className={dot} />
-      <span className={dot} />
-      <span className={dot} />
-    </span>
-  ) : (
-    <span
-      aria-hidden
-      className="ox-spin grid size-3.5 shrink-0 grid-cols-2 place-items-center text-accent"
-    >
-      <span className={dot} />
-      <span className={dot} />
-      <span className={dot} />
-      <span className={dot} />
-    </span>
-  );
-}
-
-/** Time since the reply started: “42s”, “12m 53s”. */
-function Clock({ since }: { since: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const secs = Math.max(0, Math.floor((now - since) / 1000));
-  const text = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
-  return <span className="shrink-0 tabular-nums text-fg-subtle">{text}</span>;
 }
 
 /** “Ran mkdir …” with its mark and status; opens to the request and result. */

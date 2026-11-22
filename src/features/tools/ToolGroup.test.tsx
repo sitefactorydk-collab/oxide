@@ -206,6 +206,7 @@ describe("the summary line", () => {
     ).toEqual({
       label: "Running ls",
       thinking: false,
+      thought: false,
     });
     expect(
       liveStatus([{ kind: "tool", call: { ...run, status: "ready", checking: true } }], en).label,
@@ -213,6 +214,7 @@ describe("the summary line", () => {
     expect(liveStatus([{ kind: "tool", call: done }, thinkingNow], en)).toEqual({
       label: "Checking the names.",
       thinking: true,
+      thought: true,
     });
     expect(liveStatus([{ kind: "tool", call: done }], da).label).toBe("Skrev en fil");
     // Open: the rows show the running step, so the line says what is done.
@@ -227,6 +229,33 @@ describe("the summary line", () => {
       ).label,
     ).toBe("Wrote a file");
     expect(latestSentence("No sentence yet")).toBe("");
+  });
+
+  it("finds whole sentences in a thought, not file names or list numbers", () => {
+    // From the user's recording (2026-11-22): dots inside names ended "sentences".
+    expect(
+      latestSentence("Then write a `SUMMARY.md` file listing the movements. Wait, should I"),
+    ).toBe("Then write a SUMMARY.md file listing the movements.");
+    expect(
+      latestSentence("Files: `MSTeamsSetup.exe` (Exe) and `Joomla_5.4.10-Stable.zip`. Next I"),
+    ).toBe("Files: MSTeamsSetup.exe (Exe) and Joomla_5.4.10-Stable.zip.");
+    expect(
+      latestSentence("The subfolders are: 1. Zip 2. Exe 5. Markdown. I will make them now. And"),
+    ).toBe("I will make them now.");
+    expect(latestSentence("**Plan:** Move the files by their extension.")).toBe(
+      "Plan: Move the files by their extension.",
+    );
+    // Fragments of one or two words are skipped.
+    expect(latestSentence("I see four files here. OK. Hmm")).toBe("I see four files here.");
+  });
+
+  it("leaves task-list updates out of a summary with other work", () => {
+    const steps = (calls: ToolCallView[]) =>
+      groupItems(calls.map(tool)).flatMap((e) => (e.kind === "group" ? e.steps : []));
+    const both = summarizeSteps(steps([call("1", "task_list"), call("2", "list_dir")]));
+    expect(summaryText(both, en)).toBe("Listed a folder");
+    const only = summarizeSteps(steps([call("1", "task_list"), call("2", "task_list")]));
+    expect(summaryText(only, en)).toBe("Updated the task list 2 times");
   });
 
   it("shortens thinking to its first sentence", () => {

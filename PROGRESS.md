@@ -20,7 +20,7 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); **done**: drag and drop fixed in `be4b80a`, every check green, and the user passed every manual exit check (2026-11-21 16:53).
 - **Font sizes (2026-11-21 evening, user's request):** UI text matched to the Claude desktop app from side-by-side screenshots: `--ox-text-md` 15 → 14px (sidebar, title bar, menus), `--ox-text-prose` 16.5 → 15px (chat prose; the composer now uses `text-prose`, still 15px), sidebar section headers 13 → 12px, the composer's note 12 → 13px. Fonts stay Inter / Source Serif 4 / JetBrains Mono (Claude's typeface is Anthropic's own; clean-room rule). Script `scripts\win\fontsize.cmd`.
 - **Phase 23** — Permission modes: Manual and Auto: **done** (2026-11-22). Committed `92fea14` and the fixes from the manual checks `7487f34` (every check green on Windows); the user passed every manual exit check (Gemma and Claude in Auto, the stop cards, Manual, a scheduled task in Auto pausing on download-and-run) on 2026-11-22 12:20.
-- **Phase 24** — Compact tool history in the transcript: **built** (2026-11-22), waiting for the Windows run (`scripts\win\phase24.cmd`, message `logs\commit-msg-phase24.txt`) and the manual exit checks. Before it: the Scheduled page's **Open the chat to approve** link (after Phase 23, user's request) was committed as `369e3ef`.
+- **Phase 24** — Compact tool history in the transcript: **committed `28b955f`** (2026-11-22 13:18, every check green on the second Windows run). Follow-up from the user's recorded manual check (13:35): `scripts\win\phase24c.cmd` (message `logs\commit-msg-phase24c.txt`); manual exit checks still open. Before it: the Scheduled page's **Open the chat to approve** link (after Phase 23, user's request) was committed as `369e3ef`.
 - **Next phase:** none planned after Phase 24 (PLAN.md).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
@@ -88,7 +88,16 @@ Deviations from PLAN.md (and why):
 Known issues / TODO carried forward:
 - A call that moves outside the fold when it finishes (a chart, an image) splits its live group at that point.
 
-Verified (agent side): tsc ✅ ESLint ✅ Prettier ✅ (device). Not yet: cargo fmt/clippy/test, Vitest, vite build (Windows, `phase24.cmd`); manual exit checks.
+**Windows run 1 (`phase24.cmd`, 13:01–13:09):** bindings regenerated (the generator's output matched the hand edit: `logs\phase24-bindings.diff`), fmt, clippy, cargo test, typecheck, lint and vite build passed; Vitest failed 2 of 320: `App.test.tsx` “imports Phase 1 preferences” (the fake's expanded Show tool steps made the stored settings look changed, so the one-time import was skipped; `isDefault` now ignores `toolSteps`) and `Permissions.test.tsx` “saves a new chat's pick” (not touched by this phase; its assertion now names the mode buttons it found). **Run 2 (`phase24b.cmd`, 13:16–13:19):** the two files plus `ToolGroup.test.tsx` passed three times alone, then every check green; committed `28b955f`. The permission test was a timing flake under load.
+
+**Manual check (13:34, recorded by the user; Gemma 4 12B in Auto, `C:\temp\oxide test`):** the status line ran from the start to the answer and the reply folded into “Listed a folder, updated the task list 4 times, ran 3 commands, wrote a file” above it, with the session panel's Auto summary. Found and fixed (`phase24c.cmd`):
+- Thought labels were fragments: the sentence splitter ended a sentence at every dot (“md\` file listing the movements.”, “exe\` (Exe) - \`MSTeamsSetup.”, “5.”, “are: 1.”). `latestSentence` now ends a sentence only at `.`/`!`/`?` followed by a space and a capital or digit, unwraps code spans, drops `*`, heading/quote marks and list numbers, and skips pieces under three words or 15 characters.
+- The label changed about twice a second while Gemma thought; a thought now stays at least 2 s before the next thought replaces it (`useSteadyLabel`, `THOUGHT_HOLD_MS`); steps still show at once.
+- Before the first tool the line was the old two-dot “Working 0s”, then “Thinking 0s” with its own timer, then jumped to the group's line at “10s”. `WorkingLine` and a thought written before any tool (`LiveThought`) now use the same spinner and the reply's clock (`features/tools/StatusLine.tsx`).
+- Task-list updates are left out of a summary that has other work (“updated the task list 4 times” was noise).
+- Tests: the recording's fragments as `latestSentence` cases, the task-list rule, `liveStatus` with `thought`. tsc, ESLint and Prettier pass on the device.
+
+Verified: fmt ✅ clippy ✅ cargo test ✅ typecheck ✅ lint ✅ Vitest ✅ vite build ✅ (Windows, `28b955f`); follow-up checks with `phase24c.cmd`; manual exit checks open.
 
 ## Phase 23 — Permission modes: Manual and Auto — 2026-11-21
 Status: **done** (2026-11-22). Committed `92fea14` (21:36) and `7487f34` (fixes, 22:39), every check green on Windows; the user passed every manual exit check.
