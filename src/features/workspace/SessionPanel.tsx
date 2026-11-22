@@ -48,6 +48,7 @@ import { grantLabel } from "./grants";
 import { useChatWorkspace, useSetAllowDelete, useTaskList } from "./queries";
 import { useSessionPanel } from "./store";
 import { taskProgress } from "./tasks";
+import { jumpToToolCall } from "@/features/tools/reveal";
 
 /**
  * The session panel beside a chat: the task list ("Progress"), shared folders, what the chat
@@ -329,11 +330,7 @@ function UsageList({ rows }: { rows: UsageRow[] }) {
         <li key={r.key}>
           <button
             type="button"
-            onClick={() =>
-              document
-                .querySelector(`[data-tool-call="${CSS.escape(r.toolUseId)}"]`)
-                ?.scrollIntoView({ behavior: "smooth", block: "center" })
-            }
+            onClick={() => jumpToToolCall(r.toolUseId)}
             className="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
           >
             <span className="mt-0.5 text-fg-subtle">

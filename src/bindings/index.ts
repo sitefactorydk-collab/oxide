@@ -2429,7 +2429,11 @@ dictation: DictationSettings;
  * Settings → Media generation (Phase 19).
  */
 generation: GenerationSettings }
-export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont; language: UiLanguage }
+export type AppearanceSettings = { theme: ThemePref; chatFont: ChatFont; language: UiLanguage; 
+/**
+ * Settings → Appearance → Show tool steps (Phase 24).
+ */
+toolSteps: ToolSteps }
 /**
  * The user's answer to a [`ToolApprovalRequest`].
  */
@@ -5041,6 +5045,11 @@ safetyModel: string | null;
  * Tools that ask even in Auto: a tool's name, `server/tool` or a whole `server`.
  */
 alwaysAsk: string[] }
+/**
+ * How a reply's tool steps show in the transcript (Phase 24): folded into one summary line
+ * that opens to compact rows, or open.
+ */
+export type ToolSteps = "collapsed" | "expanded"
 /**
  * One tool call, logged per chat.
  */

@@ -169,6 +169,11 @@ export interface FakeSeed {
     context: Partial<AppSettings["context"]>;
     /** Interface language. */
     language: AppSettings["appearance"]["language"];
+    /**
+     * Settings → Appearance → Show tool steps. The fake starts **expanded**, so tests about
+     * a tool's own line see its row; the folding tests (`ToolGroup.test.tsx`) pick collapsed.
+     */
+    toolSteps: AppSettings["appearance"]["toolSteps"];
     /** Changes to dictation (Settings → Voice). */
     dictation: Partial<AppSettings["dictation"]>;
     /** Changes to Settings → Generation. */
@@ -203,6 +208,7 @@ export function resetFakeBackend(seed: FakeSeed = {}, now = Date.now()): void {
         theme: seed.settings?.theme ?? "system",
         chatFont: "serif",
         language: seed.settings?.language ?? "system",
+        toolSteps: seed.settings?.toolSteps ?? "expanded",
       },
       models: {
         showUnsupported: false,

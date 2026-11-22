@@ -20,7 +20,8 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Phase 22** — More Utility Apps (Translator, Plugin Creator, llms.txt Generator): **committed `0af1306`** (2026-11-21 15:48, every check green on Windows on the second run of `scripts\win\phase22.cmd`); **done**: drag and drop fixed in `be4b80a`, every check green, and the user passed every manual exit check (2026-11-21 16:53).
 - **Font sizes (2026-11-21 evening, user's request):** UI text matched to the Claude desktop app from side-by-side screenshots: `--ox-text-md` 15 → 14px (sidebar, title bar, menus), `--ox-text-prose` 16.5 → 15px (chat prose; the composer now uses `text-prose`, still 15px), sidebar section headers 13 → 12px, the composer's note 12 → 13px. Fonts stay Inter / Source Serif 4 / JetBrains Mono (Claude's typeface is Anthropic's own; clean-room rule). Script `scripts\win\fontsize.cmd`.
 - **Phase 23** — Permission modes: Manual and Auto: **done** (2026-11-22). Committed `92fea14` and the fixes from the manual checks `7487f34` (every check green on Windows); the user passed every manual exit check (Gemma and Claude in Auto, the stop cards, Manual, a scheduled task in Auto pausing on download-and-run) on 2026-11-22 12:20.
-- **Next phase:** Phase 24 — Compact tool history in the transcript (requested by the user on 2026-11-21 with screenshots; PLAN.md). After Phase 23 (2026-11-22, user's request): the Scheduled page's task row shows **Open the chat to approve** when the task's last run waits for approval (it was only on the task's own page); test in `Scheduled.test.tsx`. Script `scripts\win\approve-link.cmd` (checks, then commits this with the Phase 23 close-out notes).
+- **Phase 24** — Compact tool history in the transcript: **built** (2026-11-22), waiting for the Windows run (`scripts\win\phase24.cmd`, message `logs\commit-msg-phase24.txt`) and the manual exit checks. Before it: the Scheduled page's **Open the chat to approve** link (after Phase 23, user's request) was committed as `369e3ef`.
+- **Next phase:** none planned after Phase 24 (PLAN.md).
 - **Repo location:** `C:\AI Apps\Oxide` (git, branch `main`)
 
 ## How to build and verify (read this first, every phase)
@@ -49,6 +50,45 @@ The current phase and hand-off notes live here. Every phase chat reads this file
 - **Browser agent in the cloud container** (Phase 13): Python 3.13 there has `mcp` 2.3.0 and Playwright 1.63, and `/usr/bin/google-chrome` exists (no Browser-Use, no PyPI). See Phase 13's notes for the commands.
 - **Linux harness after Phase 18** (Phase 19): `logs\linux-vendor.tgz` has no `dbus-secret-service`, so in `~/oxide-linux` `crates/oxide-store` is a folder with symlinked `src` and `migrations` and a `Cargo.toml` whose `secret-service` feature is `[]`. Start without the repo's `Cargo.lock` (cargo resolves offline from the vendor folder). Mirror tarball: exclude `src-tauri/binaries`, `docs/ui-parity`, `docs/*.json` and `extension/dist` too (they are large). `src-tauri` files are formatted with `rustfmt --edition 2024 --config-path rustfmt.toml <files>`.
 - **Deleting files:** `rm` in the linked folder needs delete permission (`device_request_delete_permission`). Never run git from the Linux VM; use `commit.ps1` on Windows.
+
+## Phase 24 — Compact tool history in the transcript — 2026-11-22
+Status: **built, waiting for the Windows run** (`scripts\win\phase24.cmd`, message `logs\commit-msg-phase24.txt`) and the manual exit checks.
+
+Before starting: Phase 23 was done (`7487f34`) and its close-out with the Scheduled page's approve link committed (`369e3ef`, every check green at 12:38); the working tree was clean.
+
+Exit criteria (Windows, by hand):
+- [ ] The “organize this folder” chat from Phase 23's checks (Auto, a shared folder): its tool work shows as one or two muted summary lines above the answer (“Listed a folder 2 times, ran 3 commands, wrote a file”, failures as “· 1 failed” in red).
+- [ ] Opening a line shows one box of compact rows (thinking as its first sentence, each call as “Ran mkdir …” / “Listed C:\…”), small ⚡ marks with the Auto text in a tooltip, **Failed** in red on its row; a row's chevron opens its request and result.
+- [ ] A running reply shows its group as **one status line** (as in the user's recording of the Claude desktop app): dot spinner on the left, a label that fades between the running step (“Running mkdir …”, “Safety check”), the newest sentence of the current thought, and the work so far, then the elapsed time and a chevron; clicking it shows the rows live; when the answer starts, the group folds to its summary.
+- [ ] Approval cards still appear in full (a group with a waiting card stays open); artifacts, generated media, computer use and the browser's live screenshots stay outside the fold.
+- [ ] Settings → Appearance → **Show tool steps: Expanded** brings back open groups; Collapsed folds them again.
+- [ ] Used in this session → a row opens the folded group and scrolls to the call.
+
+**Changed during the phase (12:57, the user's request with a screen recording of the Claude desktop app):** the running group isn't an open list but one status line — a dot spinner (a square of four blinking in turn for tool work, a row of three while thinking), a label that fades in on every change (the running step, else the newest finished sentence of the thought being written, else the work so far), the reply's time (“42s”, “12m 53s”) and a chevron. Opened (or with Show tool steps: expanded), the rows show the running step, so the line then says what is done. The separate “Working” line is hidden while that status line shows.
+
+Done:
+- **core** `settings.rs`: `ToolSteps` (collapsed, expanded) and `AppearanceSettings.tool_steps` (default collapsed; old settings files read as collapsed); test. Bindings edited by hand; `phase24.ps1` regenerates them (`logs\phase24-bindings.diff`).
+- **frontend** `features/tools/toolGroups.ts` (pure): `groupItems` turns a reply's text, thinking, calls and compactions into entries: prose, standalone thinking, compaction dividers, calls drawn in full (`staysOutside`), and groups (key = the first call's id, so a live group keeps its state while it streams). Consecutive calls and the thinking between them form a group; thinking joins a group when tool work follows it, else it stays a “Thought for Ns” line; prose and calls drawn in full end a group. `summarizeSteps` / `summaryText` / `failedText`: kinds in order of first use with counts (`toolsum.<kind>.one|many`, connectors by server name), failures counted, English and Danish. `firstSentence` for thinking rows; `latestSentence` and `liveStatus` for the running status line.
+- `ToolGroup.tsx`: while running, the status line (`Spinner`, the label in an `ox-swap` fade keyed by its text, `Clock`, chevron; CSS `ox-spin`/`ox-blink`/`ox-swap` in `styles/index.css`, off with reduced motion); afterwards the muted summary line (spinner while it runs; finished work only, “Working” before anything finished; “· n failed” in red; chevron) and, opened, one bordered box with thin dividers: `CallRow` (small icon, verb, detail, server chip, ⚡ `AutoMarkIcon`, the usual status — Failed, Running, Safety check, Needs your approval —, a chevron to the request and result, the saved-skill link, and a waiting approval card in place) and `ThinkingRow` (first sentence, click for all). Open = a waiting approval, else the user's own toggle, else the setting.
+- Outside the fold (drawn as before): artifacts (not failed ones), computer use, generated images/video/music once they have a result, the browser while it runs and its steps that returned pictures, and `run_python` calls that returned charts or files. Approval cards inside a group show in full on their row and keep the group open.
+- `Messages.tsx`: saved replies (compactions placed after their call) and the live reply both render through `groupItems`; the live reply's last group shows the status line (with the reply's start time) and folds to its summary as soon as prose follows it.
+- `ToolCallBlock.tsx` exports `KindIcon`, `StatusBadge`, `CallDetails`, `SavedSkillLink`; `useAutoMark.ts`; `AutoMarkIcon` in `AutoMarkBadge.tsx`.
+- `reveal.ts`: `jumpToToolCall(id)` (the session panel's Used in this session rows) opens the group holding the call and scrolls to its row once drawn.
+- Settings → Appearance → **Show tool steps** (Collapsed / Expanded) with Danish strings; `useToolSteps`, `useSetToolSteps`.
+- **Tests**: Rust `tool_steps_default_to_collapsed`; Vitest `features/tools/ToolGroup.test.tsx`: grouping (prose splits, thinking joins or stays alone, what stays outside, compactions split), the summary wording (kinds, counts, order, failures, connectors, singular/plural, Danish), first sentences, the running status line (the running step, the newest sentence of a thought, a safety check, Danish, what it says when open), the live line following the work then opened to rows with the Auto mark and folding to its summary when prose starts, a saved reply folded to one line and opened to rows with marks, failures and details, jump-to-call opening it, a waiting approval keeping its group open, the setting saved, expanded groups.
+
+Deviations from PLAN.md (and why):
+- **Python charts and files stay outside the fold** as well (not in the plan's list): they are results the user is meant to see, like generated images.
+- **The browser's granular steps fold once finished** unless they returned a picture; while running they are drawn in full with the live screenshot.
+- **A compaction divider ends a group** (it marks a point in the conversation).
+- **The setting isn't in the first-paint cache** (`useUi`): groups start collapsed until settings load (a few milliseconds).
+- **The fake backend starts with Show tool steps: expanded**, so the existing tests about a tool's own line see its row; the new tests set collapsed.
+- Running verbs and the rows' wording stay English (as the tool lines were); the summary line and the setting are translated.
+
+Known issues / TODO carried forward:
+- A call that moves outside the fold when it finishes (a chart, an image) splits its live group at that point.
+
+Verified (agent side): tsc ✅ ESLint ✅ Prettier ✅ (device). Not yet: cargo fmt/clippy/test, Vitest, vite build (Windows, `phase24.cmd`); manual exit checks.
 
 ## Phase 23 — Permission modes: Manual and Auto — 2026-11-21
 Status: **done** (2026-11-22). Committed `92fea14` (21:36) and `7487f34` (fixes, 22:39), every check green on Windows; the user passed every manual exit check.

@@ -21,3 +21,28 @@ export function AutoMarkBadge({ mark }: { mark: AutoMark }) {
     </Tooltip>
   );
 }
+
+/** The mark in a compact tool row (Phase 24): a small ⚡ with the mark's text in a tooltip. */
+export function AutoMarkIcon({ mark }: { mark: AutoMark }) {
+  return (
+    <Tooltip
+      label={
+        <span className="max-w-72 font-normal">
+          <strong className="font-semibold">Auto · {AUTO_MARK_LABELS[mark]}</strong> —{" "}
+          {AUTO_MARK_HINTS[mark]}
+        </span>
+      }
+    >
+      <span
+        role="img"
+        aria-label={`Auto: ${AUTO_MARK_LABELS[mark]}`}
+        className={cn(
+          "inline-flex shrink-0 items-center",
+          mark === "stopped" ? "text-accent" : "text-fg-subtle",
+        )}
+      >
+        <Zap aria-hidden className="size-3.5" />
+      </span>
+    </Tooltip>
+  );
+}

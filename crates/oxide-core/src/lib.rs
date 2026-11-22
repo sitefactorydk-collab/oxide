@@ -107,7 +107,7 @@ pub use schedule::{
 pub use settings::{
     AppSettings, AppearanceSettings, ChatFont, DesktopSettings, DictationSettings, MemorySettings,
     ModelImagesOverride, ModelSettings, ProfileSettings, ProjectSettings, ShellSettings, ThemePref,
-    ToolSettings, UiLanguage, WebSearchProvider, WebSearchSettings,
+    ToolSettings, ToolSteps, UiLanguage, WebSearchProvider, WebSearchSettings,
 };
 pub use tools::{
     ApprovalDecision, SearchKeyKind, ToolApprovalRequest, ToolUsage, ToolUsageKind, WebSearchKeys,

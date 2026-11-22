@@ -9,7 +9,7 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
-import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { Compaction, Feedback, Message, Rating, Usage } from "@/bindings";
 import { Markdown } from "@/components/markdown/Markdown";
 import { IconButton } from "@/components/ui/IconButton";
@@ -20,6 +20,8 @@ import { useModelLabel } from "@/features/models/queries";
 import { cn } from "@/lib/cn";
 import { useCopy } from "@/lib/useCopy";
 import { ToolCallBlock } from "@/features/tools/ToolCallBlock";
+import { ToolGroup } from "@/features/tools/ToolGroup";
+import { groupItems, type TranscriptEntry, type TranscriptItem } from "@/features/tools/toolGroups";
 import { replySegments } from "@/features/tools/toolView";
 import { useStreams } from "./streams";
 import { attachmentsOf, messageText, thinkingOf, type ThinkingInfo } from "./thread";
@@ -314,25 +316,22 @@ export const AssistantMessage = memo(function AssistantMessage({
   const [copied, copy] = useCopy();
   const note = stopNote(message);
   const text = messageText(message);
-  const segments = replySegments(message.content);
+  const items = replySegments(message.content).flatMap((seg): TranscriptItem[] =>
+    seg.kind === "tool"
+      ? [
+          seg,
+          ...compactions
+            .filter((c) => c.afterToolUseId === seg.call.id)
+            .map((c) => ({ kind: "compaction" as const, compaction: c })),
+        ]
+      : [seg],
+  );
+  const entries = groupItems(items);
   return (
     <article aria-label="Reply" className="group flex flex-col gap-2">
-      {segments.map((seg, i) =>
-        seg.kind === "text" ? (
-          <Markdown key={i} text={seg.text} className="ox-prose select-text" />
-        ) : seg.kind === "thinking" ? (
-          <ThinkingBlock key={i} thinking={{ seconds: seg.seconds, text: seg.text }} />
-        ) : (
-          <Fragment key={seg.call.id}>
-            <ToolCallBlock call={seg.call} />
-            {compactions
-              .filter((c) => c.afterToolUseId === seg.call.id)
-              .map((c) => (
-                <CompactionDivider key={c.id} compaction={c} />
-              ))}
-          </Fragment>
-        ),
-      )}
+      {entries.map((entry, i) => (
+        <Entry key={entryKey(entry, i)} entry={entry} />
+      ))}
       {note && (
         <p role="note" className="text-sm text-fg-subtle">
           {note}
@@ -366,6 +365,53 @@ export const AssistantMessage = memo(function AssistantMessage({
     </article>
   );
 });
+
+function entryKey(entry: TranscriptEntry, i: number): string {
+  switch (entry.kind) {
+    case "group":
+      return `g:${entry.key}`;
+    case "outside":
+      return `c:${entry.call.id}`;
+    case "compaction":
+      return `x:${entry.compaction.id}`;
+    default:
+      return `i:${i}`;
+  }
+}
+
+/** One drawn piece of a reply: prose, thinking, a folded group, a call shown in full. */
+function Entry({
+  entry,
+  live = false,
+  streaming = false,
+  startedAt,
+}: {
+  entry: TranscriptEntry;
+  /** When the running reply started (its status line's timer). */
+  startedAt?: number;
+  /** The reply's running group (open, steps live). */
+  live?: boolean;
+  /** The prose is still arriving. */
+  streaming?: boolean;
+}) {
+  switch (entry.kind) {
+    case "text":
+      return <Markdown text={entry.text} streaming={streaming} className="ox-prose select-text" />;
+    case "thinking":
+      return (
+        <ThinkingBlock
+          thinking={{ seconds: entry.seconds, text: entry.text }}
+          liveSince={entry.liveSince}
+        />
+      );
+    case "compaction":
+      return <CompactionDivider compaction={entry.compaction} />;
+    case "outside":
+      return <ToolCallBlock call={entry.call} />;
+    case "group":
+      return <ToolGroup steps={entry.steps} live={live} startedAt={startedAt} />;
+  }
+}
 
 function WorkingDots() {
   return (
@@ -418,38 +464,33 @@ export function LiveReplyView({ conversationId }: { conversationId: string }) {
     last === undefined ||
     last.kind === "compaction" ||
     (last.kind === "tool" && (last.call.status === "done" || last.call.status === "error"));
+  const entries = groupItems(
+    live.blocks.map((b): TranscriptItem => {
+      if (b.kind !== "thinking") return b;
+      return b.endedAt !== null
+        ? {
+            kind: "thinking",
+            text: b.text,
+            seconds: Math.max(1, Math.round((b.endedAt - b.startedAt) / 1000)),
+          }
+        : { kind: "thinking", text: b.text, seconds: 0, liveSince: b.startedAt };
+    }),
+  );
   return (
     <div aria-busy="true" aria-label="Reply in progress" className="flex flex-col gap-2">
-      {live.blocks.map((b, i) => {
-        if (b.kind === "text") {
-          const isLast = i === live.blocks.length - 1;
-          return (
-            <Markdown key={i} text={b.text} streaming={isLast} className="ox-prose select-text" />
-          );
-        }
-        if (b.kind === "compaction") {
-          return <CompactionDivider key={b.compaction.id} compaction={b.compaction} />;
-        }
-        if (b.kind === "thinking") {
-          return b.endedAt !== null ? (
-            <ThinkingBlock
-              key={i}
-              thinking={{
-                seconds: Math.max(1, Math.round((b.endedAt - b.startedAt) / 1000)),
-                text: b.text,
-              }}
-            />
-          ) : (
-            <ThinkingBlock
-              key={i}
-              thinking={{ seconds: 0, text: b.text }}
-              liveSince={b.startedAt}
-            />
-          );
-        }
-        return <ToolCallBlock key={b.call.id} call={b.call} />;
+      {entries.map((entry, i) => {
+        const isLast = i === entries.length - 1;
+        return (
+          <Entry
+            key={entryKey(entry, i)}
+            entry={entry}
+            live={isLast}
+            streaming={isLast && last?.kind === "text"}
+            startedAt={live.startedAt}
+          />
+        );
       })}
-      {working && (
+      {working && (live.compacting || entries.at(-1)?.kind !== "group") && (
         <WorkingLine
           startedAt={live.startedAt}
           label={live.compacting ? "Compacting the conversation" : "Working"}
@@ -468,7 +509,7 @@ export function ThinkingBlock({
   liveSince,
 }: {
   thinking: ThinkingInfo;
-  liveSince?: number;
+  liveSince?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const live = liveSince !== undefined;

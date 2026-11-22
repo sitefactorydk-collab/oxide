@@ -41,7 +41,8 @@ import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { AutoMarkBadge } from "@/features/permissions/AutoMarkBadge";
-import { useAnswerApproval, useToolUsage } from "./queries";
+import { useAnswerApproval } from "./queries";
+import { useAutoMark } from "./useAutoMark";
 import {
   browserGoal,
   callHeadline,
@@ -52,7 +53,13 @@ import {
   toolKind,
 } from "./toolView";
 
-function KindIcon({ call }: { call: ToolCallView }) {
+export function KindIcon({
+  call,
+  className = "size-4",
+}: {
+  call: ToolCallView;
+  className?: string;
+}) {
   const kind = toolKind(call);
   const Icon =
     kind === "search"
@@ -88,10 +95,10 @@ function KindIcon({ call }: { call: ToolCallView }) {
                                     ? Music
                                     : ImageIcon
                                 : Plug;
-  return <Icon aria-hidden className="size-4 shrink-0" />;
+  return <Icon aria-hidden className={cn("shrink-0", className)} />;
 }
 
-function StatusBadge({ call }: { call: ToolCallView }) {
+export function StatusBadge({ call }: { call: ToolCallView }) {
   const progress = useMcpUi((s) => s.progress[call.id]);
   const frame = useBrowserFrame(call.id);
   const isPython = toolKind(call) === "python";
@@ -415,7 +422,7 @@ export function ToolCallBlock({ call }: { call: ToolCallView }) {
 }
 
 /** "Open in Settings": shows a skill a chat just saved in Settings → Skills. */
-function SavedSkillLink({ folder }: { folder: string }) {
+export function SavedSkillLink({ folder }: { folder: string }) {
   const openSettings = useOpenSettings();
   const focus = useSkillFocus((s) => s.focus);
   if (folder === "") return null;
@@ -472,27 +479,8 @@ function ToolLine({ call }: { call: ToolCallView }) {
         />
       </button>
       {open && (
-        <div className="flex flex-col gap-2 border-t border-line px-3 py-3">
-          {call.inputJson.trim() !== "" && call.inputJson.trim() !== "{}" && (
-            <>
-              <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
-                Request
-              </div>
-              <pre className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted">
-                {toolKind(call) === "python"
-                  ? pythonCode(call.inputJson) || prettyJson(call.inputJson)
-                  : prettyJson(call.inputJson)}
-              </pre>
-            </>
-          )}
-          {call.result && (
-            <>
-              <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
-                {call.isError ? "Error" : "Response"}
-              </div>
-              <ToolResultView content={call.result} isError={call.isError} />
-            </>
-          )}
+        <div className="border-t border-line px-3 py-3">
+          <CallDetails call={call} />
         </div>
       )}
       {!open && toolKind(call) === "python" && call.result && !call.isError && (
@@ -512,13 +500,35 @@ function ToolLine({ call }: { call: ToolCallView }) {
   );
 }
 
-/** The call's **Auto** mark: live from the stream, else from the chat's tool log. */
+/** A call's request and what came back (an opened tool line or compact row). */
+export function CallDetails({ call }: { call: ToolCallView }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {call.inputJson.trim() !== "" && call.inputJson.trim() !== "{}" && (
+        <>
+          <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Request</div>
+          <pre className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted">
+            {toolKind(call) === "python"
+              ? pythonCode(call.inputJson) || prettyJson(call.inputJson)
+              : prettyJson(call.inputJson)}
+          </pre>
+        </>
+      )}
+      {call.result && (
+        <>
+          <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
+            {call.isError ? "Error" : "Response"}
+          </div>
+          <ToolResultView content={call.result} isError={call.isError} />
+        </>
+      )}
+    </div>
+  );
+}
+
 function AutoMarkOf({ call }: { call: ToolCallView }) {
-  const { id: conversationId = "" } = useParams();
-  const { data } = useToolUsage(call.auto ? "" : conversationId);
-  const mark = call.auto ?? data?.find((u) => u.toolUseId === call.id)?.auto ?? null;
-  if (!mark || call.status === "awaitingApproval") return null;
-  return <AutoMarkBadge mark={mark} />;
+  const mark = useAutoMark(call);
+  return mark ? <AutoMarkBadge mark={mark} /> : null;
 }
 
 /**

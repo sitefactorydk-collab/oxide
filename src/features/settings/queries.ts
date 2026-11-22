@@ -19,6 +19,7 @@ import {
   type GenerationSettings,
   type ThemePref,
   type ToolSettings,
+  type ToolSteps,
   type UiLanguage,
   type WebSearchSettings,
 } from "@/bindings";
@@ -32,7 +33,7 @@ export const settingsKeys = { app: ["settings", "app"] as const };
 
 export const DEFAULT_SETTINGS: AppSettings = {
   profile: { name: "" },
-  appearance: { theme: "system", chatFont: "serif", language: "system" },
+  appearance: { theme: "system", chatFont: "serif", language: "system", toolSteps: "collapsed" },
   models: {
     showUnsupported: false,
     autoTitle: true,
@@ -158,8 +159,13 @@ function cacheForFirstPaint(s: AppSettings) {
   });
 }
 
+/** Nothing stored yet. Show tool steps (Phase 24) doesn't count: Phase 1 builds never had it. */
 function isDefault(s: AppSettings): boolean {
-  return JSON.stringify(s) === JSON.stringify(DEFAULT_SETTINGS);
+  const same = (a: AppSettings) => ({
+    ...a,
+    appearance: { ...a.appearance, toolSteps: DEFAULT_SETTINGS.appearance.toolSteps },
+  });
+  return JSON.stringify(same(s)) === JSON.stringify(same(DEFAULT_SETTINGS));
 }
 
 /**
@@ -177,7 +183,12 @@ export function useSettingsSync(): void {
       const legacy: AppSettings = {
         ...data,
         profile: { name: ui.userName },
-        appearance: { theme: ui.theme, chatFont: ui.chatFont, language: ui.language },
+        appearance: {
+          theme: ui.theme,
+          chatFont: ui.chatFont,
+          language: ui.language,
+          toolSteps: data.appearance.toolSteps,
+        },
       };
       if (isDefault(data) && !isDefault(legacy)) {
         update(() => legacy);
@@ -205,6 +216,18 @@ export function useSetLanguage() {
   const update = useUpdateSettings();
   return (language: UiLanguage) =>
     update((s) => ({ ...s, appearance: { ...s.appearance, language } }));
+}
+
+/** Settings → Appearance → Show tool steps (Phase 24); collapsed until settings load. */
+export function useToolSteps(): ToolSteps {
+  const { data } = useSettings();
+  return data?.appearance.toolSteps ?? "collapsed";
+}
+
+export function useSetToolSteps() {
+  const update = useUpdateSettings();
+  return (toolSteps: ToolSteps) =>
+    update((s) => ({ ...s, appearance: { ...s.appearance, toolSteps } }));
 }
 
 export function useSetDictationSettings() {

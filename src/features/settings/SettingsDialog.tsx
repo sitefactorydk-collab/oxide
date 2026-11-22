@@ -15,7 +15,7 @@ import { VoiceSection } from "@/features/dictation/VoiceSection";
 import { GenerationSection } from "@/features/generation/GenerationSection";
 import { UsageSection } from "@/features/usage/UsageSection";
 import { useT, type MessageKey, type T } from "@/i18n";
-import type { UiLanguage } from "@/bindings";
+import type { ToolSteps, UiLanguage } from "@/bindings";
 import { Monitor, Moon, Sun, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
@@ -32,7 +32,14 @@ import { ConnectorsSection } from "@/features/mcp/ConnectorsSection";
 import { DeveloperSection } from "@/features/mcp/DeveloperSection";
 import { ModelsSection } from "@/features/models/ModelsSection";
 import { ProvidersSection } from "@/features/providers/ProvidersSection";
-import { useSetChatFont, useSetLanguage, useSetProfileName, useSetTheme } from "./queries";
+import {
+  useSetChatFont,
+  useSetLanguage,
+  useSetProfileName,
+  useSetTheme,
+  useSetToolSteps,
+  useToolSteps,
+} from "./queries";
 import { findSection, SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 
 /** Settings: left nav + section pages. Sections become real in the phase they name. */
@@ -313,8 +320,43 @@ function AppearanceSection() {
           ))}
         </div>
       </Field>
+      <ToolStepsField />
       <LanguageField />
     </>
+  );
+}
+
+/** Settings → Appearance → Show tool steps (Phase 24). */
+function ToolStepsField() {
+  const t = useT();
+  const value = useToolSteps();
+  const set = useSetToolSteps();
+  const options: Array<{ id: ToolSteps; label: string }> = [
+    { id: "collapsed", label: t("settings.toolStepsCollapsed") },
+    { id: "expanded", label: t("settings.toolStepsExpanded") },
+  ];
+  return (
+    <Field label={t("settings.toolSteps")} hint={t("settings.toolStepsHint")}>
+      <div role="radiogroup" aria-label={t("settings.toolSteps")} className="flex flex-wrap gap-2">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={value === o.id}
+            onClick={() => set(o.id)}
+            className={cn(
+              "h-9 rounded-lg border px-3 text-base transition-colors",
+              value === o.id
+                ? "border-accent text-fg ring-2 ring-accent-soft"
+                : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </Field>
   );
 }
 

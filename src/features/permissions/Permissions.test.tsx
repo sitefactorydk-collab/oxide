@@ -70,9 +70,14 @@ describe("the permission mode picker", () => {
     await waitFor(() => expect(location.pathname).toMatch(/^\/chat\//));
     const id = location.pathname.split("/").pop() ?? "";
     expect(fakeState().permissionModes.get(id)).toBe("auto");
-    expect(
-      await screen.findByRole("button", { name: "Permission mode: Auto" }),
-    ).toBeInTheDocument();
+    // Names the mode buttons it found if this fails.
+    await waitFor(() =>
+      expect(
+        screen
+          .queryAllByRole("button", { name: /^Permission mode:/ })
+          .map((b) => b.getAttribute("aria-label") ?? b.textContent),
+      ).toEqual(["Permission mode: Auto"]),
+    );
   });
 
   it("follows the default from Settings → Permissions", async () => {

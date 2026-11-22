@@ -47,12 +47,24 @@ pub enum UiLanguage {
     Da,
 }
 
+/// How a reply's tool steps show in the transcript (Phase 24): folded into one summary line
+/// that opens to compact rows, or open.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolSteps {
+    #[default]
+    Collapsed,
+    Expanded,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppearanceSettings {
     pub theme: ThemePref,
     pub chat_font: ChatFont,
     pub language: UiLanguage,
+    /// Settings → Appearance → Show tool steps (Phase 24).
+    pub tool_steps: ToolSteps,
 }
 
 /// Default transcription model for dictation.
@@ -518,6 +530,18 @@ mod tests {
         let d = s.normalized().dictation;
         assert_eq!(d.provider_id, None);
         assert_eq!(d.language, "");
+    }
+
+    #[test]
+    fn tool_steps_default_to_collapsed() {
+        let s: AppSettings =
+            serde_json::from_str(r#"{"appearance":{"theme":"dark"}}"#).expect("parses");
+        assert_eq!(s.appearance.tool_steps, ToolSteps::Collapsed);
+        let s: AppSettings =
+            serde_json::from_str(r#"{"appearance":{"toolSteps":"expanded"}}"#).expect("parses");
+        assert_eq!(s.appearance.tool_steps, ToolSteps::Expanded);
+        let json = serde_json::to_value(&s).expect("serializes");
+        assert_eq!(json["appearance"]["toolSteps"], "expanded");
     }
 
     #[test]
