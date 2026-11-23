@@ -66,10 +66,7 @@ $settings = $this->get_settings_for_display(); build attributes with $this->add_
 ## Rules
 - Never use removed or old APIs: no Scheme_Color / Scheme_Typography, no register_widget_type(), no elementor/widgets/widgets_registered, no _register_controls() or _content_template().
 - Every PHP file starts with the ABSPATH guard; all strings are translatable with the text domain S; CSS classes are prefixed with S; output is accessible and responsive.
-- Author: ${settings.author.trim() || "(use a neutral placeholder)"}${settings.authorEmail.trim() ? `, ${settings.authorEmail.trim()}` : ""}${settings.authorUrl.trim() ? `, ${settings.authorUrl.trim()}` : ""}.${settings.instructions.trim() ? `\n- The user always wants: ${settings.instructions.trim()}` : ""}
-
-## Your answer
-JSON only: {"summary": "…", "files": [{"path": "…", "content": "…"}], "delete": ["…"]}. "summary" says in one to three sentences what you did, in the user's language. "files" holds whole files (never parts or diffs) with paths relative to the plugin's folder (e.g. "widgets/class-S-widget.php", not "S/…"). "delete" lists files to remove (usually empty).`;
+- Author: ${settings.author.trim() || "(use a neutral placeholder)"}${settings.authorEmail.trim() ? `, ${settings.authorEmail.trim()}` : ""}${settings.authorUrl.trim() ? `, ${settings.authorUrl.trim()}` : ""}.${settings.instructions.trim() ? `\n- The user always wants: ${settings.instructions.trim()}` : ""}`;
 
 const platform: Platform = {
   title: "Elementor Widget Creator",
@@ -165,9 +162,7 @@ Plugin folder: ${slug}
 Version: 1.0.0
 
 What the widget should do and look like:
-${request || "(see the screenshots)"}
-
-Return every file of the plugin.`,
+${request || "(see the screenshots)"}`,
   changePrompt: ({
     meta,
     files,
@@ -186,7 +181,7 @@ ${files
 The change:
 ${request || "(see the screenshots)"}
 
-Return only the files you add or change, each complete. Keep everything else as it is, keep the slug, widget name and class names, and don't change the version unless asked.`,
+Keep everything else as it is, keep the slug, widget name and class names, and don't change the version unless asked.`,
   zipRoot: (meta) => meta.slug,
   zipName: (meta) => `${meta.slug}-${meta.version || "1.0.0"}.zip`,
   importFolder(top, files) {

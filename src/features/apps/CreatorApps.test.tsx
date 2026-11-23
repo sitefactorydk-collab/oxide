@@ -162,6 +162,19 @@ function sppbFiles(el = "c10faq", P = "C10faq"): Record<string, string> {
   };
 }
 
+/** The file a per-file request asks for. */
+const askedFile = (prompt: string) =>
+  prompt.match(/Write the complete (?:content of|new version of) (\S+) \(/)?.[1] ?? "";
+
+/** `ai.text` answering each file request from `files` (as `filesFor(path)`). */
+const writesFiles =
+  (filesFor: (path: string) => string) =>
+  async (o: { prompt: string; onText?: (d: string, t: string) => void }) => {
+    const text = filesFor(askedFile(o.prompt));
+    o.onText?.(text, text);
+    return { text, model: "lmstudio/fake-model", truncated: false };
+  };
+
 const inFolder = (folderName: string, files: Record<string, string>) =>
   Object.fromEntries(Object.entries(files).map(([p, v]) => [`${folderName}/${p}`, v]));
 
@@ -173,10 +186,12 @@ describe("the plugin creator apps", () => {
   it("SP Page Builder: asks for a folder, generates an addon and opens it in the editor", async () => {
     const { api, fs } = memoryFolder({}, false);
     const sdk = fakeSdk(api);
+    const files = sppbFiles();
     sdk.ai.json.mockResolvedValue({
       summary: "Made the FAQ addon.",
-      files: Object.entries(sppbFiles()).map(([path, content]) => ({ path, content })),
+      files: Object.keys(files).map((path) => ({ path, action: "create", purpose: `the ${path}` })),
     });
+    sdk.ai.text.mockImplementation(writesFiles((path) => files[path] ?? ""));
     mount(sppbApp, sppbBench, sdk);
     fireEvent.click(await screen.findByRole("button", { name: /Choose folder/ }));
     expect(await screen.findByText(/No addons in addons yet/)).toBeInTheDocument();
@@ -200,6 +215,13 @@ describe("the plugin creator apps", () => {
     expect(req.system).toContain("Joomla 6");
     expect(req.prompt).toContain("Element name (E): c10faq");
     expect(req.prompt).toContain("An FAQ with categories");
+    expect(req.prompt).toContain("Step 1: the plan");
+    // Then one plain-text request per planned file, each with the plan and the files so far.
+    const fileReqs = sdk.ai.text.mock.calls.map((c) => (c[0] as { prompt: string }).prompt);
+    expect(fileReqs).toHaveLength(Object.keys(files).length);
+    expect(fileReqs[0]).toContain("## The plan");
+    expect(fileReqs[0]).toContain("Write the complete content of c10faq.xml");
+    expect(fileReqs[1]).toContain("--- FILE: c10faq.xml ---");
     expect(fs.has("plg_sppagebuilder_c10faq/addons/c10faq/site.php")).toBe(true);
     expect(screen.queryByText(/things? to check/)).not.toBeInTheDocument();
     expect(screen.getByText("Made the FAQ addon.")).toBeInTheDocument();
@@ -238,10 +260,20 @@ describe("the plugin creator apps", () => {
     sdk.ai.json.mockResolvedValue({
       summary: "Added a title color.",
       files: [
-        { path: "addons/c10faq/admin.php", content: "<?php // with color" },
-        { path: "plg_sppagebuilder_c10faq/addons/c10faq/assets/css/c10faq.css", content: ".x{}" },
+        { path: "addons/c10faq/admin.php", action: "update", purpose: "a title color field" },
+        {
+          path: "plg_sppagebuilder_c10faq/addons/c10faq/assets/css/c10faq.css",
+          action: "create",
+          purpose: "the title color",
+        },
       ],
     });
+    // A fenced answer and a plain one: both become the file's content.
+    sdk.ai.text.mockImplementation(
+      writesFiles((path) =>
+        path.endsWith("admin.php") ? "```php\n<?php // with color\n```" : ".x{}",
+      ),
+    );
     fireEvent.change(screen.getByLabelText("What to change"), {
       target: { value: "Add a title color" },
     });
@@ -251,14 +283,59 @@ describe("the plugin creator apps", () => {
     expect(req.prompt).toContain("--- FILE: addons/c10faq/site.php ---");
     expect(req.prompt).toContain("// mine");
     expect(req.prompt).toContain("Add a title color");
-    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe("<?php // with color");
-    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/assets/css/c10faq.css")).toBe(".x{}");
+    const second = (sdk.ai.text.mock.calls[1]?.[0] as { prompt: string }).prompt;
+    expect(second).toContain("Write the complete content of addons/c10faq/assets/css/c10faq.css");
+    expect(second).toContain("--- FILE: addons/c10faq/admin.php ---\n<?php // with color");
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe(
+      "<?php // with color\n",
+    );
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/assets/css/c10faq.css")).toBe(".x{}\n");
 
     fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
     await waitFor(() =>
       expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toContain("addon_name"),
     );
     expect(fs.has("plg_sppagebuilder_c10faq/addons/c10faq/assets/css/c10faq.css")).toBe(false);
+  });
+
+  it("SP Page Builder: a file cut off at the output limit stops the change, Undo keeps working", async () => {
+    const { api, fs } = memoryFolder(inFolder("plg_sppagebuilder_c10faq", sppbFiles()));
+    const sdk = fakeSdk(api);
+    mount(sppbApp, sppbBench, sdk);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit C10 FAQ widget" }));
+    await screen.findByRole("heading", { level: 1, name: /C10 FAQ widget/ });
+    sdk.ai.json.mockResolvedValue({
+      summary: "A new layout.",
+      files: [
+        { path: "addons/c10faq/admin.php", action: "update", purpose: "layout fields" },
+        { path: "addons/c10faq/site.php", action: "update", purpose: "the new layout" },
+        { path: "script.php", action: "delete", purpose: "not needed" },
+      ],
+    });
+    sdk.ai.text
+      .mockResolvedValueOnce({ text: "<?php // new admin", model: "m", truncated: false })
+      .mockResolvedValueOnce({ text: "<?php class Half", model: "m", truncated: true });
+    fireEvent.change(screen.getByLabelText("What to change"), {
+      target: { value: "A new layout" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Apply changes/ }));
+    // In the error bar and in the history.
+    expect(
+      await screen.findAllByText(/Stopped after 1 file: addons\/c10faq\/site.php was cut off/),
+    ).toHaveLength(2);
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe("<?php // new admin\n");
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/site.php")).toContain(
+      "SppagebuilderAddon",
+    );
+    expect(fs.has("plg_sppagebuilder_c10faq/script.php")).toBe(true);
+    // The request stays for another try; Undo puts back the written file.
+    expect((screen.getByLabelText("What to change") as HTMLTextAreaElement).value).toBe(
+      "A new layout",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await waitFor(() =>
+      expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toContain("addon_name"),
+    );
   });
 
   it("SP Page Builder: the browser clones (renaming the element), deletes and imports", async () => {

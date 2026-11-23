@@ -336,6 +336,7 @@ async fn text_streams_takes_images_and_reads_json() {
         .await
         .expect("runs");
     assert_eq!(r["text"], "Hello");
+    assert_eq!(r["truncated"], false);
     let deltas: Vec<Value> = seen.lock().expect("lock").clone();
     assert_eq!(
         deltas,

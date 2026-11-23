@@ -103,10 +103,7 @@ use Joomla\\CMS\\Uri\\Uri; defined('_JEXEC') or die; class SppagebuilderAddonP e
 - Joomla 6 has no Joomla 3 class aliases and no Joomla\\CMS\\Filesystem: use namespaced classes (Joomla\\CMS\\Factory, Joomla\\CMS\\Uri\\Uri, Joomla\\CMS\\Language\\Text, …) and PHP's is_file()/file_exists(); never JFactory, JUri, JText or WordPress functions.
 - Start every PHP file with a docblock (@package, @copyright, @license) and the _JEXEC guard (\\defined('_JEXEC') or die; in namespaced files).
 - Prefix CSS classes and JS globals with the element name; make output accessible (labels, aria attributes, keyboard support) and responsive.
-- Author: ${settings.author.trim() || "(ask nothing; use a neutral placeholder)"}${settings.authorEmail.trim() ? `, ${settings.authorEmail.trim()}` : ""}${settings.authorUrl.trim() ? `, ${settings.authorUrl.trim()}` : ""}.${settings.instructions.trim() ? `\n- The user always wants: ${settings.instructions.trim()}` : ""}
-
-## Your answer
-JSON only: {"summary": "…", "files": [{"path": "…", "content": "…"}], "delete": ["…"]}. "summary" says in one to three sentences what you did, in the user's language. "files" holds whole files (never parts or diffs) with paths relative to the plugin's folder (e.g. "addons/E/site.php", not "plg_sppagebuilder_E/…"). "delete" lists files to remove (usually empty).`;
+- Author: ${settings.author.trim() || "(ask nothing; use a neutral placeholder)"}${settings.authorEmail.trim() ? `, ${settings.authorEmail.trim()}` : ""}${settings.authorUrl.trim() ? `, ${settings.authorUrl.trim()}` : ""}.${settings.instructions.trim() ? `\n- The user always wants: ${settings.instructions.trim()}` : ""}`;
 
 const platform: Platform = {
   title: "SP Page Builder Addon Creator",
@@ -225,9 +222,7 @@ Version: 1.0.0
 Date: ${new Date().toISOString().slice(0, 10)}
 
 What the addon should do and look like:
-${request || "(see the screenshots)"}
-
-Return every file of the plugin.`,
+${request || "(see the screenshots)"}`,
   changePrompt: ({
     meta,
     files,
@@ -246,7 +241,7 @@ ${files
 The change:
 ${request || "(see the screenshots)"}
 
-Return only the files you add or change, each complete. Keep everything else as it is, keep the element name and class names, and keep the manifest's <files> list in step with the files. Don't change the version unless asked.`,
+Keep everything else as it is, keep the element name and class names, and keep the manifest's <files> list in step with the files. Don't change the version unless asked.`,
   zipRoot: (_meta, folderName) => folderName,
   zipName: (meta, folderName) => `${folderName}-v${meta.version || "1.0.0"}.zip`,
   importFolder(top, files) {

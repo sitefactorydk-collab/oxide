@@ -174,6 +174,8 @@ export interface TextResult {
   text: string;
   /** The chat model that answered (`<provider>/<model>`). */
   model: string;
+  /** The answer stopped at the model's output limit, so it may be incomplete. */
+  truncated: boolean;
 }
 
 export interface JsonOptions extends Omit<TextOptions, "onText"> {
@@ -210,7 +212,7 @@ export const ai = {
   async text(options: TextOptions | string): Promise<TextResult> {
     const o = typeof options === "string" ? { prompt: options } : options;
     let all = "";
-    const r = await call<{ text: string; model: string }>(
+    const r = await call<{ text: string; model: string; truncated?: boolean }>(
       "text.generate",
       { ...(await textParams(o)), stream: Boolean(o.onText) },
       {
@@ -224,7 +226,7 @@ export const ai = {
         },
       },
     );
-    return { text: r.text, model: r.model };
+    return { text: r.text, model: r.model, truncated: r.truncated === true };
   },
 
   /** Asks for JSON (matching `schema` when given) and returns it parsed. */

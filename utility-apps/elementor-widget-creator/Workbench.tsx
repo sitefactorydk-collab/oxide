@@ -128,10 +128,35 @@ interface HistoryEntry {
   changed: string[];
 }
 
-interface AiAnswer {
+/** The model's plan: what to write, before any file is written. */
+interface PlanAnswer {
   summary?: string;
-  files?: Array<{ path?: unknown; content?: unknown }>;
-  delete?: unknown[];
+  files?: Array<{ path?: unknown; action?: unknown; purpose?: unknown }>;
+}
+
+/** One file of the plan while it is carried out. */
+interface PlanStep {
+  path: string;
+  action: "create" | "update" | "delete";
+  purpose: string;
+  status: "pending" | "writing" | "done" | "failed";
+  /** Characters written so far (streamed). */
+  chars: number;
+}
+
+/** The model at work: planning (no steps yet), then writing file by file. */
+interface Working {
+  started: number;
+  label: string;
+  steps: PlanStep[];
+}
+
+/** What a planned change did: the files written (in order), the undo, and why it stopped. */
+interface PlanRun {
+  summary: string;
+  changed: string[];
+  undo: Undo;
+  error: unknown;
 }
 
 /** One AI change, so it can be undone: each file's content before (`null`: it didn't exist). */
@@ -173,7 +198,7 @@ const DEFAULT_SETTINGS: Settings = {
   instructions: "",
 };
 
-const ANSWER_SCHEMA = {
+const PLAN_SCHEMA = {
   type: "object",
   properties: {
     summary: { type: "string" },
@@ -181,17 +206,48 @@ const ANSWER_SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { path: { type: "string" }, content: { type: "string" } },
-        required: ["path", "content"],
+        properties: {
+          path: { type: "string" },
+          action: { type: "string", enum: ["create", "update", "delete"] },
+          purpose: { type: "string" },
+        },
+        required: ["path", "action", "purpose"],
       },
     },
-    delete: { type: "array", items: { type: "string" } },
   },
   required: ["summary", "files"],
 };
 
+/** Most files one plan may touch. */
+const MAX_PLAN_FILES = 40;
+/** Output limits: the plan is short; each file is written in a request of its own. */
+const PLAN_TOKENS = 8000;
+const FILE_TOKENS = 16000;
+
+const PLAN_RULES = (fresh: boolean) => `## Step 1: the plan
+Don't write any code yet. ${
+  fresh
+    ? "List every file the plugin needs, in the order they should be written (the manifest or main file first)."
+    : "List only the files to create, update or delete for this change, in the order they should be written."
+} For each file give "path" (relative to the plugin's folder), "action" ("create", "update" or "delete") and "purpose": what goes in the file (for an update: what changes in it), naming what other files rely on (classes, functions, settings keys, CSS classes, language keys). The files are written one by one afterwards, each from this plan, so make it precise. "summary" says in one to three sentences what you will do, in the user's language.
+Answer with JSON only: {"summary": "…", "files": [{"path": "…", "action": "create", "purpose": "…"}]}.`;
+
+const FILE_RULES = (step: PlanStep) => `## Now write one file
+Write the complete ${step.action === "update" ? "new version of" : "content of"} ${step.path} (${step.purpose}). Follow the plan and the instructions, and keep it consistent with the plugin's other files and the files already written in this step (the same names, keys and classes). Answer with the file's content only: no Markdown code fences, no explanations before or after.`;
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** A file the model wrote, without the code fence or the sentence some models add. */
+function fileContent(text: string): string {
+  const t = text.replace(/^\uFEFF/, "").trim();
+  const whole = t.match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
+  if (whole) return `${whole[1] ?? ""}\n`;
+  const blocks = [...t.matchAll(/```[^\n]*\n([\s\S]*?)\n```/g)];
+  // "Here is the file: ```…```": the one fenced block is the file.
+  if (blocks.length === 1 && /^[A-Z][a-z]/.test(t)) return `${blocks[0]?.[1] ?? ""}\n`;
+  return `${t}\n`;
 }
 
 /** A relative path that stays inside the plugin's folder, or "" (no `..`, no leading `/`). */
@@ -349,6 +405,59 @@ function ErrorBar({ text, onClose }: { text: string; onClose?: () => void }) {
   );
 }
 
+/** The model at work: planning, then each planned file with its state. */
+function Progress({ working, onStop }: { working: Working; onStop: () => void }) {
+  const seconds = Math.round((Date.now() - working.started) / 1000);
+  const done = working.steps.filter((s) => s.status === "done").length;
+  return (
+    <div className="space-y-2" aria-label="Progress">
+      <div className="flex items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+          <span className="truncate">
+            {working.label}
+            {working.steps.length > 0 && ` · ${done}/${working.steps.length} files`} · {seconds}s
+          </span>
+        </span>
+        <button type="button" className={btn} onClick={onStop}>
+          <Square className="h-3.5 w-3.5" /> Stop
+        </button>
+      </div>
+      {working.steps.length > 0 && (
+        <ol className="max-h-48 space-y-0.5 overflow-y-auto rounded-lg border border-neutral-200 p-1.5 font-mono text-[11px] dark:border-neutral-700">
+          {working.steps.map((s) => (
+            <li
+              key={s.path}
+              title={s.purpose}
+              className={`flex items-center gap-1.5 ${
+                s.status === "pending"
+                  ? "text-neutral-400"
+                  : "text-neutral-700 dark:text-neutral-300"
+              }`}
+            >
+              {s.status === "writing" ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              ) : s.status === "done" ? (
+                <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+              ) : s.status === "failed" ? (
+                <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
+              ) : (
+                <span className="h-3 w-3 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate">
+                {s.action === "delete" ? `delete ${s.path}` : s.path}
+              </span>
+              {s.chars > 0 && (
+                <span className="shrink-0 text-neutral-400">{formatSize(s.chars)}</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 /** Screenshots for the model: pick, drop or paste; thumbnails with a remove button. */
 function Shots({
   images,
@@ -477,7 +586,7 @@ export function Workbench({ platform }: { platform: Platform }) {
   const [shots, setShots] = useState<File[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [undo, setUndo] = useState<Undo | null>(null);
-  const [working, setWorking] = useState<{ started: number; label: string } | null>(null);
+  const [working, setWorking] = useState<Working | null>(null);
   const [lastChanged, setLastChanged] = useState<string[]>([]);
   const [model, setModel] = useState("");
   const [copied, setCopied] = useState(false);
@@ -704,66 +813,132 @@ export function Workbench({ platform }: { platform: Platform }) {
     if (folderName === open) setHistory(kept);
   };
 
-  /** Writes the model's files into a plugin folder; returns what changed (and the undo). */
-  const applyAnswer = async (
-    folderName: string,
-    answer: AiAnswer,
-    before: PluginFile[],
-  ): Promise<{ changed: string[]; undo: Undo }> => {
-    if (!Array.isArray(answer.files))
-      throw new Error("The model's answer had no files. Try again.");
-    const written = new Map<string, string>();
+  /** The plan's files, cleaned: paths inside the plugin, actions that fit what exists. */
+  const planSteps = (plan: PlanAnswer, folderName: string, before: PluginFile[]): PlanStep[] => {
+    if (!Array.isArray(plan.files)) throw new Error("The model's plan had no files. Try again.");
     const prefix = `${folderName}/`;
-    for (const f of answer.files) {
+    const steps: PlanStep[] = [];
+    for (const f of plan.files) {
       let path = typeof f?.path === "string" ? cleanPath(f.path) : "";
       // Paths are relative to the plugin's folder; a model may still put the folder first.
       if (path.startsWith(prefix)) path = path.slice(prefix.length);
-      if (!path || typeof f.content !== "string" || SKIPPED.test(path)) continue;
-      written.set(path, f.content);
+      if (!path || SKIPPED.test(path) || steps.some((s) => s.path === path)) continue;
+      const old = before.find((b) => b.path === path);
+      let action: PlanStep["action"] = f.action === "delete" ? "delete" : old ? "update" : "create";
+      if (action === "delete" && !old) continue;
+      // Binary files (images, fonts) are kept: the model writes text.
+      if (old && old.content === null) continue;
+      if (action !== "delete" && !old) action = "create";
+      const purpose = typeof f.purpose === "string" ? f.purpose.trim() : "";
+      steps.push({ path, action, purpose, status: "pending", chars: 0 });
+      if (steps.length >= MAX_PLAN_FILES) break;
     }
-    const deleted = (Array.isArray(answer.delete) ? answer.delete : [])
-      .map((p) => (typeof p === "string" ? cleanPath(p) : ""))
-      .map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p))
-      .filter((p) => p && !written.has(p) && before.some((f) => f.path === p));
-    if (written.size === 0 && deleted.length === 0) {
-      throw new Error("The model didn't change any files. Try saying more about what to do.");
-    }
-    const undoList: Undo["before"] = [];
-    const changed: string[] = [];
-    for (const [path, content] of written) {
-      const old = before.find((f) => f.path === path);
-      if (old && old.content === content) continue;
-      if (old && old.content === null) continue; // binary files aren't replaced by text
-      undoList.push({ path, content: old ? old.content : null });
-      await folder.write(`${folderName}/${path}`, content);
-      changed.push(path);
-    }
-    for (const path of deleted) {
-      const old = before.find((f) => f.path === path);
-      if (!old || old.content === null) continue;
-      undoList.push({ path, content: old.content });
-      await folder.delete(`${folderName}/${path}`);
-      changed.push(`${path} (deleted)`);
-    }
-    return { changed, undo: { folderName, before: undoList } };
+    return steps;
   };
 
-  const ask = async (prompt: string, images: File[], label: string) => {
-    abort.current = new AbortController();
-    setWorking({ started: Date.now(), label });
+  /**
+   * Plans a change, then writes the planned files one by one (a request each, answered as
+   * plain text), deleting the planned deletions last. Files are written as they come, so a
+   * stop keeps what was done (and Undo puts it back).
+   */
+  const runPlan = async (o: {
+    folderName: string;
+    before: PluginFile[];
+    base: string;
+    images: File[];
+    label: string;
+    fresh: boolean;
+  }): Promise<PlanRun> => {
+    const controller = new AbortController();
+    abort.current = controller;
+    const signal = controller.signal;
+    const started = Date.now();
+    const system = P.system(settings);
+    const images = o.images.length ? o.images : undefined;
+    const run: PlanRun = {
+      summary: "",
+      changed: [],
+      undo: { folderName: o.folderName, before: [] },
+      error: null,
+    };
+    setWorking({ started, label: `${o.label}: planning`, steps: [] });
     try {
-      return await ai.json<AiAnswer>({
-        system: P.system(settings),
-        prompt,
-        images: images.length ? images : undefined,
-        schema: ANSWER_SCHEMA,
-        maxTokens: 32000,
-        signal: abort.current.signal,
+      const plan = await ai.json<PlanAnswer>({
+        system,
+        prompt: `${o.base}\n\n${PLAN_RULES(o.fresh)}`,
+        images,
+        schema: PLAN_SCHEMA,
+        maxTokens: PLAN_TOKENS,
+        signal,
       });
+      run.summary = plan.summary?.trim() ?? "";
+      let steps = planSteps(plan, o.folderName, o.before);
+      if (steps.length === 0) {
+        throw new Error("The model planned no changes. Try saying more about what to do.");
+      }
+      const show = (i: number, patch: Partial<PlanStep>) => {
+        steps = steps.map((s, j) => (j === i ? { ...s, ...patch } : s));
+        setWorking({ started, label: o.label, steps });
+      };
+      setWorking({ started, label: o.label, steps });
+      const planText = steps.map((s) => `- ${s.path} (${s.action}): ${s.purpose}`).join("\n");
+      const written = new Map<string, string>();
+      for (const [i, step] of steps.entries()) {
+        if (step.action === "delete") continue;
+        show(i, { status: "writing", chars: 0 });
+        const sofar = [...written].map(([p, c]) => `--- FILE: ${p} ---\n${c}`).join("\n\n");
+        const r = await ai.text({
+          system,
+          prompt: `${o.base}\n\n## The plan\n${planText}${
+            sofar
+              ? `\n\n## Files already written in this step (these versions count)\n${sofar}`
+              : ""
+          }\n\n${FILE_RULES(step)}`,
+          images,
+          maxTokens: FILE_TOKENS,
+          signal,
+          onText: (_delta, all) => show(i, { chars: all.length }),
+        });
+        const content = fileContent(r.text);
+        if (r.truncated || !content.trim()) {
+          show(i, { status: "failed" });
+          throw new Error(
+            r.truncated
+              ? `${step.path} was cut off at the model's output limit (${r.text.length} characters). Ask for it in smaller parts, or use a model with a larger context.`
+              : `The model wrote nothing for ${step.path}.`,
+          );
+        }
+        const old = o.before.find((b) => b.path === step.path);
+        run.undo.before.push({ path: step.path, content: old ? old.content : null });
+        await folder.write(`${o.folderName}/${step.path}`, content);
+        written.set(step.path, content);
+        run.changed.push(step.path);
+        show(i, { status: "done", chars: content.length });
+      }
+      for (const [i, step] of steps.entries()) {
+        if (step.action !== "delete") continue;
+        const old = o.before.find((b) => b.path === step.path);
+        run.undo.before.push({ path: step.path, content: old ? old.content : null });
+        await folder.delete(`${o.folderName}/${step.path}`);
+        run.changed.push(`${step.path} (deleted)`);
+        show(i, { status: "done" });
+      }
+    } catch (e) {
+      run.error = e;
     } finally {
       setWorking(null);
-      abort.current = null;
+      if (abort.current === controller) abort.current = null;
     }
+    return run;
+  };
+
+  /** A plan's error as the user sees it, or null when they stopped it themselves. */
+  const planError = (r: PlanRun): string | null => {
+    if (!r.error || (r.error as { code?: string })?.code === "cancelled") return null;
+    const done = r.changed.length;
+    return done > 0
+      ? `Stopped after ${done} file${done === 1 ? "" : "s"}: ${message(r.error)}`
+      : message(r.error);
   };
 
   const change = async () => {
@@ -776,25 +951,36 @@ export function Workbench({ platform }: { platform: Platform }) {
       const sendable = current.map((f) =>
         f.content !== null && f.content.length > MAX_PROMPT_FILE ? { ...f, content: null } : f,
       );
-      const answer = await ask(
-        P.changePrompt({ meta, files: sendable, request: request.trim() }),
-        shots,
-        `Changing ${meta.name}`,
-      );
-      const { changed, undo: u } = await applyAnswer(open, answer, current);
-      await addHistory(open, {
-        at: Date.now(),
-        request: request.trim(),
-        summary: answer.summary?.trim() || "Changed the files.",
-        changed,
+      const asked = request.trim();
+      const r = await runPlan({
+        folderName: open,
+        before: current,
+        base: P.changePrompt({ meta, files: sendable, request: asked }),
+        images: shots,
+        label: `Changing ${meta.name}`,
+        fresh: false,
       });
-      setUndo(u.before.length ? u : null);
-      setLastChanged(changed);
-      setRequest("");
-      setShots([]);
-      await reload(open);
-      if (changed[0] && !changed[0].endsWith("(deleted)")) setSelected(changed[0]);
-      await scan();
+      const failure = planError(r);
+      if (r.changed.length > 0) {
+        await addHistory(open, {
+          at: Date.now(),
+          request: asked,
+          summary:
+            [r.summary, failure ? `(${failure})` : ""].filter(Boolean).join(" ") ||
+            "Changed the files.",
+          changed: r.changed,
+        });
+        setUndo(r.undo);
+        setLastChanged(r.changed);
+        await reload(open);
+        if (r.changed[0] && !r.changed[0].endsWith("(deleted)")) setSelected(r.changed[0]);
+        await scan();
+      }
+      if (!r.error) {
+        setRequest("");
+        setShots([]);
+      }
+      if (failure) setError(failure);
     } catch (e) {
       if ((e as { code?: string })?.code !== "cancelled") setError(message(e));
     }
@@ -833,21 +1019,30 @@ export function Workbench({ platform }: { platform: Platform }) {
     if (items?.some((i) => i.folderName === folderName)) {
       throw new Error(`The folder ${folderName} already exists. Pick another name.`);
     }
-    const answer = await ask(
-      P.newPrompt({ name, slug, request: req, settings }),
+    const r = await runPlan({
+      folderName,
+      before: [],
+      base: P.newPrompt({ name, slug, request: req, settings }),
       images,
-      `Making ${name}`,
-    );
-    const { changed } = await applyAnswer(folderName, answer, []);
+      label: `Making ${name}`,
+      fresh: true,
+    });
+    if (r.changed.length === 0) throw r.error ?? new Error("The model wrote no files.");
+    const failure = planError(r);
     await addHistory(folderName, {
       at: Date.now(),
       request: req,
-      summary: answer.summary?.trim() || `Made ${name}.`,
-      changed,
+      summary: [r.summary || `Made ${name}.`, failure ? `(${failure})` : ""]
+        .filter(Boolean)
+        .join(" "),
+      changed: r.changed,
     });
     await scan();
     await openEditor(folderName);
-    setLastChanged(changed);
+    setLastChanged(r.changed);
+    if (failure) {
+      setError(`${failure} Ask for the missing files with Change with AI.`);
+    }
   };
 
   const cloneItem = async (item: Item, name: string, slug: string) => {
@@ -1333,8 +1528,6 @@ export function Workbench({ platform }: { platform: Platform }) {
     );
   };
 
-  const seconds = working ? Math.round((Date.now() - working.started) / 1000) : 0;
-
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-wrap items-center gap-2 border-b border-neutral-200 px-4 py-2.5 dark:border-neutral-800">
@@ -1608,14 +1801,7 @@ export function Workbench({ platform }: { platform: Platform }) {
             />
             <Shots images={shots} onChange={setShots} disabled={working !== null} />
             {working ? (
-              <div className="flex items-center gap-2">
-                <span className="flex flex-1 items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
-                  <Loader2 className="h-4 w-4 animate-spin" /> {working.label} · {seconds}s
-                </span>
-                <button type="button" className={btn} onClick={() => abort.current?.abort()}>
-                  <Square className="h-3.5 w-3.5" /> Stop
-                </button>
-              </div>
+              <Progress working={working} onStop={() => abort.current?.abort()} />
             ) : (
               <button
                 type="button"
@@ -1645,7 +1831,7 @@ function ModalView(props: {
   platform: Platform;
   settings: Settings;
   home: FolderInfo | null;
-  working: { started: number; label: string } | null;
+  working: Working | null;
   items: Item[];
   onClose: () => void;
   onChooseFolder: () => Promise<void>;
@@ -1940,7 +2126,7 @@ function NewDialog({
 }: {
   platform: Platform;
   items: Item[];
-  working: { started: number; label: string } | null;
+  working: Working | null;
   onClose: () => void;
   onCreate: (name: string, slug: string, request: string, images: File[]) => Promise<void>;
   onStop: () => void;
@@ -2051,15 +2237,9 @@ function NewDialog({
         {error && <ErrorBar text={error} />}
         <div className="flex items-center justify-end gap-2">
           {working ? (
-            <>
-              <span className="mr-auto flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
-                <Loader2 className="h-4 w-4 animate-spin" /> Writing the files… (this can take a few
-                minutes)
-              </span>
-              <button type="button" className={btn} onClick={onStop}>
-                <Square className="h-3.5 w-3.5" /> Stop
-              </button>
-            </>
+            <div className="w-full">
+              <Progress working={working} onStop={onStop} />
+            </div>
           ) : (
             <>
               <button type="button" className={btn} onClick={onClose}>

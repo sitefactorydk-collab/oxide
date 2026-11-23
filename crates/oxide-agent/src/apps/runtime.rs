@@ -678,7 +678,12 @@ impl AppRuntime {
         };
         tracing::info!(model = %model_id, chars = text.len(), stop = ?stop, "app text call");
         let Some(_) = json_mode else {
-            return Ok(json!({ "text": text, "model": model_id }));
+            // `truncated`: the answer stopped at the output limit (it may be incomplete).
+            return Ok(json!({
+                "text": text,
+                "model": model_id,
+                "truncated": stop == Some(StopReason::MaxTokens),
+            }));
         };
         if stop == Some(StopReason::MaxTokens) && parse_json_answer(&text).is_err() {
             // Asking again gets the same cut-off answer.

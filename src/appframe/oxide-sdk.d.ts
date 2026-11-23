@@ -70,6 +70,8 @@ export interface TextResult {
   text: string;
   /** The chat model that answered (`<provider>/<model>`). */
   model: string;
+  /** The answer stopped at the model's output limit, so it may be incomplete. */
+  truncated: boolean;
 }
 export interface JsonOptions extends Omit<TextOptions, "onText"> {
   /** A JSON Schema the answer must match. */
