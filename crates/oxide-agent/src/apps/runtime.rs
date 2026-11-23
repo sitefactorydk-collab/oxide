@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 use oxide_core::model::split_model_id;
 use oxide_core::{
     AppCallError, AppCapability, AppErrorCode, AppManifest, AppPrefs, ContentBlock, GenerationKind,
-    MAX_APP_STORAGE_BYTES, McpContent, McpToolResult, MediaSource, ProviderKind, Role,
+    MAX_APP_STORAGE_BYTES, McpContent, McpToolResult, MediaSource, ProviderKind, Role, StopReason,
     ThinkingStyle, ToolProgress, app_secret_name,
 };
 use oxide_llm::generation::InputImage;
@@ -102,6 +102,16 @@ pub fn parse_json_answer(raw: &str) -> Result<Value, String> {
     } else {
         "the model's answer wasn't valid JSON".into()
     })
+}
+
+/// Why a JSON answer that hit the output limit can't be used, and what helps.
+fn cut_off(chars: usize) -> String {
+    format!(
+        "The model's answer was cut off before it was complete (it reached its output or \
+         context limit after {chars} characters), so it isn't valid JSON. With LM Studio, load \
+         the model with a larger context length (Context Length in its load settings); \
+         otherwise ask for a smaller change or pick a model with a larger context window."
+    )
 }
 
 /// Media in an input list: `[{ mediaType, data (base64), name? }]`.
@@ -602,9 +612,16 @@ impl AppRuntime {
         }
         let stream = p.get("stream").and_then(Value::as_bool).unwrap_or(false);
         let want_thinking = p.get("thinking").and_then(Value::as_bool).unwrap_or(false);
-        let base = |messages: Vec<ChatMessage>| {
+        // The schema also goes to the provider as structured output (OpenAI-compatible
+        // `response_format`, Anthropic `output_config.format`), so servers that constrain
+        // sampling with it (LM Studio, llama.cpp) can only answer with matching JSON.
+        let schema = json_mode.clone().flatten();
+        let base = |messages: Vec<ChatMessage>, structured: bool| {
             let mut r = ChatRequest::new(model, messages);
             r.system = (!system.is_empty()).then(|| system.clone());
+            if structured {
+                r.json_schema = schema.clone();
+            }
             r.images = caps.images || config.kind == ProviderKind::Anthropic;
             r.native_pdfs = config.kind == ProviderKind::Anthropic;
             r.max_tokens = p
@@ -630,6 +647,7 @@ impl AppRuntime {
                     .await
                     .map_err(|e| failed(format!("The model couldn't answer: {e}")))?;
                 let mut text = String::new();
+                let mut stop = None;
                 while let Some(ev) = s.next().await {
                     match ev.map_err(|e| failed(format!("The model couldn't answer: {e}")))? {
                         ChatEvent::TextDelta(t) => {
@@ -638,18 +656,34 @@ impl AppRuntime {
                             }
                             text.push_str(&t);
                         }
-                        ChatEvent::Stop(_) => break,
+                        ChatEvent::Stop(reason) => {
+                            stop = Some(reason);
+                            break;
+                        }
                         _ => {}
                     }
                 }
-                Ok::<String, AppCallError>(text)
+                Ok::<(String, Option<StopReason>), AppCallError>((text, stop))
             }
         };
-        let text = run(base(messages.clone()), stream && json_mode.is_none()).await?;
-        tracing::info!(model = %model_id, chars = text.len(), "app text call");
+        let live = stream && json_mode.is_none();
+        let (text, stop) = match run(base(messages.clone(), true), live).await {
+            Err(e) if schema.is_some() => {
+                // A server that refuses structured output: ask once more without it (the
+                // system prompt still asks for the JSON).
+                tracing::info!(model = %model_id, error = %e.message, "structured output refused");
+                run(base(messages.clone(), false), live).await?
+            }
+            r => r?,
+        };
+        tracing::info!(model = %model_id, chars = text.len(), stop = ?stop, "app text call");
         let Some(_) = json_mode else {
             return Ok(json!({ "text": text, "model": model_id }));
         };
+        if stop == Some(StopReason::MaxTokens) && parse_json_answer(&text).is_err() {
+            // Asking again gets the same cut-off answer.
+            return Err(failed(cut_off(text.chars().count())));
+        }
         match parse_json_answer(&text) {
             Ok(v) => Ok(json!({ "text": text, "json": v, "model": model_id })),
             Err(first) => {
@@ -666,7 +700,10 @@ impl AppRuntime {
                 retry.push(ChatMessage::user(format!(
                     "That wasn't usable: {first}. Reply again with only the JSON value."
                 )));
-                let again = run(base(retry), false).await?;
+                let (again, stop) = run(base(retry, true), false).await?;
+                if stop == Some(StopReason::MaxTokens) && parse_json_answer(&again).is_err() {
+                    return Err(failed(cut_off(again.chars().count())));
+                }
                 let v = parse_json_answer(&again).map_err(|e| {
                     failed(format!("The model's answer couldn't be read as JSON ({e}). Try again or pick another model."))
                 })?;

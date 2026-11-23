@@ -709,3 +709,52 @@ async fn the_apps_folder_is_set_by_the_picker_and_reached_with_its_grant() {
     assert!(cleared.folder.is_none());
     assert!(!cleared.allows(AppCapability::Folder));
 }
+
+#[tokio::test]
+async fn json_calls_ask_for_structured_output_and_explain_a_cut_off_answer() {
+    let f = fixture(vec![
+        // Structured output: the schema goes to the provider.
+        vec![text("{\"ok\": true}")],
+        // A server that refuses it: asked again without it.
+        vec![Step::Reject(400, "response_format is not supported")],
+        vec![text("{\"ok\": 2}")],
+        // Cut off at the output limit: no second try, a message that says why.
+        vec![
+            text("{\"files\": [{\"path\": \"a.php\", \"content\": \"<?php"),
+            Step::Event(ChatEvent::Stop(oxide_core::StopReason::MaxTokens)),
+        ],
+    ])
+    .await;
+    allow(&f, TABLE, &[AppCapability::Text]).await;
+    let schema = json!({"type": "object", "properties": {"ok": {}}});
+    let call = |id: &'static str| {
+        f.runtime.call(
+            TABLE,
+            id,
+            "text.generate",
+            json!({ "prompt": "x", "json": schema }),
+            quiet(),
+        )
+    };
+    let r = call("a").await.expect("json");
+    assert_eq!(r["json"], json!({"ok": true}));
+    assert_eq!(f.fake.requests()[0].json_schema.as_ref(), Some(&schema));
+
+    let r = call("b").await.expect("json without structured output");
+    assert_eq!(r["json"], json!({"ok": 2}));
+    let reqs = f.fake.requests();
+    assert!(reqs[1].json_schema.is_some());
+    assert!(reqs[2].json_schema.is_none());
+    assert!(
+        reqs[2]
+            .system
+            .as_deref()
+            .unwrap_or("")
+            .contains("JSON Schema")
+    );
+
+    let e = call("c").await.expect_err("cut off");
+    assert!(e.message.contains("cut off"), "{}", e.message);
+    assert!(e.message.contains("Context Length"), "{}", e.message);
+    assert_eq!(f.fake.requests().len(), 4);
+}

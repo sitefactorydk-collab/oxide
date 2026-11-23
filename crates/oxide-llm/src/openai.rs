@@ -355,6 +355,16 @@ pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Resul
             json!({ "enable_thinking": false }),
         );
     }
+    if let Some(schema) = &req.json_schema {
+        // OpenAI's structured outputs shape, which LM Studio and llama.cpp servers take too.
+        body.insert(
+            "response_format".into(),
+            json!({
+                "type": "json_schema",
+                "json_schema": { "name": "answer", "schema": schema },
+            }),
+        );
+    }
     if !req.tools.is_empty() {
         let tools: Vec<Value> = req
             .tools
@@ -839,6 +849,24 @@ mod tests {
         assert_eq!(
             body["messages"][0],
             json!({"role": "system", "content": "<project_knowledge>k</project_knowledge>\n\nsys"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_json_schema_becomes_response_format() {
+        let mut req = ChatRequest::new("m", vec![ChatMessage::user("hi")]);
+        let body = request_body(ProviderKind::LmStudio, &req)
+            .await
+            .expect("builds");
+        assert!(body.get("response_format").is_none());
+        let schema = json!({"type": "object", "properties": {"a": {"type": "string"}}});
+        req.json_schema = Some(schema.clone());
+        let body = request_body(ProviderKind::LmStudio, &req)
+            .await
+            .expect("builds");
+        assert_eq!(
+            body["response_format"],
+            json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}})
         );
     }
 

@@ -314,8 +314,18 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
             );
         }
     }
+    let mut output = Map::new();
     if let Some(effort) = req.effort {
-        body.insert("output_config".into(), json!({ "effort": effort.as_str() }));
+        output.insert("effort".into(), json!(effort.as_str()));
+    }
+    if let Some(schema) = &req.json_schema {
+        output.insert(
+            "format".into(),
+            json!({ "type": "json_schema", "schema": closed_schema(schema) }),
+        );
+    }
+    if !output.is_empty() {
+        body.insert("output_config".into(), Value::Object(output));
     }
     if let Some(c) = req.clear_tool_results {
         // Results of Anthropic's own web search stay: they can't be fetched again cheaply.
@@ -331,6 +341,55 @@ pub(crate) async fn request_body(req: &ChatRequest) -> Result<Value, LlmError> {
     }
     body.insert("messages".into(), json!(messages));
     Ok(Value::Object(body))
+}
+
+/// A JSON Schema as Anthropic's structured outputs take it: every object closed
+/// (`additionalProperties: false`, which they require) and the constraint keywords they don't
+/// enforce left out.
+fn closed_schema(schema: &Value) -> Value {
+    const DROPPED: [&str; 8] = [
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+    ];
+    match schema {
+        Value::Object(map) => {
+            let mut out = Map::new();
+            for (k, v) in map {
+                if DROPPED.contains(&k.as_str()) {
+                    continue;
+                }
+                let v = match k.as_str() {
+                    // Maps of schemas: their values are schemas, their keys names.
+                    "properties" | "$defs" | "definitions" => match v {
+                        Value::Object(props) => Value::Object(
+                            props
+                                .iter()
+                                .map(|(name, s)| (name.clone(), closed_schema(s)))
+                                .collect(),
+                        ),
+                        other => other.clone(),
+                    },
+                    "items" | "anyOf" | "allOf" | "oneOf" | "not" => closed_schema(v),
+                    _ => v.clone(),
+                };
+                out.insert(k.clone(), v);
+            }
+            let is_object = out.get("type").and_then(Value::as_str) == Some("object")
+                || out.contains_key("properties");
+            if is_object {
+                out.insert("additionalProperties".into(), Value::Bool(false));
+            }
+            Value::Object(out)
+        }
+        Value::Array(list) => Value::Array(list.iter().map(closed_schema).collect()),
+        other => other.clone(),
+    }
 }
 
 fn ephemeral() -> Value {
@@ -1281,6 +1340,34 @@ mod tests {
         req.native_pdfs = false;
         let body = request_body(&req).await.expect("builds");
         assert_eq!(body["output_config"], json!({"effort": "low"}));
+        // Structured output: objects closed, unenforced constraints left out, beside effort.
+        req.json_schema = Some(json!({
+            "type": "object",
+            "properties": {
+                "files": {"type": "array", "maxItems": 9, "items": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string", "minLength": 1}},
+                }},
+            },
+            "required": ["files"],
+        }));
+        let body = request_body(&req).await.expect("builds");
+        assert_eq!(
+            body["output_config"],
+            json!({"effort": "low", "format": {"type": "json_schema", "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["files"],
+                "properties": {
+                    "files": {"type": "array", "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {"path": {"type": "string"}},
+                    }},
+                },
+            }}})
+        );
+        req.json_schema = None;
         assert!(body.get("context_management").is_none());
         req.clear_tool_results = Some(crate::ToolResultClearing {
             trigger_tokens: 150_000,

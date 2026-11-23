@@ -83,6 +83,10 @@ pub struct ChatRequest {
     /// Anthropic's own computer tool, sent instead of the `computer` function tool (which the
     /// caller leaves out of `tools`). Ignored by OpenAI-compatible servers.
     pub computer: Option<ComputerTool>,
+    /// Structured output: the answer must be JSON matching this JSON Schema. OpenAI-compatible
+    /// servers get it as `response_format` (`json_schema`; LM Studio and llama.cpp constrain
+    /// sampling with it), Anthropic as `output_config.format`.
+    pub json_schema: Option<Value>,
 }
 
 /// Which version of Anthropic's computer tool a model takes.
@@ -132,6 +136,7 @@ impl ChatRequest {
             native_pdfs: true,
             clear_tool_results: None,
             computer: None,
+            json_schema: None,
         }
     }
 }
