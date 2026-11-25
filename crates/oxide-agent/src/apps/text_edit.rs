@@ -142,6 +142,7 @@ impl AppRuntime {
                 break 'outcome None;
             }
             stage("edits", None);
+            tracing::info!(path = %path, chars = content.len(), "app edit: asking for edit blocks");
             let quiet: CallEvents = std::sync::Arc::new(|_| {});
             let ask = |messages: Value| {
                 media(json!({

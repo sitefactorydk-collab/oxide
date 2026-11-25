@@ -104,6 +104,95 @@ pub fn parse_json_answer(raw: &str) -> Result<Value, String> {
     })
 }
 
+/// Where one app request's time went, for `dev.log` (Phase 26 follow-up): how long the
+/// server took before the first token (reading the prompt), how long the model thought
+/// (thinking deltas before the answer) and how long it wrote, with the provider's token
+/// counts. Output tokens the stream didn't show as text or thinking are reported as hidden
+/// (a reasoning model whose thoughts the server doesn't stream).
+pub(super) struct RequestStats {
+    started: std::time::Instant,
+    first_token: Option<std::time::Instant>,
+    first_text: Option<std::time::Instant>,
+    thinking_chars: usize,
+    text_chars: usize,
+    pub(super) usage: oxide_core::Usage,
+}
+
+impl RequestStats {
+    pub(super) fn new() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            first_token: None,
+            first_text: None,
+            thinking_chars: 0,
+            text_chars: 0,
+            usage: oxide_core::Usage::default(),
+        }
+    }
+
+    pub(super) fn thinking(&mut self, t: &str) {
+        self.first_token.get_or_insert_with(std::time::Instant::now);
+        self.thinking_chars += t.chars().count();
+    }
+
+    pub(super) fn text(&mut self, t: &str) {
+        let now = std::time::Instant::now();
+        self.first_token.get_or_insert(now);
+        self.first_text.get_or_insert(now);
+        self.text_chars += t.chars().count();
+    }
+
+    /// The numbers, as `(field, value)` pairs in the order they are logged.
+    pub(super) fn summary(&self, end: std::time::Instant) -> Vec<(&'static str, String)> {
+        let secs = |a: std::time::Instant, b: std::time::Instant| {
+            format!("{:.1}", b.saturating_duration_since(a).as_secs_f64())
+        };
+        let first = self.first_token.unwrap_or(end);
+        let text_at = self.first_text.unwrap_or(end);
+        // Roughly four characters a token: what the stream showed.
+        let shown = (self.text_chars + self.thinking_chars).div_ceil(4);
+        let hidden = (self.usage.output_tokens as usize).saturating_sub(shown);
+        let writing = end.saturating_duration_since(first).as_secs_f64();
+        let per_second = if writing > 0.0 && self.usage.output_tokens > 0 {
+            format!("{:.1}", f64::from(self.usage.output_tokens) / writing)
+        } else {
+            "?".into()
+        };
+        vec![
+            ("total_s", secs(self.started, end)),
+            ("before_first_token_s", secs(self.started, first)),
+            ("thinking_s", secs(first, text_at)),
+            ("writing_s", secs(text_at, end)),
+            ("input_tokens", self.usage.input_tokens.to_string()),
+            (
+                "cached_input_tokens",
+                self.usage.cache_read_tokens.to_string(),
+            ),
+            ("output_tokens", self.usage.output_tokens.to_string()),
+            ("thinking_chars", self.thinking_chars.to_string()),
+            ("text_chars", self.text_chars.to_string()),
+            ("hidden_output_tokens_est", hidden.to_string()),
+            ("output_tokens_per_s", per_second),
+        ]
+    }
+
+    fn log(&self, model: &str, structured: bool, thinking_off: bool, stop: Option<StopReason>) {
+        let fields = self.summary(std::time::Instant::now());
+        let line = fields
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        tracing::info!(
+            model = %model,
+            structured,
+            thinking_off,
+            stop = ?stop,
+            "app request: {line}"
+        );
+    }
+}
+
 /// Why a JSON answer that hit the output limit can't be used, and what helps.
 fn cut_off(chars: usize) -> String {
     format!(
@@ -642,7 +731,11 @@ impl AppRuntime {
         let run = |request: ChatRequest, live: bool| {
             let provider = provider.clone();
             let events = events.clone();
+            let model_id = model_id.clone();
             async move {
+                let structured = request.json_schema.is_some();
+                let thinking_off = request.thinking == Thinking::Off;
+                let mut stats = RequestStats::new();
                 let mut s = provider
                     .stream(request)
                     .await
@@ -652,11 +745,14 @@ impl AppRuntime {
                 while let Some(ev) = s.next().await {
                     match ev.map_err(|e| failed(format!("The model couldn't answer: {e}")))? {
                         ChatEvent::TextDelta(t) => {
+                            stats.text(&t);
                             if live {
                                 events(json!({ "type": "delta", "text": t }));
                             }
                             text.push_str(&t);
                         }
+                        ChatEvent::ThinkingDelta(t) => stats.thinking(&t),
+                        ChatEvent::Usage(u) => stats.usage.merge(u),
                         ChatEvent::Stop(reason) => {
                             stop = Some(reason);
                             break;
@@ -664,6 +760,7 @@ impl AppRuntime {
                         _ => {}
                     }
                 }
+                stats.log(&model_id, structured, thinking_off, stop);
                 Ok::<(String, Option<StopReason>), AppCallError>((text, stop))
             }
         };
@@ -677,7 +774,6 @@ impl AppRuntime {
             }
             r => r?,
         };
-        tracing::info!(model = %model_id, chars = text.len(), stop = ?stop, "app text call");
         let Some(_) = json_mode else {
             // `truncated`: the answer stopped at the output limit (it may be incomplete).
             return Ok(json!({
@@ -850,6 +946,37 @@ mod tests {
         );
         assert!(parse_json_answer("no json here").is_err());
         assert!(parse_json_answer("  ").unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn request_stats_split_the_time_and_estimate_hidden_thinking() {
+        use std::time::Duration;
+        let mut st = RequestStats::new();
+        let t0 = st.started;
+        st.first_token = Some(t0 + Duration::from_secs(40));
+        st.first_text = Some(t0 + Duration::from_secs(100));
+        st.thinking_chars = 400;
+        st.text_chars = 1600;
+        st.usage = oxide_core::Usage {
+            input_tokens: 12_000,
+            output_tokens: 2_500,
+            cache_read_tokens: 8_000,
+            cache_write_tokens: 0,
+        };
+        let got: std::collections::HashMap<_, _> = st
+            .summary(t0 + Duration::from_secs(150))
+            .into_iter()
+            .collect();
+        assert_eq!(got["total_s"], "150.0");
+        assert_eq!(got["before_first_token_s"], "40.0");
+        assert_eq!(got["thinking_s"], "60.0");
+        assert_eq!(got["writing_s"], "50.0");
+        assert_eq!(got["input_tokens"], "12000");
+        assert_eq!(got["cached_input_tokens"], "8000");
+        // 2,000 characters shown ≈ 500 tokens; the other 2,000 weren't streamed.
+        assert_eq!(got["hidden_output_tokens_est"], "2000");
+        // 2,500 tokens in the 110 s after the first one.
+        assert_eq!(got["output_tokens_per_s"], "22.7");
     }
 
     #[test]
