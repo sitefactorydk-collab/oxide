@@ -121,6 +121,8 @@ Committed `bafa407` (every check green, 13:12). **Measured (the user's run, 13:1
 
 **Windows run 1 (`thinking-settings.cmd`, 14:14–14:16):** everything green except the new Vitest test (a test mistake: it looked for **Settings** in the editor, but the button is on the addon list). The test now switches the settings on the list, then opens the addon. Not committed; run `thinking-settings.cmd` again.
 
+**Windows run 2:** every check green; committed `b13a5b1` (14:22). **Measured (15:47–15:50, both thinking switches off):** the whole change took about 2.5 minutes (against ~3.3 with thinking on the plan, ~4.3 with thinking everywhere, ~12 this morning). Plan 31 s (26 s reading 17.6k input tokens, no thinking). `admin.php`: the blocks missed twice (one quote not in the file), so it was rewritten whole: 16 s + 8 s + 64 s (10.6k characters). `site.php`: one of two blocks applied, the retry fixed the other: 19 s + 12 s. Without thinking Gemma misquotes edit blocks more often; the retry and the rewrite fallback caught it, and the rewrite was the slowest step. Reading ~10k input tokens takes 1–13 s per request; writing ~52 tokens/s.
+
 ## Phase 25 — Plugin creator apps (SP Page Builder, Elementor) — 2026-11-22
 Status: **built**, waiting for the Windows run (`scripts\win\creator-apps.cmd`) and the manual checks.
 
