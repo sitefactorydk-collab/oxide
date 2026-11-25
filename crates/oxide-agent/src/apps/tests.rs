@@ -837,7 +837,10 @@ async fn ai_edit_applies_edit_blocks_retries_once_and_falls_back_to_a_rewrite() 
     assert_eq!(retry.len(), 3);
     assert_eq!(retry[1].role, Role::Assistant);
     let said = oxide_core::message::plain_text(&retry[2].content);
-    assert!(said.contains("couldn't be applied"), "{said}");
+    assert!(
+        said.contains("None of those edit blocks could be applied"),
+        "{said}"
+    );
     assert!(
         said.contains("return '';"),
         "the closest line is quoted: {said}"
@@ -868,4 +871,64 @@ async fn ai_edit_applies_edit_blocks_retries_once_and_falls_back_to_a_rewrite() 
     assert!(e.message.contains("cut off"), "{}", e.message);
     assert!(e.message.contains("wasn't changed"), "{}", e.message);
     assert_eq!(f.fake.requests().len(), 7);
+}
+
+#[tokio::test]
+async fn ai_edit_keeps_the_blocks_that_match_and_asks_only_about_the_rest() {
+    let file = "<?php\n$a = 1;\n$b = 2;\n$c = 3;\n";
+    let f = fixture(vec![
+        // Three blocks, the second invented: the other two are kept.
+        vec![text(
+            &json!({"edits": [
+                {"old": "$a = 1;", "new": "$a = 10;"},
+                {"old": "$zz = 9;", "new": "$zz = 99;"},
+                {"old": "$c = 3;", "new": "$c = 30;"}
+            ]})
+            .to_string(),
+        )],
+        // Asked only about the invented one, the model says nothing more is needed.
+        vec![text(r#"{"edits": []}"#)],
+        // Next call: one of two blocks applies, the missing part comes back corrected.
+        vec![text(
+            &json!({"edits": [
+                {"old": "$a = 1;", "new": "$a = 5;"},
+                {"old": "$b = 22;", "new": "$b = 6;"}
+            ]})
+            .to_string(),
+        )],
+        vec![text(
+            &json!({"edits": [{"old": "$b = 2;", "new": "$b = 6;"}]}).to_string(),
+        )],
+    ])
+    .await;
+    allow(&f, TABLE, &[AppCapability::Text]).await;
+    let call = |id: &'static str| {
+        f.runtime.call(
+            TABLE,
+            id,
+            "text.edit",
+            json!({ "path": "x.php", "content": file, "request": "change it" }),
+            quiet(),
+        )
+    };
+    let r = call("a").await.expect("kept");
+    assert_eq!(r["rewritten"], false);
+    assert_eq!(r["retried"], true);
+    assert_eq!(r["content"], "<?php\n$a = 10;\n$b = 2;\n$c = 30;\n");
+    assert_eq!(r["edits"].as_array().map(Vec::len), Some(2));
+    let reqs = f.fake.requests();
+    let asked = oxide_core::message::plain_text(&reqs[1].messages[2].content);
+    assert!(
+        asked.contains("2 of your 3 edit blocks were applied"),
+        "{asked}"
+    );
+    assert!(asked.contains("Edit 2: old wasn't found"), "{asked}");
+    // The file as it is now, with the applied blocks.
+    assert!(asked.contains("$a = 10;"), "{asked}");
+
+    let r = call("b").await.expect("completed");
+    assert_eq!(r["retried"], true);
+    assert_eq!(r["content"], "<?php\n$a = 5;\n$b = 6;\n$c = 3;\n");
+    assert_eq!(r["edits"].as_array().map(Vec::len), Some(2));
+    assert_eq!(f.fake.requests().len(), 4);
 }

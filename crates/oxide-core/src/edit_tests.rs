@@ -280,3 +280,30 @@ fn checkpoint_changes_list_added_changed_and_deleted_files() {
         ]
     );
 }
+
+#[test]
+fn what_matches_is_applied_and_the_rest_reported() {
+    let text = "a\nb\nc\n";
+    let (done, failed) = apply_what_matches(
+        text,
+        &[
+            Edit::new("a", "A"),
+            Edit::new("invented line", "x"),
+            Edit::new("c", "C"),
+        ],
+    );
+    let done = done.expect("two matched");
+    assert_eq!(done.text, "A\nb\nC\n");
+    assert_eq!(done.applied.len(), 2);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].index, 1);
+    assert_eq!(failed[0].total, 3);
+    assert!(failed[0].message("old").starts_with("Edit 2 of 3: "));
+
+    let (done, failed) = apply_what_matches(text, &[Edit::new("zzz", "y")]);
+    assert!(done.is_none());
+    assert_eq!(failed.len(), 1);
+    let (done, failed) = apply_what_matches(text, &[Edit::new("b", "B")]);
+    assert_eq!(done.expect("matched").text, "a\nB\nc\n");
+    assert!(failed.is_empty());
+}

@@ -265,6 +265,39 @@ function fileContent(text: string): string {
   return `${t}\n`;
 }
 
+/** The folder part of a relative path ("" at the top). */
+const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+
+/**
+ * The files an edit of `path` should see in full (as they are now: written versions count,
+ * new files included), and the names of the others: files in the same folder, top-level
+ * files and the plan's other files are related. Large files are named only.
+ */
+function relatedFiles(
+  path: string,
+  before: PluginFile[],
+  written: Map<string, string>,
+  steps: Array<{ path: string; action: string }>,
+): [PluginFile[], string[]] {
+  const planned = new Set(steps.filter((s) => s.action !== "delete").map((s) => s.path));
+  const now: PluginFile[] = before.map((b) => ({
+    ...b,
+    content: written.get(b.path) ?? b.content,
+  }));
+  for (const [p, c] of written) {
+    if (!now.some((f) => f.path === p)) now.push({ path: p, content: c, size: c.length });
+  }
+  const related: PluginFile[] = [];
+  const others: string[] = [];
+  for (const f of now) {
+    if (f.path === path) continue;
+    const near = dirOf(f.path) === dirOf(path) || !f.path.includes("/") || planned.has(f.path);
+    if (near && f.content !== null && f.content.length <= MAX_PROMPT_FILE) related.push(f);
+    else others.push(f.path);
+  }
+  return [related, others];
+}
+
 /** A relative path that stays inside the plugin's folder, or "" (no `..`, no leading `/`). */
 function cleanPath(path: string): string {
   return path
@@ -880,6 +913,11 @@ export function Workbench({ platform }: { platform: Platform }) {
     images: File[];
     label: string;
     fresh: boolean;
+    /**
+     * The prompt for editing one existing file: the plugin's related files in full and the
+     * others by name (a smaller request than `base`, which carries every file).
+     */
+    editBase?: (related: PluginFile[], others: string[]) => string;
   }): Promise<PlanRun> => {
     const controller = new AbortController();
     abort.current = controller;
@@ -947,15 +985,20 @@ export function Workbench({ platform }: { platform: Platform }) {
           result = "written";
         } else {
           // An existing file: edit blocks (or written whole when the plan says rewrite, or
-          // when the blocks don't apply). The model still sees the whole plugin.
+          // when the blocks don't apply). The request carries the files it relates to: those
+          // in the same folder, the top-level files and the plan's other files (as they are
+          // now); the rest are named.
           const current = written.get(step.path) ?? old.content;
+          const context = o.editBase
+            ? `${o.editBase(...relatedFiles(step.path, o.before, written, steps))}\n\n## The plan\n${planText}`
+            : planned;
           let r: Awaited<ReturnType<typeof ai.edit>>;
           try {
             r = await ai.edit({
               system,
               path: step.path,
               content: current,
-              context: planned,
+              context,
               request: EDIT_REQUEST(step),
               images,
               mode: step.action === "rewrite" ? "rewrite" : "edit",
@@ -1042,6 +1085,12 @@ export function Workbench({ platform }: { platform: Platform }) {
         folderName: open,
         before: current,
         base: P.changePrompt({ meta, files: sendable, request: asked }),
+        editBase: (related, others) =>
+          `${P.changePrompt({ meta, files: related, request: asked })}${
+            others.length
+              ? `\n\nThe plugin's other files (not shown here; don't change them in this step): ${others.join(", ")}`
+              : ""
+          }`,
         images: shots,
         label: `Changing ${meta.name}`,
         fresh: false,

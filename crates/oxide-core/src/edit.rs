@@ -233,8 +233,16 @@ impl EditError {
         } else {
             ""
         };
-        let body = match &self.kind {
-            EditErrorKind::NoEdits => return "No edits were given.".to_owned(),
+        if self.kind == EditErrorKind::NoEdits {
+            return "No edits were given.".to_owned();
+        }
+        format!("{which}{}{nothing}", self.detail(field))
+    }
+
+    /// Why this edit failed, without saying which edit it was.
+    pub fn detail(&self, field: &str) -> String {
+        match &self.kind {
+            EditErrorKind::NoEdits => "No edits were given.".to_owned(),
             EditErrorKind::EmptyOld => format!(
                 "{field} is empty. An empty {field} only works on an empty file; to replace a \
                  whole file, write it instead."
@@ -273,8 +281,7 @@ impl EditError {
                     quoted.join("\n")
                 )
             }
-        };
-        format!("{which}{body}{nothing}")
+        }
     }
 }
 
@@ -352,6 +359,37 @@ pub fn apply_edits(text: &str, edits: &[Edit]) -> Result<EditResult, EditError> 
         applied,
         ranges,
     })
+}
+
+/// Applies the edits that match and leaves out the ones that don't (each tried on the result
+/// of the ones before it). Returns the result of the matching edits (`None` when none
+/// matched) and why each other edit failed, numbered by its place in `edits`.
+pub fn apply_what_matches(text: &str, edits: &[Edit]) -> (Option<EditResult>, Vec<EditError>) {
+    let total = edits.len();
+    let mut current = text.to_owned();
+    let mut ok = Vec::new();
+    let mut failed = Vec::new();
+    for (index, edit) in edits.iter().enumerate() {
+        match apply_edits(&current, std::slice::from_ref(edit)) {
+            Ok(done) => {
+                current = done.text;
+                ok.push(edit.clone());
+            }
+            Err(e) => failed.push(EditError {
+                index,
+                total,
+                kind: e.kind,
+            }),
+        }
+    }
+    if ok.is_empty() {
+        return (None, failed);
+    }
+    // The same edits again in one pass: the same text, with ranges and summary for all of them.
+    match apply_edits(text, &ok) {
+        Ok(done) => (Some(done), failed),
+        Err(_) => (None, failed),
+    }
 }
 
 /// A place to replace: bytes `start..end` of the current text, and what goes there.

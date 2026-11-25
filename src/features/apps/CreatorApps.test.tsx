@@ -427,12 +427,23 @@ describe("the plugin creator apps", () => {
     expect(written).toBe(site.replace(before, after));
     expect(written.split("\r\n").filter((l, i) => l !== site.split("\r\n")[i])).toEqual([after]);
     const asked = sdk.ai.edit.mock.calls.map(
-      (c) => c[0] as { path: string; mode: string; content: string },
+      (c) => c[0] as { path: string; mode: string; content: string; context: string },
     );
     expect(asked.map((a) => [a.path, a.mode])).toEqual([
       ["addons/c10faq/site.php", "edit"],
       ["addons/c10faq/admin.php", "edit"],
     ]);
+    // A smaller request: the related files in full (same folder, top level), the file being
+    // edited only once (as `content`), the others by name.
+    const ctx = asked[0]?.context ?? "";
+    expect(ctx).toContain("--- FILE: addons/c10faq/admin.php ---");
+    expect(ctx).toContain("--- FILE: c10faq.xml ---");
+    expect(ctx).not.toContain("--- FILE: addons/c10faq/site.php ---");
+    expect(ctx).not.toContain("--- FILE: services/provider.php ---");
+    expect(ctx).toMatch(/other files \(not shown here[^)]*\): .*services\/provider\.php/);
+    expect(ctx).toContain("## The plan");
+    // The second edit sees the first one's result.
+    expect(asked[1]?.context).toContain(after);
 
     await act(async () => finish(edited("<?php // rewritten admin\n", 0, true)));
     expect(await screen.findByText("Added a subtitle.")).toBeInTheDocument();

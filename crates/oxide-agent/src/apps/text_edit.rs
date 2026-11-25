@@ -5,7 +5,7 @@
 //! quotes the closest lines) for corrected blocks; as the last resort the model writes the
 //! whole file as plain text, which is refused when the answer was cut off.
 
-use oxide_core::edit::{Edit, EditResult, apply_edits};
+use oxide_core::edit::{Edit, EditResult, apply_edits, apply_what_matches};
 use oxide_core::{AppCallError, AppManifest, AppPrefs};
 use serde_json::{Value, json};
 
@@ -172,64 +172,106 @@ impl AppRuntime {
             if edits.is_empty() {
                 break 'outcome Some(Ok(Outcome::NoChange));
             }
-            match apply_edits(&content, &edits) {
-                Ok(done) => {
-                    break 'outcome Some(Ok(Outcome::Edited {
-                        done,
-                        edits,
-                        retried: false,
-                    }));
+            // Blocks that match are kept; only the others go back to the model.
+            let (partial, failed) = apply_what_matches(&content, &edits);
+            if failed.is_empty()
+                && let Some(done) = partial
+            {
+                break 'outcome Some(Ok(Outcome::Edited {
+                    done,
+                    edits,
+                    retried: false,
+                }));
+            }
+            let kept: Vec<Edit> = edits
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !failed.iter().any(|f| f.index == *i))
+                .map(|(_, e)| e.clone())
+                .collect();
+            let why = failed
+                .iter()
+                .map(|f| format!("Edit {}: {}", f.index + 1, f.detail("old")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            tracing::info!(path = %path, kept = kept.len(), failed = failed.len(), "app edit blocks didn't all apply; asking about the rest");
+            stage("retry", Some(&why));
+            let now = partial.as_ref().map_or(content.clone(), |d| d.text.clone());
+            let answer = first
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let ask_again = if kept.is_empty() {
+                format!(
+                    "None of those edit blocks could be applied, so the file is unchanged:\n{why}\n\n\
+                     Answer again with the corrected JSON: the edit blocks for the whole change, \
+                     each `old` copied exactly from the file as given above. Leave out a block \
+                     whose text isn't in the file because that part needs no change."
+                )
+            } else {
+                format!(
+                    "{} of your {} edit blocks were applied. These didn't apply:\n{why}\n\n\
+                     The file now, with the applied blocks, is below. Answer with JSON holding \
+                     edit blocks only for what is still missing, each `old` copied exactly from \
+                     this version. Leave out a block whose text isn't in the file because that \
+                     part needs no change; answer {{\"edits\": []}} if nothing more is needed.\n\n\
+                     <file path=\"{path}\">\n{now}\n</file>",
+                    kept.len(),
+                    edits.len()
+                )
+            };
+            let retry_messages = json!([
+                { "role": "user", "content": prompt },
+                { "role": "assistant", "content": answer },
+                { "role": "user", "content": ask_again },
+            ]);
+            let second = match self
+                .text(manifest, prefs, &ask(retry_messages), quiet)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    break 'outcome Some(Err(format!(
+                        "the corrected edit blocks couldn't be read ({})",
+                        e.message
+                    )));
                 }
-                Err(err) => {
-                    let why = err.message("old");
-                    tracing::info!(path = %path, error = %why, "app edit blocks didn't apply; asking again");
-                    stage("retry", Some(&why));
-                    let answer = first
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned();
-                    let retry_messages = json!([
-                        { "role": "user", "content": prompt },
-                        { "role": "assistant", "content": answer },
-                        { "role": "user", "content": format!(
-                            "Those edit blocks couldn't be applied, so the file is unchanged: \
-                             {why}\nAnswer again with the corrected JSON: all the edit blocks for \
-                             the whole change, each `old` copied exactly from the file as given \
-                             above."
-                        )},
-                    ]);
-                    let second = match self
-                        .text(manifest, prefs, &ask(retry_messages), quiet)
-                        .await
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            break 'outcome Some(Err(format!(
-                                "the corrected edit blocks couldn't be read ({})",
-                                e.message
-                            )));
-                        }
-                    };
-                    let edits = match edits_of(&second["json"]) {
-                        Ok(e) => e,
-                        Err(e) => break 'outcome Some(Err(e)),
-                    };
-                    if edits.is_empty() {
-                        break 'outcome Some(Ok(Outcome::NoChange));
-                    }
-                    match apply_edits(&content, &edits) {
+            };
+            let more = match edits_of(&second["json"]) {
+                Ok(e) => e,
+                Err(e) => break 'outcome Some(Err(e)),
+            };
+            if more.is_empty() {
+                // Nothing more is needed: the blocks that applied are the change.
+                break 'outcome Some(Ok(match partial {
+                    Some(done) => Outcome::Edited {
+                        done,
+                        edits: kept,
+                        retried: true,
+                    },
+                    None => Outcome::NoChange,
+                }));
+            }
+            match apply_edits(&now, &more) {
+                Ok(_) => {
+                    let all: Vec<Edit> = kept.into_iter().chain(more).collect();
+                    match apply_edits(&content, &all) {
                         Ok(done) => Some(Ok(Outcome::Edited {
                             done,
-                            edits,
+                            edits: all,
                             retried: true,
                         })),
                         Err(err) => Some(Err(format!(
-                            "the corrected edit blocks didn't apply either: {}",
+                            "the edit blocks didn't apply together: {}",
                             err.message("old")
                         ))),
                     }
                 }
+                Err(err) => Some(Err(format!(
+                    "the corrected edit blocks didn't apply either: {}",
+                    err.message("old")
+                ))),
             }
         };
 

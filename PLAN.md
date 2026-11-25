@@ -588,7 +588,7 @@ Requested by the user on 2026-11-23, after asking how the plugin creator apps ch
 3. In the SP Page Builder Addon Creator with Gemma 4 12B (LM Studio), "add a subtitle field" on the user's `c10faq` addon edits `admin.php` and `site.php` with edit blocks, in a fraction of the time a full rewrite took, and the progress list says so. A change that rewrites most of a file falls back to a full rewrite.
 4. The app builder and an artifact update use edit blocks too.
 
-*Built 2026-11-25* (see PROGRESS.md). Deviations: a “trimmed” matching level (kept from the old artifact matcher); `old == new` is an error; the builder's checkpoints show changed files with +/− line counts (full diffs are in the builder chat's tool lines); `save_skill` keeps whole files (its card already shows a diff); `ai.edit` also takes `context`, `mode: "rewrite"` and `onStage`.
+*Done 2026-11-25* (see PROGRESS.md; `8ecb103`, every manual check passed). Deviations: a “trimmed” matching level (kept from the old artifact matcher); `old == new` is an error; the builder's checkpoints show changed files with +/− line counts (full diffs are in the builder chat's tool lines); `save_skill` keeps whole files (its card already shows a diff); `ai.edit` also takes `context`, `mode: "rewrite"` and `onStage`.
 
 ---
 
