@@ -1,6 +1,6 @@
 //! The Utility App builder's chats and checkpoints (Phase 21).
 
-use oxide_core::{AppCheckpoint, CheckpointKind, MAX_APP_CHECKPOINTS, Message};
+use oxide_core::{AppCheckpoint, CheckpointChange, CheckpointKind, MAX_APP_CHECKPOINTS, Message};
 use sqlx::Row;
 
 use crate::{Result, Store, StoreError, new_id, now_ms};
@@ -85,6 +85,7 @@ impl Store {
 
     /// Adds a checkpoint unless the newest one has the same digest. `files` is the JSON of
     /// the draft's files. Keeps the newest [`MAX_APP_CHECKPOINTS`].
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_app_checkpoint(
         &self,
         app_id: &str,
@@ -93,6 +94,7 @@ impl Store {
         file_count: u32,
         files: &str,
         digest: &str,
+        changes: &[CheckpointChange],
     ) -> Result<Option<AppCheckpoint>> {
         let newest: Option<String> = sqlx::query_scalar(
             "SELECT digest FROM app_checkpoints WHERE app_id = ? ORDER BY seq DESC LIMIT 1",
@@ -110,12 +112,13 @@ impl Store {
             kind,
             files: file_count,
             created_at: now_ms(),
+            changes: changes.to_vec(),
         };
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO app_checkpoints
-                 (id, app_id, label, kind, file_count, files, digest, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 (id, app_id, label, kind, file_count, files, digest, created_at, changes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&cp.id)
         .bind(app_id)
@@ -125,6 +128,7 @@ impl Store {
         .bind(files)
         .bind(digest)
         .bind(cp.created_at)
+        .bind(serde_json::to_string(changes).unwrap_or_else(|_| "[]".into()))
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -143,7 +147,7 @@ impl Store {
     /// An app's checkpoints, newest first.
     pub async fn app_checkpoints(&self, app_id: &str) -> Result<Vec<AppCheckpoint>> {
         let rows = sqlx::query(
-            "SELECT id, app_id, label, kind, file_count, created_at FROM app_checkpoints
+            "SELECT id, app_id, label, kind, file_count, created_at, changes FROM app_checkpoints
              WHERE app_id = ? ORDER BY seq DESC",
         )
         .bind(app_id)
@@ -158,9 +162,21 @@ impl Store {
                     kind: CheckpointKind::parse(&r.try_get::<String, _>("kind")?),
                     files: u32::try_from(r.try_get::<i64, _>("file_count")?).unwrap_or(0),
                     created_at: r.try_get("created_at")?,
+                    changes: serde_json::from_str(&r.try_get::<String, _>("changes")?)
+                        .unwrap_or_default(),
                 })
             })
             .collect()
+    }
+
+    /// The newest checkpoint's files (JSON), if the app has one.
+    pub async fn newest_app_checkpoint_files(&self, app_id: &str) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT files FROM app_checkpoints WHERE app_id = ? ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(app_id)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     /// A checkpoint's app id and files (JSON).
@@ -247,22 +263,30 @@ mod tests {
     async fn checkpoints_skip_repeats_keep_the_newest_and_return_their_files() {
         let s = store().await;
         let a = s
-            .add_app_checkpoint("a", "Start", CheckpointKind::Start, 2, "[1]", "d1")
+            .add_app_checkpoint("a", "Start", CheckpointKind::Start, 2, "[1]", "d1", &[])
             .await
             .expect("add")
             .expect("made");
         assert!(
-            s.add_app_checkpoint("a", "same", CheckpointKind::Model, 2, "[1]", "d1")
+            s.add_app_checkpoint("a", "same", CheckpointKind::Model, 2, "[1]", "d1", &[])
                 .await
                 .expect("add")
                 .is_none()
         );
-        s.add_app_checkpoint("b", "Other app", CheckpointKind::Start, 1, "[9]", "d1")
+        s.add_app_checkpoint("b", "Other app", CheckpointKind::Start, 1, "[9]", "d1", &[])
             .await
             .expect("add")
             .expect("made");
         let second = s
-            .add_app_checkpoint("a", "After: blue", CheckpointKind::Model, 3, "[2]", "d2")
+            .add_app_checkpoint(
+                "a",
+                "After: blue",
+                CheckpointKind::Model,
+                3,
+                "[2]",
+                "d2",
+                &[],
+            )
             .await
             .expect("add")
             .expect("made");
@@ -278,9 +302,17 @@ mod tests {
             ("a".to_owned(), "[1]".to_owned())
         );
         for i in 0..70 {
-            s.add_app_checkpoint("a", "n", CheckpointKind::Manual, 1, "[]", &format!("x{i}"))
-                .await
-                .expect("add");
+            s.add_app_checkpoint(
+                "a",
+                "n",
+                CheckpointKind::Manual,
+                1,
+                "[]",
+                &format!("x{i}"),
+                &[],
+            )
+            .await
+            .expect("add");
         }
         assert_eq!(
             s.app_checkpoints("a").await.expect("list").len(),

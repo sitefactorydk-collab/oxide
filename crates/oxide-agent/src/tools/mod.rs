@@ -8,6 +8,7 @@
 pub mod browser;
 pub mod chrome;
 pub mod computer;
+pub mod edits;
 pub mod files;
 pub mod html;
 pub mod python;

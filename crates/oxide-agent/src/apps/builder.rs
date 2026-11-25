@@ -231,7 +231,8 @@ pub fn builder_entry(op: BuilderOp) -> ToolEntry {
         BuilderOp::Write => (
             "Write app file",
             "Create a file of the app or replace it with the given content (the whole file). \
-             Folders are made as needed. Prefer app_edit_file for small changes. The Preview \
+             Folders are made as needed. Use it for new files or when most of a file \
+             changes; use app_edit_file for other changes. The Preview \
              reloads after each change.",
             json!({"type": "object", "properties": {
                 "path": path,
@@ -240,14 +241,16 @@ pub fn builder_entry(op: BuilderOp) -> ToolEntry {
         ),
         BuilderOp::Edit => (
             "Edit app file",
-            "Replace text in one of the app's files. `old_text` must appear exactly once \
-             (include a few lines around the change), unless `replace_all` is true.",
+            "Change parts of one of the app's files with edit blocks: each replaces an exact \
+             passage (`old_text`, copied from the file with a few lines around the change so \
+             it is found once, unless `replace_all`) with `new_text`. Several edits in one call \
+             apply in order, all or nothing; the rest of the file stays the same. Read the file \
+             first. If an edit fails, the error quotes the closest lines: correct `old_text` \
+             and try again.",
             json!({"type": "object", "properties": {
                 "path": path,
-                "old_text": {"type": "string"},
-                "new_text": {"type": "string"},
-                "replace_all": {"type": "boolean"}
-            }, "required": ["path", "old_text", "new_text"]}),
+                "edits": crate::tools::edits::edits_schema("old_text", "new_text", "the file")
+            }, "required": ["path", "edits"]}),
         ),
         BuilderOp::Delete => (
             "Delete app file",
@@ -683,9 +686,16 @@ impl AppBuilder {
     ) -> Result<Option<AppCheckpoint>, AgentError> {
         let (json, digest) = snapshot(files);
         let count = u32::try_from(files.len()).unwrap_or(u32::MAX);
+        // What changed since the newest checkpoint, for the Checkpoints menu.
+        let changes = match self.store().newest_app_checkpoint_files(id).await? {
+            Some(prev) => unsnapshot(&prev)
+                .map(|before| oxide_core::checkpoint_changes(&before, files))
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
         Ok(self
             .store()
-            .add_app_checkpoint(id, label, kind, count, &json, &digest)
+            .add_app_checkpoint(id, label, kind, count, &json, &digest, &changes)
             .await?)
     }
 
@@ -1065,51 +1075,20 @@ impl AppBuilder {
                 }
                 BuilderOp::Edit => {
                     let p = path()?;
-                    let old = s("old_text").ok_or_else(|| invalid("Give the `old_text`."))?;
-                    let new = s("new_text").unwrap_or("");
-                    if old.is_empty() {
-                        return Err(invalid("`old_text` is empty."));
-                    }
+                    let edits = crate::tools::edits::parse_edits(input, "old_text", "new_text")
+                        .map_err(invalid)?;
                     let bytes = self.read(id, &p).await?;
                     let current = String::from_utf8(bytes)
                         .map_err(|_| invalid(format!("{p} isn't a text file.")))?;
-                    let all = input.get("replace_all").and_then(Value::as_bool) == Some(true);
-                    // Files may have Windows line ends while the model writes "\n".
-                    let (hay, needle, replacement) = if !current.contains(old)
-                        && current.contains("\r\n")
-                        && !old.contains('\r')
-                    {
-                        (
-                            current.replace("\r\n", "\n"),
-                            old.to_owned(),
-                            new.to_owned(),
-                        )
-                    } else {
-                        (current.clone(), old.to_owned(), new.to_owned())
-                    };
-                    let n = hay.matches(&needle).count();
-                    if n == 0 {
-                        return Err(invalid(format!(
-                            "`old_text` isn't in {p}. Read the file and copy the text exactly."
-                        )));
-                    }
-                    if n > 1 && !all {
-                        return Err(invalid(format!(
-                            "`old_text` appears {n} times in {p}. Include more lines around it, \
-                             or set replace_all."
-                        )));
-                    }
-                    let next = if all {
-                        hay.replace(&needle, &replacement)
-                    } else {
-                        hay.replacen(&needle, &replacement, 1)
-                    };
-                    self.write(id, &p, next.into_bytes()).await?;
+                    let done = oxide_core::edit::apply_edits(&current, &edits).map_err(|e| {
+                        invalid(format!("{} {p} wasn't changed.", e.message("old_text")))
+                    })?;
+                    self.write(id, &p, done.text.clone().into_bytes()).await?;
                     self.sink().draft_changed(id);
                     Ok(text(format!(
-                        "Edited {p} ({} replacement{}).",
-                        if all { n } else { 1 },
-                        if all && n != 1 { "s" } else { "" }
+                        "Edited {p}: {}\n\n{}",
+                        done.summary(),
+                        done.excerpt(crate::tools::files::EDIT_EXCERPT_LINES)
                     )))
                 }
                 BuilderOp::Delete => {
@@ -1229,8 +1208,11 @@ impl AppBuilder {
                `canvas.toBlob` to `files.save`. Don't tell the user something can't be done \
                before trying it with these.\n\n\
              ## How to work\n\
-             - Read a file before changing it. Use app_edit_file for small changes and \
-               app_write_file for new files or rewrites. Keep the manifest's id.\n\
+             - Read a file before changing it. Change existing files with app_edit_file's \
+               edit blocks (exact passages and their replacements, several per call), so only \
+               those parts change; use app_write_file for new files or when most of a file \
+               changes. When an edit isn't found, the error quotes the closest lines: copy \
+               the text from there. Keep the manifest's id.\n\
              - After changes, call app_preview_status and fix every error it reports before \
                you finish. Use app_screenshot when the look matters.\n\
              - Give the app a fitting name, description, icon and category \

@@ -2275,7 +2275,11 @@ label: string; kind: CheckpointKind;
 /**
  * Files in this version.
  */
-files: number; createdAt: number }
+files: number; createdAt: number; 
+/**
+ * What changed since the checkpoint before it (empty for the first one).
+ */
+changes?: CheckpointChange[] }
 /**
  * An app open in the builder.
  */
@@ -2861,6 +2865,10 @@ export type ChatWorkspace = { folders: ChatFolder[];
  * `delete_file` deletes for good. Off: it moves things into `_to_delete`.
  */
 allowDelete: boolean }
+/**
+ * One file's change between two checkpoints, in lines.
+ */
+export type CheckpointChange = { path: string; kind: FileChangeKind; added: number; removed: number }
 /**
  * What made a checkpoint.
  */
@@ -3617,6 +3625,10 @@ export type ExtensionValue = boolean | number | string[] | string
  * A rating with an optional note ("what went wrong").
  */
 export type Feedback = { rating: Rating; note: string | null; createdAt: number }
+/**
+ * How one file changed between two checkpoints.
+ */
+export type FileChangeKind = "added" | "changed" | "deleted"
 /**
  * Per-request options chosen in the composer.
  */

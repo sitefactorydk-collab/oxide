@@ -128,7 +128,11 @@ interface HistoryEntry {
   changed: string[];
 }
 
-/** The model's plan: what to write, before any file is written. */
+/**
+ * The model's plan: what to write, before any file is written. Existing files are changed
+ * with edit blocks ("edit": small, local changes) or written whole ("rewrite": most of the
+ * file changes); new files are written whole.
+ */
 interface PlanAnswer {
   summary?: string;
   files?: Array<{ path?: unknown; action?: unknown; purpose?: unknown }>;
@@ -137,11 +141,15 @@ interface PlanAnswer {
 /** One file of the plan while it is carried out. */
 interface PlanStep {
   path: string;
-  action: "create" | "update" | "delete";
+  action: "create" | "edit" | "rewrite" | "delete";
   purpose: string;
   status: "pending" | "writing" | "done" | "failed";
   /** Characters written so far (streamed). */
   chars: number;
+  /** While writing: what is happening (“edit blocks”, “retrying”, “rewriting”). */
+  stage?: string;
+  /** Once done: what was done (“edited (2 changes)”, “rewritten (fallback)”). */
+  result?: string;
 }
 
 /** The model at work: planning (no steps yet), then writing file by file. */
@@ -154,7 +162,10 @@ interface Working {
 /** What a planned change did: the files written (in order), the undo, and why it stopped. */
 interface PlanRun {
   summary: string;
+  /** The paths written (deletions as “path (deleted)”). */
   changed: string[];
+  /** The same with what was done to each, for the history (“path (edited, 2 changes)”). */
+  labels: string[];
   undo: Undo;
   error: unknown;
 }
@@ -208,7 +219,7 @@ const PLAN_SCHEMA = {
         type: "object",
         properties: {
           path: { type: "string" },
-          action: { type: "string", enum: ["create", "update", "delete"] },
+          action: { type: "string", enum: ["create", "edit", "rewrite", "delete"] },
           purpose: { type: "string" },
         },
         required: ["path", "action", "purpose"],
@@ -229,11 +240,15 @@ Don't write any code yet. ${
   fresh
     ? "List every file the plugin needs, in the order they should be written (the manifest or main file first)."
     : "List only the files to create, update or delete for this change, in the order they should be written."
-} For each file give "path" (relative to the plugin's folder), "action" ("create", "update" or "delete") and "purpose": what goes in the file (for an update: what changes in it), naming what other files rely on (classes, functions, settings keys, CSS classes, language keys). The files are written one by one afterwards, each from this plan, so make it precise. "summary" says in one to three sentences what you will do, in the user's language.
-Answer with JSON only: {"summary": "…", "files": [{"path": "…", "action": "create", "purpose": "…"}]}.`;
+} For each file give "path" (relative to the plugin's folder), "action" and "purpose": what goes in the file (for a change: exactly what changes in it), naming what other files rely on (classes, functions, settings keys, CSS classes, language keys). Actions: "create" for a new file (written whole); for an existing file "edit" when only some parts change (they are changed with edit blocks and the rest stays as it is; prefer this) or "rewrite" when most of the file changes (written whole); "delete" to remove a file. The files are handled one by one afterwards, each from this plan, so make it precise. "summary" says in one to three sentences what you will do, in the user's language.
+Answer with JSON only: {"summary": "…", "files": [{"path": "…", "action": "edit", "purpose": "…"}]}.`;
+
+/** The request for one existing file, changed through `ai.edit`. */
+const EDIT_REQUEST = (step: PlanStep) =>
+  `Change ${step.path} as the plan says: ${step.purpose}. Keep it consistent with the plugin's other files and the files already changed in this step (the same names, keys and classes).`;
 
 const FILE_RULES = (step: PlanStep) => `## Now write one file
-Write the complete ${step.action === "update" ? "new version of" : "content of"} ${step.path} (${step.purpose}). Follow the plan and the instructions, and keep it consistent with the plugin's other files and the files already written in this step (the same names, keys and classes). Answer with the file's content only: no Markdown code fences, no explanations before or after.`;
+Write the complete ${step.action === "rewrite" ? "new version of" : "content of"} ${step.path} (${step.purpose}). Follow the plan and the instructions, and keep it consistent with the plugin's other files and the files already written in this step (the same names, keys and classes). Answer with the file's content only: no Markdown code fences, no explanations before or after.`;
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -447,8 +462,17 @@ function Progress({ working, onStop }: { working: Working; onStop: () => void })
               <span className="min-w-0 flex-1 truncate">
                 {s.action === "delete" ? `delete ${s.path}` : s.path}
               </span>
-              {s.chars > 0 && (
-                <span className="shrink-0 text-neutral-400">{formatSize(s.chars)}</span>
+              {s.status === "done" && s.result ? (
+                <span className="shrink-0 text-neutral-500">{s.result}</span>
+              ) : (
+                <>
+                  {s.status === "writing" && s.stage && (
+                    <span className="shrink-0 text-neutral-400">{s.stage}</span>
+                  )}
+                  {s.chars > 0 && (
+                    <span className="shrink-0 text-neutral-400">{formatSize(s.chars)}</span>
+                  )}
+                </>
               )}
             </li>
           ))}
@@ -824,11 +848,19 @@ export function Workbench({ platform }: { platform: Platform }) {
       if (path.startsWith(prefix)) path = path.slice(prefix.length);
       if (!path || SKIPPED.test(path) || steps.some((s) => s.path === path)) continue;
       const old = before.find((b) => b.path === path);
-      let action: PlanStep["action"] = f.action === "delete" ? "delete" : old ? "update" : "create";
+      // An existing file is edited unless the plan says rewrite ("update" from older plans
+      // counts as edit); a missing one is created.
+      const action: PlanStep["action"] =
+        f.action === "delete"
+          ? "delete"
+          : !old
+            ? "create"
+            : f.action === "rewrite"
+              ? "rewrite"
+              : "edit";
       if (action === "delete" && !old) continue;
       // Binary files (images, fonts) are kept: the model writes text.
       if (old && old.content === null) continue;
-      if (action !== "delete" && !old) action = "create";
       const purpose = typeof f.purpose === "string" ? f.purpose.trim() : "";
       steps.push({ path, action, purpose, status: "pending", chars: 0 });
       if (steps.length >= MAX_PLAN_FILES) break;
@@ -858,6 +890,7 @@ export function Workbench({ platform }: { platform: Platform }) {
     const run: PlanRun = {
       summary: "",
       changed: [],
+      labels: [],
       undo: { folderName: o.folderName, before: [] },
       error: null,
     };
@@ -887,33 +920,85 @@ export function Workbench({ platform }: { platform: Platform }) {
         if (step.action === "delete") continue;
         show(i, { status: "writing", chars: 0 });
         const sofar = [...written].map(([p, c]) => `--- FILE: ${p} ---\n${c}`).join("\n\n");
-        const r = await ai.text({
-          system,
-          prompt: `${o.base}\n\n## The plan\n${planText}${
-            sofar
-              ? `\n\n## Files already written in this step (these versions count)\n${sofar}`
-              : ""
-          }\n\n${FILE_RULES(step)}`,
-          images,
-          maxTokens: FILE_TOKENS,
-          signal,
-          onText: (_delta, all) => show(i, { chars: all.length }),
-        });
-        const content = fileContent(r.text);
-        if (r.truncated || !content.trim()) {
-          show(i, { status: "failed" });
-          throw new Error(
-            r.truncated
-              ? `${step.path} was cut off at the model's output limit (${r.text.length} characters). Ask for it in smaller parts, or use a model with a larger context.`
-              : `The model wrote nothing for ${step.path}.`,
-          );
-        }
+        const planned = `${o.base}\n\n## The plan\n${planText}${
+          sofar ? `\n\n## Files already written in this step (these versions count)\n${sofar}` : ""
+        }`;
         const old = o.before.find((b) => b.path === step.path);
+        let content: string;
+        let result: string;
+        if (step.action === "create" || !old || old.content === null) {
+          const r = await ai.text({
+            system,
+            prompt: `${planned}\n\n${FILE_RULES(step)}`,
+            images,
+            maxTokens: FILE_TOKENS,
+            signal,
+            onText: (_delta, all) => show(i, { chars: all.length }),
+          });
+          content = fileContent(r.text);
+          if (r.truncated || !content.trim()) {
+            show(i, { status: "failed" });
+            throw new Error(
+              r.truncated
+                ? `${step.path} was cut off at the model's output limit (${r.text.length} characters). Ask for it in smaller parts, or use a model with a larger context.`
+                : `The model wrote nothing for ${step.path}.`,
+            );
+          }
+          result = "written";
+        } else {
+          // An existing file: edit blocks (or written whole when the plan says rewrite, or
+          // when the blocks don't apply). The model still sees the whole plugin.
+          const current = written.get(step.path) ?? old.content;
+          let r: Awaited<ReturnType<typeof ai.edit>>;
+          try {
+            r = await ai.edit({
+              system,
+              path: step.path,
+              content: current,
+              context: planned,
+              request: EDIT_REQUEST(step),
+              images,
+              mode: step.action === "rewrite" ? "rewrite" : "edit",
+              maxTokens: FILE_TOKENS,
+              signal,
+              onStage: (stage) =>
+                show(i, {
+                  stage:
+                    stage === "edits"
+                      ? "edit blocks"
+                      : stage === "retry"
+                        ? "retrying"
+                        : "rewriting",
+                }),
+              onText: (_delta, all) => show(i, { chars: all.length }),
+            });
+          } catch (e) {
+            show(i, { status: "failed" });
+            if ((e as { code?: string })?.code === "cancelled") throw e;
+            throw new Error(`${step.path}: ${message(e)}`);
+          }
+          if (!r.changed) {
+            show(i, { status: "done", result: "no change needed" });
+            continue;
+          }
+          content = r.content;
+          const n = r.edits.length;
+          result = r.rewritten
+            ? step.action === "rewrite"
+              ? "rewritten"
+              : "rewritten (fallback)"
+            : `edited (${n} change${n === 1 ? "" : "s"})`;
+        }
         run.undo.before.push({ path: step.path, content: old ? old.content : null });
         await folder.write(`${o.folderName}/${step.path}`, content);
         written.set(step.path, content);
         run.changed.push(step.path);
-        show(i, { status: "done", chars: content.length });
+        run.labels.push(
+          result === "written"
+            ? step.path
+            : `${step.path} (${result.replace(/ \((.*)\)$/, ", $1")})`,
+        );
+        show(i, { status: "done", chars: content.length, result });
       }
       for (const [i, step] of steps.entries()) {
         if (step.action !== "delete") continue;
@@ -921,6 +1006,7 @@ export function Workbench({ platform }: { platform: Platform }) {
         run.undo.before.push({ path: step.path, content: old ? old.content : null });
         await folder.delete(`${o.folderName}/${step.path}`);
         run.changed.push(`${step.path} (deleted)`);
+        run.labels.push(`${step.path} (deleted)`);
         show(i, { status: "done" });
       }
     } catch (e) {
@@ -968,7 +1054,7 @@ export function Workbench({ platform }: { platform: Platform }) {
           summary:
             [r.summary, failure ? `(${failure})` : ""].filter(Boolean).join(" ") ||
             "Changed the files.",
-          changed: r.changed,
+          changed: r.labels,
         });
         setUndo(r.undo);
         setLastChanged(r.changed);
@@ -1035,7 +1121,7 @@ export function Workbench({ platform }: { platform: Platform }) {
       summary: [r.summary || `Made ${name}.`, failure ? `(${failure})` : ""]
         .filter(Boolean)
         .join(" "),
-      changed: r.changed,
+      changed: r.labels,
     });
     await scan();
     await openEditor(folderName);

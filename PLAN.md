@@ -57,6 +57,7 @@ This file is the single source of truth. Each phase below is sized to fit in **o
 | Utility App builder | A draft per app in `<app data>\app-drafts\<id>` (Preview and Code show it; **Save to Utility Apps** copies it over the saved app), its builder chat an ordinary chat hidden from the chat list and search (`app_builder_chats`) with builder tools confined to the draft (`oxide-agent/src/apps/builder.rs`), checkpoints as whole copies in SQLite (`app_checkpoints`, 60 per app), the Preview calling the SDK as `draft:<id>` with the app's grants, screenshots drawn by the frame (DOM → SVG → PNG), the SDK's types for the model generated into `src/appframe/oxide-sdk.d.ts` (`npm run sdk-types`), Oxide's own Shiki-highlighted code editor (Phase 21) |
 | Utility Apps' folders | The `folder` capability: one folder per app, picked with the system's folder picker in Rust (`choose_app_folder`), which also grants it; stored in `AppPrefs.folder`; relative paths resolved like the file tools'; Oxide's data, config and log folders never reachable (Phase 25) |
 | Permission modes | **Manual** (ask, as before) and **Auto** per chat, picked in the composer. Auto lets reads, Allow-always grants and changes inside granted folders run, always asks for permanent deletes, computer use, paid generation and skills, and sends the rest to a safety-check model that sees only the user's messages and the tool calls (no assistant text, no tool results), two-stage and fail-closed; a stop shows the approval card with the reason (Phase 23) |
+| Edit blocks | One engine, `oxide_core::edit::apply_edits` (exact → line endings → trimmed → trailing whitespace → indentation; one match unless `replace_all`; all or nothing; errors quote the closest lines). Used by `edit_file`, `app_edit_file`, the artifact tool's `update` and the SDK's `ai.edit` (`text.edit`: edit blocks as structured output, one corrected retry, then a whole-file rewrite). Arguments read by `oxide-agent/src/tools/edits.rs` (Phase 26) |
 | Tool history | A reply's consecutive tool calls and the thinking between them fold into one group (`features/tools/toolGroups.ts`): a muted summary line built from the calls' kinds and counts (i18n keys `toolsum.*`), opening to a box of compact rows. Artifacts, generated media, computer use, the browser's screenshots, Python's charts and approval cards stay visible. Settings → Appearance → Show tool steps (`appearance.toolSteps`: collapsed / expanded) (Phase 24) |
 | Location | `C:\AI Apps\Oxide` |
 
@@ -164,6 +165,7 @@ This is what "all major features" means for Oxide. The phase that delivers each 
 **Media generation:** images, video and music from chats (and Utility Apps) through OpenAI-compatible endpoints, with global default models per kind in Settings → Media generation [P19].
 **Permission modes:** Manual and Auto (runs on its own, pauses to ask when an action looks risky), per chat, also for scheduled tasks [P23].
 **Compact tool history:** a reply's tool calls fold into one quiet summary line that opens to a compact list, so long agentic replies don't fill the screen [P24].
+**Edit blocks:** models change existing files with edit blocks (exact text → new text) through one shared engine, a whole-file rewrite as the fallback, in chats, the app builder, artifacts and Utility Apps [P26].
 **Plugin creator apps:** SP Page Builder Addon Creator (Joomla) and Elementor Widget Creator (WordPress), working in a folder of the user's [P25].
 **Utility Apps:** a sidebar page (after Projects) with a gallery of AI utility apps — small React apps in a sandboxed frame that use everything a chat can (each capability asked once per app), per-app model overrides, clone, export/import — and an AI Studio-style builder (chat + Preview/Code) to create and edit them [P20–P22].
 
@@ -551,6 +553,42 @@ Requested by the user on 2026-11-22: two built-in Utility Apps, **SP Page Builde
 - **Tests**: the folder's confinement (Rust), the picker granting it, the settings dialog, and both apps' flows against fake SDK calls (Vitest).
 
 **Exit:** on Windows: in each app, choose a folder; make a new addon/widget from a description (and a screenshot with a vision model); edit a file by hand and save; change it with AI and undo; clone it and check the copy's machine name; import the user's `plg_sppagebuilder_c10faq` ZIP (SP Page Builder) and see it in the browser with its name and version; download the installable ZIP and install it in Joomla 5/6 with SP Page Builder 6 Pro (the addon appears in its category) and in WordPress with Elementor (the widget appears in the panel); delete one.
+
+
+### Phase 26 — Edit blocks everywhere (with full rewrites as the fallback)
+Requested by the user on 2026-11-23, after asking how the plugin creator apps change a file (they rewrite every file they touch in full): changes to existing files should work **exactly like Claude Code's approach**: the model sends edit blocks ("this exact existing text" → "this new text") and only those parts change; a whole-file rewrite is the fallback. **In all of Oxide, not only the two new apps.**
+
+**Before starting:** the plan-then-file-by-file change of the creator apps (`scripts\win\plan-files.cmd`, message `logs\commit-msg-plan-files.txt`; see PROGRESS.md) must be committed. If it isn't yet, run it first and fix what fails.
+
+**Where Oxide edits files today** (three separate exact-match implementations, to be replaced by one):
+- Chats: the built-in `edit_file` tool (`oxide-agent/src/tools/files.rs`, `old_str` / `new_str`, one replacement per call).
+- The app builder: `app_edit_file` (`oxide-agent/src/apps/builder.rs`, `old_text` / `new_text` / `replace_all`, CRLF-tolerant).
+- Artifacts: the `artifact` tool's `update` (`oxide-agent/src/artifacts.rs`, `old_str` / `new_str`), with `rewrite` as the full replacement.
+- Utility Apps: the SP Page Builder Addon Creator and the Elementor Widget Creator (`utility-apps/*/Workbench.tsx`, `runPlan`), which write every planned file in full.
+- Also check: `save_skill` (Phase 14c, edits a skill by sending the whole `SKILL.md`), and the Docker sandbox's file server (the reference filesystem MCP server has its own `edit_file`; leave it as it is).
+
+**Tasks:**
+- **One edit engine** (`oxide-core`, pure, no I/O): `apply_edits(text, &[Edit]) -> Result<EditResult, EditError>`, where `Edit { old, new, replace_all }`, applied in order, each to the result of the one before.
+  - Matching, in order: exact; then with line endings normalized (CRLF/LF; the file keeps its own); then line by line ignoring trailing whitespace; then ignoring indentation (the replacement is re-indented to the match's indentation).
+  - `old` must match exactly once unless `replace_all`. Errors say which edit failed and why ("not found", "found 3 times: include more surrounding lines"), and for "not found" quote the closest lines in the file, so the model can correct itself.
+  - Empty `old` is only allowed for an empty or new file. All-or-nothing: if any edit fails, nothing is written.
+  - `EditResult` gives the new text and the changed line ranges (for diffs and the UI).
+  - Thorough unit tests: exact, CRLF, trailing spaces, indentation, unique / ambiguous / missing, `replace_all`, edits in sequence, overlapping edits, Unicode, no-op edits.
+- **Chats — `edit_file` becomes multi-edit:** `path` plus `edits: [{ old_str, new_str, replace_all? }]` (a single `old_str`/`new_str` is still accepted). Through the engine; the result tells the model which edits applied and shows the changed lines. `write_file` stays for new files and full rewrites. The tool description and the system prompt say: read the file first, prefer `edit_file` for changes to existing files, use `write_file` only for new files or when most of a file changes. Approval cards (Manual mode) show a diff of the edits; Auto routing is unchanged (a change inside a shared folder).
+- **App builder — `app_edit_file`:** the same `edits` list through the engine; the builder prompt says the same as the chat prompt.
+- **Artifacts — `update`:** `edits` through the engine (a single `old_str`/`new_str` still works); `rewrite` stays. A failed update tells the model why and suggests `rewrite`.
+- **SDK (`oxide.ai`)** for Utility Apps: `ai.edit({ path?, content, request, system?, images?, … }) → { content, edits, rewritten }`. It asks the app's model for edit blocks (structured output: `{ edits: [{ old, new, replace_all? }] }`), applies them with the engine in the backend (`text.edit` in `apps/runtime.rs`), on a failed edit sends the error back once for corrected blocks, and as the last resort asks for the whole file (plain text, `truncated` checked). Run `npm run sdk-types` after changing `sdk.ts`.
+- **The plugin creator apps** (`Workbench.tsx`, both copies identical): in the plan, each existing file to change gets `"edit"` (small, local changes) or `"rewrite"` (most of the file changes); new files are still written in full. Edits go through `ai.edit`; the progress list shows "edited (n changes)" or "rewritten (fallback)"; Undo and history as now. The model still sees the whole plugin.
+- **UI:** where Oxide shows a file change (the tool line's details, approval cards, the builder's checkpoints), show the edit blocks as a compact diff (removed lines red, added green) instead of the whole new file.
+- **Tests:** the engine (Rust unit tests); `edit_file` with several edits, the fallback messages and the approval diff (Rust + Vitest); `app_edit_file`; artifact `update` with edits; `text.edit` (edit blocks applied, one corrected retry, the rewrite fallback, a cut-off rewrite) against the fake provider; the creator apps editing one function of `site.php` without touching the rest, and falling back to a rewrite when the blocks don't match (Vitest).
+
+**Exit:** on Windows:
+1. In a chat with a shared folder, "change the title color in style.css and rename the function in app.js" changes only those lines: the tool line shows the edits as a diff, and the rest of the files is byte-for-byte the same.
+2. A model that misquotes a line gets the error, corrects itself, and the edit applies.
+3. In the SP Page Builder Addon Creator with Gemma 4 12B (LM Studio), "add a subtitle field" on the user's `c10faq` addon edits `admin.php` and `site.php` with edit blocks, in a fraction of the time a full rewrite took, and the progress list says so. A change that rewrites most of a file falls back to a full rewrite.
+4. The app builder and an artifact update use edit blocks too.
+
+*Built 2026-11-25* (see PROGRESS.md). Deviations: a “trimmed” matching level (kept from the old artifact matcher); `old == new` is an error; the builder's checkpoints show changed files with +/− line counts (full diffs are in the builder chat's tool lines); `save_skill` keeps whole files (its card already shows a diff); `ai.edit` also takes `context`, `mode: "rewrite"` and `onStage`.
 
 ---
 

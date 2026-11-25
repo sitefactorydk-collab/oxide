@@ -108,6 +108,87 @@ pub struct AppCheckpoint {
     /// Files in this version.
     pub files: u32,
     pub created_at: Timestamp,
+    /// What changed since the checkpoint before it (empty for the first one).
+    #[serde(default)]
+    pub changes: Vec<CheckpointChange>,
+}
+
+/// How one file changed between two checkpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum FileChangeKind {
+    Added,
+    Changed,
+    Deleted,
+}
+
+/// One file's change between two checkpoints, in lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointChange {
+    pub path: String,
+    pub kind: FileChangeKind,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// What changed from `before` to `after` (path, content), in path order. Binary files count
+/// as one line.
+pub fn checkpoint_changes(
+    before: &[(String, Vec<u8>)],
+    after: &[(String, Vec<u8>)],
+) -> Vec<CheckpointChange> {
+    use std::collections::BTreeMap;
+    let lines = |b: &[u8]| -> u32 {
+        match std::str::from_utf8(b) {
+            Ok(t) => u32::try_from(t.lines().count()).unwrap_or(u32::MAX),
+            Err(_) => 1,
+        }
+    };
+    let old: BTreeMap<&str, &[u8]> = before
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let new: BTreeMap<&str, &[u8]> = after
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let mut out = Vec::new();
+    for (path, b) in &new {
+        match old.get(path) {
+            None => out.push(CheckpointChange {
+                path: (*path).to_owned(),
+                kind: FileChangeKind::Added,
+                added: lines(b),
+                removed: 0,
+            }),
+            Some(a) if a != b => {
+                let (added, removed) = match (std::str::from_utf8(a), std::str::from_utf8(b)) {
+                    (Ok(x), Ok(y)) => crate::edit::line_changes(x, y),
+                    _ => (1, 1),
+                };
+                out.push(CheckpointChange {
+                    path: (*path).to_owned(),
+                    kind: FileChangeKind::Changed,
+                    added: u32::try_from(added).unwrap_or(u32::MAX),
+                    removed: u32::try_from(removed).unwrap_or(u32::MAX),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (path, a) in &old {
+        if !new.contains_key(path) {
+            out.push(CheckpointChange {
+                path: (*path).to_owned(),
+                kind: FileChangeKind::Deleted,
+                added: 0,
+                removed: lines(a),
+            });
+        }
+    }
+    out.sort_by(|x, y| x.path.cmp(&y.path));
+    out
 }
 
 /// What the builder asks the open Preview.

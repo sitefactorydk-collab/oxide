@@ -26,6 +26,8 @@ pub const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_READ_CHARS: usize = 60_000;
 /// Largest file `write_file` writes.
 pub const MAX_WRITE_BYTES: usize = 5 * 1024 * 1024;
+/// Most changed lines `edit_file` shows the model after an edit.
+pub const EDIT_EXCERPT_LINES: usize = 40;
 /// Most entries `list_dir` returns.
 pub const MAX_LIST_ENTRIES: usize = 1_000;
 /// Most files `search_files` looks at.
@@ -407,11 +409,7 @@ impl Sandbox {
 
     fn edit_file(&self, input: &Value) -> Result<String, String> {
         let path = self.existing(&required(input, "path", EDIT_FILE)?)?;
-        let old = input
-            .get("old_str")
-            .and_then(Value::as_str)
-            .ok_or("edit_file needs an \"old_str\" string.")?;
-        let new = input.get("new_str").and_then(Value::as_str).unwrap_or("");
+        let edits = super::edits::parse_edits(input, "old_str", "new_str")?;
         if path.is_dir() {
             return Err(format!("“{}” is a folder.", display_path(&path)));
         }
@@ -421,22 +419,27 @@ impl Sandbox {
         }
         let text = fs::read_to_string(&path)
             .map_err(|e| format!("The file can't be read as text: {e}"))?;
-        let next = oxide_core::artifact::apply_update(&text, old, new).map_err(|e| {
-            use oxide_core::artifact::UpdateError;
-            match e {
-                UpdateError::EmptyOld => "old_str is empty.".to_owned(),
-                UpdateError::NotFound => {
-                    "old_str wasn't found in the file. Read the file and copy the passage \
-                     exactly."
-                        .to_owned()
-                }
-                UpdateError::Ambiguous(n) => format!(
-                    "old_str appears {n} times; include more surrounding text so it's unique."
-                ),
-            }
+        let done = oxide_core::edit::apply_edits(&text, &edits).map_err(|e| {
+            format!(
+                "{} {} wasn't changed.",
+                e.message("old_str"),
+                display_path(&path)
+            )
         })?;
-        fs::write(&path, &next).map_err(|e| format!("The file can't be written: {e}"))?;
-        Ok(format!("Edited {}.", display_path(&path)))
+        if done.text.len() > MAX_WRITE_BYTES {
+            return Err(format!(
+                "The edited file would be too large ({}; at most {}).",
+                human_size(done.text.len() as u64),
+                human_size(MAX_WRITE_BYTES as u64)
+            ));
+        }
+        fs::write(&path, &done.text).map_err(|e| format!("The file can't be written: {e}"))?;
+        Ok(format!(
+            "Edited {}: {}\n\n{}",
+            display_path(&path),
+            done.summary(),
+            done.excerpt(EDIT_EXCERPT_LINES)
+        ))
     }
 
     fn move_file(&self, input: &Value) -> Result<String, String> {
@@ -802,8 +805,9 @@ pub fn file_entry(op: FileOp, delete_for_good: bool) -> ToolEntry {
         ),
         FileOp::Write => (
             "Write file",
-            "Create a text file in a shared folder, or replace one, with the given content. \
-             Missing folders are made. Prefer edit_file for small changes to existing files.",
+            "Create a text file in a shared folder, or replace one, with the given content \
+             (the whole file). Missing folders are made. Use it for new files, or when most of \
+             an existing file changes; for other changes to existing files use edit_file.",
             json!({"type": "object", "properties": {
                 "path": path,
                 "content": {"type": "string", "description": "The whole new content."}
@@ -811,13 +815,16 @@ pub fn file_entry(op: FileOp, delete_for_good: bool) -> ToolEntry {
         ),
         FileOp::Edit => (
             "Edit file",
-            "Replace one passage of a text file in a shared folder: old_str must appear \
-             exactly once.",
+            "Change parts of an existing text file in a shared folder with edit blocks: each \
+             replaces an exact passage (old_str, copied from the file with a few lines around \
+             the change so it is found once) with new text (new_str). Several edits in one call \
+             apply in order, all or nothing; the rest of the file stays byte for byte the same. \
+             Read the file first. Prefer this to write_file for changes to existing files. If \
+             an edit fails, the error quotes the closest lines: correct old_str and try again.",
             json!({"type": "object", "properties": {
                 "path": path,
-                "old_str": {"type": "string", "description": "The exact text to replace."},
-                "new_str": {"type": "string", "description": "The text to put in its place."}
-            }, "required": ["path", "old_str", "new_str"]}),
+                "edits": super::edits::edits_schema("old_str", "new_str", "the file")
+            }, "required": ["path", "edits"]}),
         ),
         FileOp::Move => (
             "Move file",
@@ -1214,6 +1221,66 @@ mod tests {
         let s = sandbox(&[&root], true);
         run(&s, FileOp::Delete, json!({"path": TO_DELETE_DIR})).expect("delete");
         assert!(!root.join(TO_DELETE_DIR).exists());
+    }
+
+    #[test]
+    fn edit_file_applies_several_edits_and_leaves_the_rest_alone() {
+        let (_t, root, _) = setup();
+        let s = sandbox(&[&root], false);
+        let css = ".title {\r\n  color: red;\r\n}\r\n.body {\r\n  margin: 0;  \r\n}\r\n";
+        fs::write(root.join("style.css"), css).expect("write");
+        // Edits quoted with LF and without the trailing spaces still match.
+        let out = run(
+            &s,
+            FileOp::Edit,
+            json!({"path": "style.css", "edits": [
+                {"old_str": ".title {\n  color: red;", "new_str": ".title {\n  color: navy;"},
+                {"old_str": "  margin: 0;\n}", "new_str": "  margin: 4px;\n}"}
+            ]}),
+        )
+        .expect("edit");
+        assert!(
+            out.contains("2 edits applied: lines 1–2, lines 5–6."),
+            "{out}"
+        );
+        assert!(out.contains("    2    color: navy;"), "{out}");
+        assert_eq!(
+            fs::read_to_string(root.join("style.css")).expect("read"),
+            ".title {\r\n  color: navy;\r\n}\r\n.body {\r\n  margin: 4px;\r\n}\r\n"
+        );
+        // A misquoted edit changes nothing and quotes the closest line.
+        let err = run(
+            &s,
+            FileOp::Edit,
+            json!({"path": "style.css", "edits": [
+                {"old_str": "color: navy;", "new_str": "color: teal;"},
+                {"old_str": "  margn: 4px;", "new_str": "  margin: 8px;"}
+            ]}),
+        )
+        .expect_err("misquoted");
+        assert!(
+            err.starts_with("Edit 2 of 2: old_str wasn't found."),
+            "{err}"
+        );
+        assert!(err.contains("margin: 4px;"), "{err}");
+        assert!(err.contains("wasn't changed"), "{err}");
+        assert!(
+            fs::read_to_string(root.join("style.css"))
+                .expect("read")
+                .contains("navy")
+        );
+        // The old single-edit form still works.
+        run(
+            &s,
+            FileOp::Edit,
+            json!({"path": "style.css", "old_str": "navy", "new_str": "teal"}),
+        )
+        .expect("single");
+        assert!(
+            fs::read_to_string(root.join("style.css"))
+                .expect("read")
+                .contains("teal")
+        );
     }
 
     #[test]

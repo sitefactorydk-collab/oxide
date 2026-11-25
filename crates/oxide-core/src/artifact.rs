@@ -223,51 +223,6 @@ pub fn file_name(title: &str, kind: ArtifactKind, language: Option<&str>) -> Str
     format!("{base}.{}", kind.extension(language))
 }
 
-/// Why an `update` couldn't be applied.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpdateError {
-    EmptyOld,
-    NotFound,
-    Ambiguous(usize),
-}
-
-impl std::fmt::Display for UpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UpdateError::EmptyOld => write!(f, "old_str is empty"),
-            UpdateError::NotFound => write!(f, "old_str doesn't appear in the artifact"),
-            UpdateError::Ambiguous(n) => write!(
-                f,
-                "old_str appears {n} times; include more surrounding text so it appears once"
-            ),
-        }
-    }
-}
-
-/// Replaces the one place `old` appears in `content` with `new`.
-pub fn apply_update(content: &str, old: &str, new: &str) -> Result<String, UpdateError> {
-    if old.is_empty() {
-        return Err(UpdateError::EmptyOld);
-    }
-    let n = content.matches(old).count();
-    match n {
-        0 => {
-            // Models often get trailing whitespace or line endings slightly wrong.
-            let trimmed = old.trim();
-            if !trimmed.is_empty() && trimmed != old && content.matches(trimmed).count() == 1 {
-                return Ok(content.replacen(trimmed, new.trim(), 1));
-            }
-            let crlf = old.replace("\r\n", "\n");
-            if crlf != old && content.matches(&crlf).count() == 1 {
-                return Ok(content.replacen(&crlf, new, 1));
-            }
-            Err(UpdateError::NotFound)
-        }
-        1 => Ok(content.replacen(old, new, 1)),
-        n => Err(UpdateError::Ambiguous(n)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,26 +269,5 @@ mod tests {
         );
         assert_eq!(file_name("..", ArtifactKind::Html, None), "artifact.html");
         assert_eq!(file_name("x", ArtifactKind::Code, Some("cobol")), "x.txt");
-    }
-
-    #[test]
-    fn updates_replace_exactly_one_place() {
-        assert_eq!(apply_update("a b c", "b", "B"), Ok("a B c".into()));
-        assert_eq!(
-            apply_update("a b b", "b", "B"),
-            Err(UpdateError::Ambiguous(2))
-        );
-        assert_eq!(apply_update("a", "z", "B"), Err(UpdateError::NotFound));
-        assert_eq!(apply_update("a", "", "B"), Err(UpdateError::EmptyOld));
-        // Whitespace around old_str is forgiven when the rest matches once.
-        assert_eq!(
-            apply_update("fn a() {}\n", "  fn a() {}  \n\n", "fn b() {}"),
-            Ok("fn b() {}\n".into())
-        );
-        // CRLF in old_str against LF content.
-        assert_eq!(
-            apply_update("x\ny\nz", "x\r\ny", "X\nY"),
-            Ok("X\nY\nz".into())
-        );
     }
 }

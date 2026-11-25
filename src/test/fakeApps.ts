@@ -1,6 +1,7 @@
 import type {
   AppBundle,
   AppCheckpoint,
+  CheckpointChange,
   AppDraft,
   PreviewReport,
   AppCallError,
@@ -211,6 +212,34 @@ function draftOf(id: string): AppDraft | null {
   };
 }
 
+/** Like the backend's: what changed since the previous snapshot, in (rough) lines. */
+function changesBetween(before: AppFile[] | undefined, after: AppFile[]): CheckpointChange[] {
+  if (!before) return [];
+  const lines = (t: string) => (t === "" ? [] : t.replace(/\n$/, "").split("\n"));
+  const out: CheckpointChange[] = [];
+  for (const file of after) {
+    const old = before.find((b) => b.path === file.path);
+    if (!old) {
+      out.push({ path: file.path, kind: "added", added: lines(file.content).length, removed: 0 });
+    } else if (old.content !== file.content) {
+      const a = lines(old.content);
+      const b = lines(file.content);
+      out.push({
+        path: file.path,
+        kind: "changed",
+        added: b.filter((l) => !a.includes(l)).length,
+        removed: a.filter((l) => !b.includes(l)).length,
+      });
+    }
+  }
+  for (const old of before) {
+    if (!after.some((a) => a.path === old.path)) {
+      out.push({ path: old.path, kind: "deleted", added: 0, removed: lines(old.content).length });
+    }
+  }
+  return out.sort((x, y) => x.path.localeCompare(y.path));
+}
+
 function checkpoint(id: string, label: string, kind: AppCheckpoint["kind"]) {
   const d = f.drafts.get(id);
   if (!d) return;
@@ -224,6 +253,7 @@ function checkpoint(id: string, label: string, kind: AppCheckpoint["kind"]) {
     kind,
     files: snapshot.length,
     createdAt: Date.now(),
+    changes: changesBetween(list[0]?.snapshot, snapshot),
     snapshot,
   });
   f.checkpoints.set(id, list);
@@ -341,6 +371,7 @@ export const fakeBuilderCommands: Pick<
         kind: c.kind,
         files: c.files,
         createdAt: c.createdAt,
+        changes: c.changes,
       })),
     ),
   restoreAppCheckpoint: (id, checkpointId) => {

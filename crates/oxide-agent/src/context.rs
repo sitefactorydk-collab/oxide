@@ -347,7 +347,8 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
                 " Put substantial content the user will keep, edit or run (a document, a longer \
                  program, a page, a diagram, an interactive app) in an artifact; keep short \
                  answers, explanations and small snippets in the chat. To change an artifact, \
-                 call the artifact tool again with its id instead of writing it out again.",
+                 call the artifact tool again with its id instead of writing it out again: update \
+                 with edit blocks for changes, rewrite only when most of it changes.",
             );
         }
     }
@@ -359,7 +360,11 @@ pub fn system_prompt(ctx: &PromptContext<'_>) -> String {
              (list_dir, read_file, search_files) and change them (write_file, edit_file, \
              move_file, delete_file; the user approves changes). Nothing outside these folders \
              can be reached. Look before you change things, and don't delete or overwrite \
-             anything the user didn't ask you to.{}",
+             anything the user didn't ask you to. To change an existing file, read it first \
+             and use edit_file with edit blocks (exact passages and their replacements, \
+             several in one call), so only those parts change; use write_file only for new \
+             files or when most of a file changes. When an edit isn't found, the error quotes \
+             the closest lines: copy the text from there and try again.{}",
             list.join("\n"),
             if ctx.delete_for_good {
                 " delete_file deletes for good."

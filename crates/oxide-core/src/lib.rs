@@ -15,6 +15,7 @@ pub mod context;
 pub mod conversation;
 pub mod data;
 pub mod desktop;
+pub mod edit;
 pub mod extension;
 pub mod generation;
 pub mod mcp;
@@ -35,8 +36,9 @@ pub mod utility_app;
 pub mod workspace;
 
 pub use app_builder::{
-    APP_BUILDER_TOOLS, AppCheckpoint, AppDraft, CheckpointKind, MAX_APP_CHECKPOINTS,
-    PreviewConsoleLine, PreviewReport, PreviewRequestKind, checkpoint_label,
+    APP_BUILDER_TOOLS, AppCheckpoint, AppDraft, CheckpointChange, CheckpointKind, FileChangeKind,
+    MAX_APP_CHECKPOINTS, PreviewConsoleLine, PreviewReport, PreviewRequestKind, checkpoint_changes,
+    checkpoint_label,
 };
 pub use artifact::{
     ARTIFACT_TOOL, Artifact, ArtifactDetail, ArtifactKind, ArtifactSummary, ArtifactVersion,

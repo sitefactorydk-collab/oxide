@@ -40,7 +40,7 @@ const MAX_PAGE_CHARS: usize = 400_000;
 /// The capability an SDK method needs: `Some(None)` for none, `None` for no such method.
 pub fn method_capability(method: &str) -> Option<Option<AppCapability>> {
     Some(Some(match method {
-        "text.generate" => AppCapability::Text,
+        "text.generate" | "text.edit" => AppCapability::Text,
         "media.image" => AppCapability::Image,
         "media.video" => AppCapability::Video,
         "media.music" => AppCapability::Music,
@@ -306,6 +306,7 @@ impl AppRuntime {
                 "granted": prefs.granted,
             })),
             "text.generate" => self.text(manifest, prefs, p, events).await,
+            "text.edit" => self.text_edit(manifest, prefs, p, events).await,
             "media.image" => self.media(app_id, manifest, prefs, GenerationKind::Image, p, &settings, events).await,
             "media.video" => self.media(app_id, manifest, prefs, GenerationKind::Video, p, &settings, events).await,
             "media.music" => self.media(app_id, manifest, prefs, GenerationKind::Music, p, &settings, events).await,
@@ -518,7 +519,7 @@ impl AppRuntime {
         })
     }
 
-    async fn text(
+    pub(super) async fn text(
         &self,
         manifest: &AppManifest,
         prefs: &AppPrefs,
@@ -855,6 +856,10 @@ mod tests {
     fn methods_map_to_capabilities() {
         assert_eq!(
             method_capability("text.generate"),
+            Some(Some(AppCapability::Text))
+        );
+        assert_eq!(
+            method_capability("text.edit"),
             Some(Some(AppCapability::Text))
         );
         assert_eq!(

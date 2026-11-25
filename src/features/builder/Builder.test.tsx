@@ -83,6 +83,12 @@ describe("the Utility App builder", () => {
         "Edited by hand",
       );
     });
+    // The Checkpoints menu says what each checkpoint changed.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Checkpoints" }), { key: "Enter" });
+    const saved = await screen.findByRole("menuitem", { name: /Saved App\.tsx/ });
+    const changed = within(saved).getByLabelText("Changed files");
+    expect(changed).toHaveTextContent("App.tsx");
+    expect(within(changed).getByText("+1")).toHaveClass("text-success");
   });
 
   it("follows the model's changes, and restores a checkpoint", async () => {

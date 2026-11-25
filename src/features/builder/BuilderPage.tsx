@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { commands, events, type AppDraft } from "@/bindings";
+import { commands, events, type AppDraft, type CheckpointChange } from "@/bindings";
 import { IconButton } from "@/components/ui/IconButton";
 import {
   MenuContent,
@@ -430,6 +430,34 @@ function BuilderHeader({
   );
 }
 
+/** What a checkpoint changed: “App.tsx +3 −1 · chart.ts new”, at most three files. */
+function CheckpointChanges({ changes }: { changes: CheckpointChange[] }) {
+  if (changes.length === 0) return null;
+  const shown = changes.slice(0, 3);
+  return (
+    <span
+      aria-label="Changed files"
+      className="mt-0.5 flex flex-wrap gap-x-2 font-mono text-[11px] text-fg-subtle"
+    >
+      {shown.map((ch) => (
+        <span key={ch.path} className="inline-flex min-w-0 gap-1">
+          <span className="max-w-40 truncate">{ch.path}</span>
+          {ch.kind === "deleted" ? (
+            <span className="text-danger">deleted</span>
+          ) : (
+            <>
+              {ch.kind === "added" && <span>new</span>}
+              {ch.added > 0 && <span className="text-success">+{ch.added}</span>}
+              {ch.removed > 0 && <span className="text-danger">−{ch.removed}</span>}
+            </>
+          )}
+        </span>
+      ))}
+      {changes.length > shown.length && <span>+{changes.length - shown.length} more</span>}
+    </span>
+  );
+}
+
 function CheckpointsMenu({ id }: { id: string }) {
   const { data: checkpoints } = useCheckpoints(id);
   const restore = useRestoreCheckpoint(id);
@@ -465,6 +493,7 @@ function CheckpointsMenu({ id }: { id: string }) {
                 {i === 0 ? "Latest · " : ""}
                 {formatRelative(c.createdAt)} · {c.files} files
               </span>
+              <CheckpointChanges changes={c.changes ?? []} />
             </span>
           </MenuItem>
         ))}

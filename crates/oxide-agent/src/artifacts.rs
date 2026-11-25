@@ -4,7 +4,7 @@
 //! needs the chat and the reply) and never asks for approval: it only writes into Oxide.
 
 use oxide_core::artifact::{
-    ARTIFACT_TOOL, MAX_ARTIFACT_CHARS, apply_update, clean_key, clean_title, key_from_title,
+    ARTIFACT_TOOL, MAX_ARTIFACT_CHARS, clean_key, clean_title, key_from_title,
 };
 use oxide_core::{ArtifactKind, ContentBlock};
 use oxide_store::{NewArtifactVersion, Store};
@@ -19,9 +19,10 @@ and reports (markdown), code files and scripts longer than about 15 lines (code)
 (html), SVG images (svg), diagrams (mermaid) and interactive components or small apps (react). \
 Don't use it for short snippets, brief answers, or content that only makes sense inline in the \
 conversation. Make one artifact per distinct piece of content. To change an artifact, call the \
-tool again with the same id: command \"update\" replaces one exact passage (old_str must appear \
-exactly once in the current content; use it for small changes), \"rewrite\" replaces the whole \
-content. After a call, tell the user briefly what you made or changed; don't repeat the content \
+tool again with the same id: command \"update\" changes it with edit blocks (\"edits\": each \
+replaces an exact passage old_str, copied from the current content with enough lines to be found \
+once, with new_str; several apply in order, all or nothing; the rest stays the same), \
+\"rewrite\" replaces the whole content (only when most of it changes). After a call, tell the user briefly what you made or changed; don't repeat the content \
 in your reply. Notes by type: html is a complete page with inline styles and scripts (scripts \
 from https CDNs work; there are no network requests otherwise). react is one component file \
 with a default export and no required props; it may import only from \"react\" and \
@@ -42,8 +43,8 @@ pub fn artifact_entry() -> ToolEntry {
             "type": "object",
             "properties": {
                 "command": { "type": "string", "enum": ["create", "update", "rewrite"],
-                             "description": "create a new artifact, update one passage, or \
-                                             rewrite all of an existing one." },
+                             "description": "create a new artifact, update parts of one with \
+                                             edit blocks, or rewrite all of it." },
                 "id": { "type": "string",
                         "description": "A short kebab-case id you choose, e.g. \"todo-app\". \
                                         Use the same id to change the artifact later." },
@@ -54,9 +55,7 @@ pub fn artifact_entry() -> ToolEntry {
                               "description": "For type code: the language, e.g. python." },
                 "content": { "type": "string",
                              "description": "create and rewrite: the complete content." },
-                "old_str": { "type": "string",
-                             "description": "update: the exact text to replace (appears once)." },
-                "new_str": { "type": "string", "description": "update: the replacement." }
+                "edits": crate::tools::edits::edits_schema("old_str", "new_str", "the current content")
             },
             "required": ["command", "id"]
         }),
@@ -130,11 +129,12 @@ pub async fn run_artifact(
             ));
         }
         // Guess from the arguments.
-        None if input.get("old_str").is_some() => "update".into(),
+        None if crate::tools::edits::has_edits(input) => "update".into(),
         None if existing.is_some() => "rewrite".into(),
         None => "create".into(),
     };
 
+    let mut update_note: Option<String> = None;
     let (kind, title, language, content) = match (command.as_str(), &existing) {
         ("update", None) => {
             return ToolOutput::error(format!(
@@ -142,16 +142,21 @@ pub async fn run_artifact(
             ));
         }
         ("update", Some((a, current))) => {
-            let Some(old) = str_arg(input, "old_str") else {
-                return ToolOutput::error("update needs \"old_str\" and \"new_str\".");
+            let edits = match crate::tools::edits::parse_edits(input, "old_str", "new_str") {
+                Ok(e) => e,
+                Err(e) => return ToolOutput::error(format!("update: {e}")),
             };
-            let new = str_arg(input, "new_str").unwrap_or("");
-            let content = match apply_update(current, old, new) {
-                Ok(c) => c,
+            let content = match oxide_core::edit::apply_edits(current, &edits) {
+                Ok(done) => {
+                    update_note = Some(done.summary());
+                    done.text
+                }
                 Err(e) => {
                     return ToolOutput::error(format!(
-                        "The update wasn't applied: {e}. Copy old_str exactly from the current \
-                         content, or use rewrite."
+                        "The update wasn't applied: {} Copy old_str exactly from the current \
+                         content, or use \"rewrite\" with the whole new content if most of it \
+                         changes.",
+                        e.message("old_str")
                     ));
                 }
             };
@@ -224,10 +229,11 @@ pub async fn run_artifact(
                 content: vec![
                     ContentBlock::text(format!(
                         "{verb} artifact “{}” (id \"{key}\", type {}, version {}, {lines} lines). \
-                         The user sees it in the panel beside the chat.",
+                         The user sees it in the panel beside the chat.{}",
                         artifact.title,
                         artifact.kind.as_str(),
-                        artifact.version
+                        artifact.version,
+                        update_note.map(|n| format!(" {n}")).unwrap_or_default()
                     )),
                     ContentBlock::ArtifactRef {
                         artifact_id: artifact.id,
@@ -357,6 +363,49 @@ mod tests {
         assert_eq!(v3.content, "export default () => null;");
         assert_eq!(v3.title, "Greeting");
         assert_eq!(v3.kind, ArtifactKind::React);
+
+        // Edit blocks: several in one update, then a misquoted one that suggests rewrite.
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r4",
+            &json!({"command": "rewrite", "id": "hello-app",
+                    "content": "const a = 1;\nconst b = 2;\nexport default () => null;"}),
+        )
+        .await;
+        assert!(!out.is_error, "{out:?}");
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r5",
+            &json!({"id": "hello-app", "edits": [
+                {"old_str": "const a = 1;", "new_str": "const a = 10;"},
+                {"old_str": "const b = 2;", "new_str": "const b = 20;"}
+            ]}),
+        )
+        .await;
+        assert!(!out.is_error, "{out:?}");
+        let said = oxide_core::message::plain_text(&out.content);
+        assert!(said.starts_with("Updated"), "{said}");
+        assert!(said.contains("2 edits applied: lines 1–2."), "{said}");
+        let v5 = s.artifact_version(&id, None).await.expect("v5");
+        assert_eq!(
+            v5.content,
+            "const a = 10;\nconst b = 20;\nexport default () => null;"
+        );
+        let out = run_artifact(
+            &s,
+            &cid,
+            "r6",
+            &json!({"command": "update", "id": "hello-app", "edits": [
+                {"old_str": "const c = 20;", "new_str": "const c = 3;"}
+            ]}),
+        )
+        .await;
+        assert!(out.is_error);
+        let said = oxide_core::message::plain_text(&out.content);
+        assert!(said.contains("const b = 20;"), "{said}");
+        assert!(said.contains("rewrite"), "{said}");
     }
 
     #[tokio::test]
@@ -420,7 +469,7 @@ mod tests {
             "old_str": "a", "new_str": "b"}),
         )
         .await);
-        assert!(e.contains("2 times"), "{e}");
+        assert!(e.contains("found 2 times"), "{e}");
         // Code keeps its language; other types don't store one.
         let code = run_artifact(
             &s,

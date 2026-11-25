@@ -95,6 +95,7 @@ function fakeSdk(folder: ReturnType<typeof memoryFolder>["api"]) {
     ai: {
       text: vi.fn(),
       json: vi.fn(),
+      edit: vi.fn(),
       info: vi.fn(async () => ({ textModel: "lmstudio/fake-model" })),
     },
     files: {
@@ -174,6 +175,20 @@ const writesFiles =
     o.onText?.(text, text);
     return { text, model: "lmstudio/fake-model", truncated: false };
   };
+
+/** What `ai.edit` answers: the new content, edited with `n` blocks or rewritten. */
+const edited = (content: string, n = 1, rewritten = false) => ({
+  content,
+  changed: true,
+  edits: rewritten
+    ? []
+    : Array.from({ length: n }, () => ({ old: "x", new: "y", replaceAll: false })),
+  ranges: [],
+  summary: "",
+  rewritten,
+  retried: false,
+  model: "lmstudio/fake-model",
+});
 
 const inFolder = (folderName: string, files: Record<string, string>) =>
   Object.fromEntries(Object.entries(files).map(([p, v]) => [`${folderName}/${p}`, v]));
@@ -268,12 +283,9 @@ describe("the plugin creator apps", () => {
         },
       ],
     });
-    // A fenced answer and a plain one: both become the file's content.
-    sdk.ai.text.mockImplementation(
-      writesFiles((path) =>
-        path.endsWith("admin.php") ? "```php\n<?php // with color\n```" : ".x{}",
-      ),
-    );
+    // The existing file is changed through ai.edit, the new one written whole.
+    sdk.ai.edit.mockResolvedValue(edited("<?php // with color\n"));
+    sdk.ai.text.mockImplementation(writesFiles(() => "```css\n.x{}\n```"));
     fireEvent.change(screen.getByLabelText("What to change"), {
       target: { value: "Add a title color" },
     });
@@ -283,7 +295,20 @@ describe("the plugin creator apps", () => {
     expect(req.prompt).toContain("--- FILE: addons/c10faq/site.php ---");
     expect(req.prompt).toContain("// mine");
     expect(req.prompt).toContain("Add a title color");
-    const second = (sdk.ai.text.mock.calls[1]?.[0] as { prompt: string }).prompt;
+    const ed = sdk.ai.edit.mock.calls[0]?.[0] as {
+      path: string;
+      content: string;
+      request: string;
+      context: string;
+      mode: string;
+    };
+    expect(ed.path).toBe("addons/c10faq/admin.php");
+    expect(ed.content).toContain("addon_name");
+    expect(ed.mode).toBe("edit");
+    expect(ed.request).toContain("a title color field");
+    expect(ed.context).toContain("## The plan");
+    expect(ed.context).toContain("--- FILE: addons/c10faq/site.php ---");
+    const second = (sdk.ai.text.mock.calls[0]?.[0] as { prompt: string }).prompt;
     expect(second).toContain("Write the complete content of addons/c10faq/assets/css/c10faq.css");
     expect(second).toContain("--- FILE: addons/c10faq/admin.php ---\n<?php // with color");
     expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe(
@@ -312,16 +337,20 @@ describe("the plugin creator apps", () => {
         { path: "script.php", action: "delete", purpose: "not needed" },
       ],
     });
-    sdk.ai.text
-      .mockResolvedValueOnce({ text: "<?php // new admin", model: "m", truncated: false })
-      .mockResolvedValueOnce({ text: "<?php class Half", model: "m", truncated: true });
+    sdk.ai.edit
+      .mockResolvedValueOnce(edited("<?php // new admin\n"))
+      .mockRejectedValueOnce(
+        new Error(
+          "The model's rewrite of addons/c10faq/site.php was cut off at its output limit after 16 characters, so the file wasn't changed.",
+        ),
+      );
     fireEvent.change(screen.getByLabelText("What to change"), {
       target: { value: "A new layout" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Apply changes/ }));
     // In the error bar and in the history.
     expect(
-      await screen.findAllByText(/Stopped after 1 file: addons\/c10faq\/site.php was cut off/),
+      await screen.findAllByText(/Stopped after 1 file: addons\/c10faq\/site.php: .*was cut off/),
     ).toHaveLength(2);
     expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe("<?php // new admin\n");
     expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/site.php")).toContain(
@@ -336,6 +365,108 @@ describe("the plugin creator apps", () => {
     await waitFor(() =>
       expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toContain("addon_name"),
     );
+  });
+
+  it("SP Page Builder: edits one function of site.php with edit blocks and shows a rewrite fallback", async () => {
+    const site = [
+      "<?php",
+      "class SppagebuilderAddonC10faq extends SppagebuilderAddons {",
+      "\tpublic function render() {",
+      "\t\treturn '<div class=\"c10faq\"></div>';",
+      "\t}",
+      "",
+      "\tpublic function stylesheets() {",
+      "\t\treturn [];",
+      "\t}",
+      "}",
+      "",
+    ].join("\r\n");
+    const files = { ...sppbFiles(), "addons/c10faq/site.php": site };
+    const { api, fs } = memoryFolder(inFolder("plg_sppagebuilder_c10faq", files));
+    const sdk = fakeSdk(api);
+    mount(sppbApp, sppbBench, sdk);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit C10 FAQ widget" }));
+    await screen.findByRole("heading", { level: 1, name: /C10 FAQ widget/ });
+    sdk.ai.json.mockResolvedValue({
+      summary: "Added a subtitle.",
+      files: [
+        { path: "addons/c10faq/site.php", action: "edit", purpose: "render the subtitle" },
+        { path: "addons/c10faq/admin.php", action: "edit", purpose: "a subtitle field" },
+      ],
+    });
+    // site.php: one block replacing render()'s body (as the engine would); admin.php: the
+    // blocks didn't apply, so it came back rewritten. The second answer waits, so the
+    // progress list can be read.
+    const before = "\t\treturn '<div class=\"c10faq\"></div>';";
+    const after = "\t\treturn '<div class=\"c10faq\"><p>' . $subtitle . '</p></div>';";
+    sdk.ai.edit.mockImplementationOnce(
+      async (o: { content: string; onStage?: (s: string) => void }) => {
+        o.onStage?.("edits");
+        return edited(o.content.replace(before, after));
+      },
+    );
+    let finish: (v: unknown) => void = () => undefined;
+    sdk.ai.edit.mockImplementationOnce((o: { onStage?: (s: string, n: string | null) => void }) => {
+      o.onStage?.("edits", null);
+      o.onStage?.("retry", "not found");
+      o.onStage?.("rewrite", "the corrected edit blocks didn't apply either");
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    fireEvent.change(screen.getByLabelText("What to change"), {
+      target: { value: "Add a subtitle field" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Apply changes/ }));
+
+    const progress = await screen.findByLabelText("Progress");
+    expect(await within(progress).findByText("edited (1 change)")).toBeInTheDocument();
+    expect(within(progress).getByText("rewriting")).toBeInTheDocument();
+    // Only render() changed; everything else in site.php is byte for byte the same.
+    const written = fs.get("plg_sppagebuilder_c10faq/addons/c10faq/site.php") as string;
+    expect(written).toBe(site.replace(before, after));
+    expect(written.split("\r\n").filter((l, i) => l !== site.split("\r\n")[i])).toEqual([after]);
+    const asked = sdk.ai.edit.mock.calls.map(
+      (c) => c[0] as { path: string; mode: string; content: string },
+    );
+    expect(asked.map((a) => [a.path, a.mode])).toEqual([
+      ["addons/c10faq/site.php", "edit"],
+      ["addons/c10faq/admin.php", "edit"],
+    ]);
+
+    await act(async () => finish(edited("<?php // rewritten admin\n", 0, true)));
+    expect(await screen.findByText("Added a subtitle.")).toBeInTheDocument();
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/admin.php")).toBe(
+      "<?php // rewritten admin\n",
+    );
+    // The history says what was done to each file.
+    expect(
+      screen.getByText(
+        "addons/c10faq/site.php (edited, 1 change), addons/c10faq/admin.php (rewritten, fallback)",
+      ),
+    ).toBeInTheDocument();
+    expect(sdk.ai.text).not.toHaveBeenCalled();
+  });
+
+  it("SP Page Builder: a planned rewrite writes the whole file through ai.edit", async () => {
+    const { api, fs } = memoryFolder(inFolder("plg_sppagebuilder_c10faq", sppbFiles()));
+    const sdk = fakeSdk(api);
+    mount(sppbApp, sppbBench, sdk);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit C10 FAQ widget" }));
+    await screen.findByRole("heading", { level: 1, name: /C10 FAQ widget/ });
+    sdk.ai.json.mockResolvedValue({
+      summary: "New layout.",
+      files: [{ path: "addons/c10faq/site.php", action: "rewrite", purpose: "a new layout" }],
+    });
+    sdk.ai.edit.mockResolvedValue(edited("<?php // all new\n", 0, true));
+    fireEvent.change(screen.getByLabelText("What to change"), {
+      target: { value: "Redo the layout" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Apply changes/ }));
+    expect(await screen.findByText("New layout.")).toBeInTheDocument();
+    expect((sdk.ai.edit.mock.calls[0]?.[0] as { mode: string }).mode).toBe("rewrite");
+    expect(fs.get("plg_sppagebuilder_c10faq/addons/c10faq/site.php")).toBe("<?php // all new\n");
+    expect(screen.getByText("addons/c10faq/site.php (rewritten)")).toBeInTheDocument();
   });
 
   it("SP Page Builder: the browser clones (renaming the element), deletes and imports", async () => {

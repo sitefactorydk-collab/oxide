@@ -11,6 +11,7 @@ pub mod builtin;
 pub mod crawl;
 pub mod folder;
 pub mod runtime;
+mod text_edit;
 
 use std::collections::HashMap;
 use std::io::Cursor;

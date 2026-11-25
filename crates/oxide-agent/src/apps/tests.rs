@@ -759,3 +759,113 @@ async fn json_calls_ask_for_structured_output_and_explain_a_cut_off_answer() {
     assert!(e.message.contains("Context Length"), "{}", e.message);
     assert_eq!(f.fake.requests().len(), 4);
 }
+
+#[tokio::test]
+async fn ai_edit_applies_edit_blocks_retries_once_and_falls_back_to_a_rewrite() {
+    let site = "<?php\nclass A {\n    public function render() {\n        $title = 'x';\n        return $title;\n    }\n\n    public function css() {\n        return '';\n    }\n}\n";
+    let blocks =
+        |old: &str, new: &str| text(&json!({"edits": [{"old": old, "new": new}]}).to_string());
+    let f = fixture(vec![
+        // 1. Edit blocks that apply at once (quoted without indentation).
+        vec![blocks(
+            "$title = 'x';\nreturn $title;",
+            "$title = 'x';\n$subtitle = 'y';\nreturn $title . $subtitle;",
+        )],
+        // 2. A misquoted block, then the corrected one.
+        vec![blocks("return '' ;", "return 'a{}';")],
+        vec![blocks("        return '';", "        return 'a{}';")],
+        // 3. Wrong twice: the whole file is written instead (in a fence).
+        vec![blocks("nope", "x")],
+        vec![blocks("still nope", "x")],
+        vec![text("Here is the file:\n```php\n<?php\n// new\n```")],
+        // 4. A rewrite asked for, cut off at the output limit.
+        vec![
+            text("<?php\nclass B {"),
+            Step::Event(ChatEvent::Stop(oxide_core::StopReason::MaxTokens)),
+        ],
+    ])
+    .await;
+    allow(&f, TABLE, &[AppCapability::Text]).await;
+    let (events, seen) = recorder();
+    let edit = |id: &'static str, extra: Value, events: CallEvents| {
+        let mut p = json!({ "path": "site.php", "content": site, "request": "Add a subtitle" });
+        if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            p.extend(e.clone());
+        }
+        f.runtime.call(TABLE, id, "text.edit", p, events)
+    };
+
+    let r = edit("a", json!({ "context": "Other files: none" }), quiet())
+        .await
+        .expect("edits");
+    assert_eq!(r["rewritten"], false);
+    assert_eq!(r["retried"], false);
+    assert_eq!(r["changed"], true);
+    let content = r["content"].as_str().expect("content");
+    assert_eq!(
+        content,
+        site.replace(
+            "        return $title;\n",
+            "        $subtitle = 'y';\n        return $title . $subtitle;\n"
+        )
+    );
+    assert_eq!(
+        r["summary"],
+        "1 edit applied: lines 4–6. Edit 1 matched ignoring indentation (the new text was re-indented)."
+    );
+    let req = &f.fake.requests()[0];
+    assert!(
+        req.json_schema
+            .as_ref()
+            .is_some_and(|s| s["properties"]["edits"].is_object())
+    );
+    assert!(req.system.as_deref().unwrap_or("").contains("edit blocks"));
+    let asked = oxide_core::message::plain_text(&req.messages[0].content);
+    assert!(asked.starts_with("Other files: none"), "{asked}");
+    assert!(asked.contains("<file path=\"site.php\">"), "{asked}");
+
+    let r = edit("b", json!({}), events).await.expect("corrected");
+    assert_eq!(r["retried"], true);
+    assert!(
+        r["content"]
+            .as_str()
+            .expect("content")
+            .contains("return 'a{}';")
+    );
+    let reqs = f.fake.requests();
+    let retry = &reqs[2].messages;
+    assert_eq!(retry.len(), 3);
+    assert_eq!(retry[1].role, Role::Assistant);
+    let said = oxide_core::message::plain_text(&retry[2].content);
+    assert!(said.contains("couldn't be applied"), "{said}");
+    assert!(
+        said.contains("return '';"),
+        "the closest line is quoted: {said}"
+    );
+    let stages: Vec<String> = seen
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter_map(|e| e["stage"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(stages, vec!["edits", "retry"]);
+
+    let r = edit("c", json!({}), quiet()).await.expect("rewritten");
+    assert_eq!(r["rewritten"], true);
+    assert_eq!(r["content"], "<?php\n// new\n");
+    assert!(
+        r["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("didn't apply either"),
+        "{r}"
+    );
+    assert!(f.fake.requests()[5].json_schema.is_none());
+
+    let e = edit("d", json!({ "mode": "rewrite" }), quiet())
+        .await
+        .expect_err("cut off");
+    assert!(e.message.contains("cut off"), "{}", e.message);
+    assert!(e.message.contains("wasn't changed"), "{}", e.message);
+    assert_eq!(f.fake.requests().len(), 7);
+}

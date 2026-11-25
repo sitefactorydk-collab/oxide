@@ -1,0 +1,68 @@
+# Phase 26: edit blocks everywhere (one edit engine in oxide-core; edit_file, app_edit_file,
+# the artifact tool's update and the SDK's new ai.edit use it; the plugin creator apps edit
+# existing files with edit blocks; diffs in tool details, approval cards and checkpoints).
+#  1. Stops a running dev app; regenerates the bindings (src\bindings\index.ts was edited by
+#     hand: logs\phase26-bindings.diff shows what the generator changed) and the SDK types.
+#  2. Every check (fmt, prettier, clippy, cargo test, typecheck, lint, Vitest) and vite build.
+#  3. Commits the phase's files by name with logs\commit-msg-phase26.txt, only when all of
+#     that passed (no push).
+#  4. Starts the app for the manual checks (PLAN.md, Phase 26).
+# Logs: logs\phase26-prep*.log, logs\check*.log, logs\phase26-build*.log, logs\commit*.log.
+. "$PSScriptRoot\_common.ps1"
+Get-Process -Name oxide, oxide-mcp-mock -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+
+Start-Log 'phase26-prep'
+Run 'bindings' 'npm run bindings'
+Run 'prettier bindings' 'npx prettier --write src\bindings\index.ts --log-level warn'
+cmd /c 'git diff --stat -- src/bindings/index.ts > logs\phase26-bindings.diff 2>&1'
+cmd /c 'git diff -- src/bindings/index.ts >> logs\phase26-bindings.diff 2>&1'
+cmd /c 'attrib -r src\appframe\oxide-sdk.d.ts > nul 2>&1'
+$before = $script:Failures
+Run 'sdk types' 'npm run sdk-types'
+if ($script:Failures -gt $before) {
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Root 'src\appframe\oxide-sdk.d.ts')
+  $script:Failures = $before
+  Run 'sdk types (new file)' 'npm run sdk-types'
+}
+End-Log
+$prep = $script:Failures
+
+& "$PSScriptRoot\check.ps1"
+$checks = $LASTEXITCODE
+
+Start-Log 'phase26-build'
+Run 'vite build' 'npx vite build --logLevel warn'
+End-Log
+$build = $script:Failures
+
+$msg = Join-Path $Root 'logs\commit-msg-phase26.txt'
+$paths = @(
+  'PLAN.md', 'PROGRESS.md',
+  'crates/oxide-core/src/edit.rs', 'crates/oxide-core/src/edit_tests.rs',
+  'crates/oxide-core/src/lib.rs', 'crates/oxide-core/src/artifact.rs',
+  'crates/oxide-core/src/app_builder.rs',
+  'crates/oxide-store/migrations/0014_checkpoint_changes.sql',
+  'crates/oxide-store/src/app_builder.rs',
+  'crates/oxide-agent/src/apps', 'crates/oxide-agent/src/artifacts.rs',
+  'crates/oxide-agent/src/context.rs', 'crates/oxide-agent/src/tools/edits.rs',
+  'crates/oxide-agent/src/tools/files.rs', 'crates/oxide-agent/src/tools/mod.rs',
+  'src/bindings/index.ts', 'src/appframe/sdk.ts', 'src/appframe/oxide-sdk.d.ts',
+  'src/features/tools', 'src/features/builder', 'src/features/apps/CreatorApps.test.tsx',
+  'src/test/fakeApps.ts',
+  'utility-apps/sp-page-builder-addon-creator', 'utility-apps/elementor-widget-creator',
+  'scripts/win/phase26.cmd', 'scripts/win/phase26.ps1'
+)
+if ($prep -eq 0 -and $checks -eq 0 -and $build -eq 0 -and (Test-Path $msg)) {
+  Start-Log 'commit'
+  Run 'git add' ("git add -- " + ($paths -join ' '))
+  Run 'git commit' "git commit -F `"$msg`""
+  Run 'git log' 'git log --oneline -n 3'
+  Run 'git status' 'git status --short'
+  End-Log
+  Write-Host 'All green and committed. Starting Oxide for the manual checks (close its window when done).' -ForegroundColor Green
+} else {
+  Write-Host 'Something failed: see logs\phase26-prep-summary.log, check-summary.log, phase26-build-summary.log. Not committed. Starting Oxide anyway.' -ForegroundColor Red
+}
+Start-Process -FilePath (Join-Path $PSScriptRoot 'dev.cmd')

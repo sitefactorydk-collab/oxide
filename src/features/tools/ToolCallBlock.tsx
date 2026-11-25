@@ -41,6 +41,8 @@ import { usePythonInstalling } from "@/features/python/queries";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { AutoMarkBadge } from "@/features/permissions/AutoMarkBadge";
+import { EditDiff } from "./EditDiff";
+import { fileEditsOf } from "./editBlocks";
 import { useAnswerApproval } from "./queries";
 import { useAutoMark } from "./useAutoMark";
 import {
@@ -257,6 +259,8 @@ function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
   const isSkill = request.server === null && request.tool === "save_skill";
   // Saving a skill, and what Auto asks for every time, offer no Allow always.
   const once = isSkill || !!request.onceOnly;
+  // A file change with edit blocks shows as a diff (Phase 26).
+  const requestEdits = fileEditsOf(request);
   return (
     <div
       role="group"
@@ -341,6 +345,8 @@ function ToolApprovalCard({ request }: { request: ToolApprovalRequest }) {
       )}
       {skill ? (
         <SkillSaveDetails preview={skill} />
+      ) : requestEdits ? (
+        <EditDiff edits={requestEdits} />
       ) : request.server === null && request.tool === "sandbox_exec" ? (
         <pre
           aria-label="Command"
@@ -502,17 +508,28 @@ function ToolLine({ call }: { call: ToolCallView }) {
 
 /** A call's request and what came back (an opened tool line or compact row). */
 export function CallDetails({ call }: { call: ToolCallView }) {
+  const edits = fileEditsOf(call);
   return (
     <div className="flex flex-col gap-2">
-      {call.inputJson.trim() !== "" && call.inputJson.trim() !== "{}" && (
+      {edits ? (
         <>
-          <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Request</div>
-          <pre className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted">
-            {toolKind(call) === "python"
-              ? pythonCode(call.inputJson) || prettyJson(call.inputJson)
-              : prettyJson(call.inputJson)}
-          </pre>
+          <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Changes</div>
+          <EditDiff edits={edits} />
         </>
+      ) : (
+        call.inputJson.trim() !== "" &&
+        call.inputJson.trim() !== "{}" && (
+          <>
+            <div className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
+              Request
+            </div>
+            <pre className="max-h-56 overflow-auto rounded-lg bg-sunken px-3 py-2 font-mono text-xs leading-5 text-fg-muted">
+              {toolKind(call) === "python"
+                ? pythonCode(call.inputJson) || prettyJson(call.inputJson)
+                : prettyJson(call.inputJson)}
+            </pre>
+          </>
+        )
       )}
       {call.result && (
         <>

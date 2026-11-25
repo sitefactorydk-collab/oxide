@@ -178,6 +178,59 @@ export interface TextResult {
   truncated: boolean;
 }
 
+export interface EditOptions {
+  /** The file's name or path, shown to the model (e.g. `site.php`). */
+  path?: string;
+  /** The file's current text. */
+  content: string;
+  /** What to change. */
+  request: string;
+  /** Instructions for the model. */
+  system?: string;
+  /** Other text the model should see first (e.g. the project's other files). */
+  context?: string;
+  /** Images the model sees with the request (screenshots). */
+  images?: FileInput[];
+  /** PDFs (and text files) the model reads with the request. */
+  documents?: FileInput[];
+  /** Output limit for an answer (default 16384 tokens). */
+  maxTokens?: number;
+  /** `"rewrite"` skips edit blocks and has the whole file written (most of it changes). */
+  mode?: "edit" | "rewrite";
+  /** Hears the steps: `edits`, `retry` (the first blocks didn't apply), `rewrite`. */
+  onStage?: (stage: "edits" | "retry" | "rewrite", note: string | null) => void;
+  /** Streams a whole-file rewrite: each new piece and the text so far. */
+  onText?: (delta: string, text: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface EditBlock {
+  old: string;
+  new: string;
+  replaceAll: boolean;
+}
+
+export interface EditResult {
+  /** The file's new text (the old text when nothing changed). */
+  content: string;
+  /** Whether `content` differs from the old text. */
+  changed: boolean;
+  /** The edit blocks that were applied (empty after a rewrite). */
+  edits: EditBlock[];
+  /** The changed lines of `content` (1-based `start`, `count` lines; 0 = lines removed). */
+  ranges: Array<{ start: number; count: number }>;
+  /** A short description, e.g. “2 edits applied: lines 4–6, line 20.” */
+  summary: string;
+  /** The file was written whole (asked for, or the edit blocks didn't apply). */
+  rewritten: boolean;
+  /** Why it was rewritten. */
+  reason?: string;
+  /** The first edit blocks didn't apply; corrected ones did. */
+  retried: boolean;
+  /** The chat model that answered. */
+  model: string | null;
+}
+
 export interface JsonOptions extends Omit<TextOptions, "onText"> {
   /** A JSON Schema the answer must match. */
   schema?: object;
@@ -238,6 +291,57 @@ export const ai = {
       { signal: o.signal },
     );
     return r.json;
+  },
+
+  /**
+   * Changes one text file with edit blocks: the model names exact passages and their
+   * replacements, so only those parts change. Blocks that don't apply go back to the model
+   * once with the error; as the last resort the whole file is written. A whole-file answer
+   * that was cut off fails rather than losing the end of the file.
+   */
+  async edit(o: EditOptions): Promise<EditResult> {
+    let all = "";
+    const r = await call<EditResult>(
+      "text.edit",
+      {
+        path: o.path,
+        content: o.content,
+        request: o.request,
+        system: o.system,
+        context: o.context,
+        images: o.images ? await Promise.all(o.images.map(encode)) : undefined,
+        documents: o.documents ? await Promise.all(o.documents.map(encode)) : undefined,
+        maxTokens: o.maxTokens,
+        mode: o.mode,
+        stream: Boolean(o.onText),
+      },
+      {
+        signal: o.signal,
+        onEvent: (e) => {
+          const ev = e as { type?: string; text?: string; stage?: string; note?: string | null };
+          if (ev.type === "delta" && typeof ev.text === "string") {
+            all += ev.text;
+            o.onText?.(ev.text, all);
+          } else if (
+            ev.type === "stage" &&
+            (ev.stage === "edits" || ev.stage === "retry" || ev.stage === "rewrite")
+          ) {
+            o.onStage?.(ev.stage, ev.note ?? null);
+          }
+        },
+      },
+    );
+    return {
+      content: r.content,
+      changed: r.changed === true,
+      edits: r.edits ?? [],
+      ranges: r.ranges ?? [],
+      summary: r.summary ?? "",
+      rewritten: r.rewritten === true,
+      reason: r.reason ?? undefined,
+      retried: r.retried === true,
+      model: r.model ?? null,
+    };
   },
 
   /** Generates images with the app's image model. */

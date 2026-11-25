@@ -245,7 +245,7 @@ async fn files_are_written_edited_renamed_listed_and_deleted() {
         json!({"path": "lib/csv.ts", "old_text": "= 1", "new_text": "= 2"}),
     )
     .await;
-    assert!(text_of(&out).contains("appears 2 times"));
+    assert!(text_of(&out).contains("found 2 times"), "{}", text_of(&out));
     let out = run(
         &f,
         &id,
@@ -264,6 +264,45 @@ async fn files_are_written_edited_renamed_listed_and_deleted() {
     )
     .await;
     assert!(out.is_error);
+    // Several edit blocks in one call, the second misquoted: nothing changes, and the error
+    // quotes the closest line.
+    let out = run(
+        &f,
+        &id,
+        BuilderOp::Edit,
+        json!({"path": "lib/csv.ts", "edits": [
+            {"old_text": "export const a = 2;", "new_text": "export const a = 3;"},
+            {"old_text": "export const bb = 2;", "new_text": "export const b = 3;"}
+        ]}),
+    )
+    .await;
+    assert!(out.is_error);
+    assert!(text_of(&out).contains("Edit 2 of 2"), "{}", text_of(&out));
+    assert!(
+        text_of(&out).contains("export const b = 2;"),
+        "{}",
+        text_of(&out)
+    );
+    let out = run(&f, &id, BuilderOp::Read, json!({"path": "lib/csv.ts"})).await;
+    assert_eq!(text_of(&out), "export const a = 2;\nexport const b = 2;\n");
+    let out = run(
+        &f,
+        &id,
+        BuilderOp::Edit,
+        json!({"path": "lib/csv.ts", "edits": [
+            {"old_text": "export const a = 2;", "new_text": "export const a = 3;"},
+            {"old_text": "export const b = 2;", "new_text": "export const b = 3;"}
+        ]}),
+    )
+    .await;
+    assert!(!out.is_error, "{}", text_of(&out));
+    assert!(
+        text_of(&out).starts_with("Edited lib/csv.ts: 2 edits applied: lines 1–2."),
+        "{}",
+        text_of(&out)
+    );
+    let out = run(&f, &id, BuilderOp::Read, json!({"path": "lib/csv.ts"})).await;
+    assert_eq!(text_of(&out), "export const a = 3;\nexport const b = 3;\n");
     // Renaming the entry file updates the manifest.
     let out = run(
         &f,
@@ -372,6 +411,25 @@ async fn checkpoints_follow_turns_and_saves_and_restore_goes_back() {
             (CheckpointKind::Start, "Start"),
         ]
     );
+    // Each checkpoint says what changed since the one before it.
+    assert!(cps[2].changes.is_empty());
+    let change = |c: &oxide_core::AppCheckpoint| {
+        c.changes
+            .iter()
+            .map(|x| (x.path.clone(), x.kind, x.added, x.removed))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        change(&cps[0]),
+        vec![(
+            "App.tsx".to_owned(),
+            oxide_core::FileChangeKind::Changed,
+            1,
+            1
+        )]
+    );
+    assert_eq!(change(&cps[1])[0].0, "App.tsx");
+    assert_eq!(change(&cps[1])[0].1, oxide_core::FileChangeKind::Changed);
     // Restore the start: the files come back and the red version is kept.
     let start = cps.last().expect("start").id.clone();
     let restored = f.builder.restore(&id, &start).await.expect("restore");

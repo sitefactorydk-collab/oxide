@@ -117,6 +117,89 @@ describe("tool calls in a reply", () => {
     expect(within(reply).getByText("Wrote 12 bytes")).toBeInTheDocument();
   });
 
+  it("shows edit blocks as a diff on the approval card and in the call's details", async () => {
+    renderApp("/chat/c2", { backend: { replies: "hold" } });
+    await screen.findByText(/warm neutral palette/);
+    await send("Make the title navy");
+    const live = await screen.findByLabelText("Reply in progress");
+    await within(live).findByText("Partial");
+    const rid = heldReplyId("c2");
+    const inputJson = JSON.stringify({
+      path: "style.css",
+      edits: [
+        { old_str: ".title {\n  color: red;\n}", new_str: ".title {\n  color: navy;\n}" },
+        { old_str: "  margin: 0;", new_str: "  margin: 4px;" },
+      ],
+    });
+    act(() => {
+      emitStream("c2", { type: "toolUse", id: "t1", name: "edit_file" });
+      emitStream("c2", {
+        type: "toolCall",
+        id: "t1",
+        name: "edit_file",
+        server: null,
+        tool: "edit_file",
+        title: "Edit file",
+        inputJson,
+      });
+      askApproval({
+        ...request(rid),
+        server: null,
+        tool: "edit_file",
+        title: "Edit file",
+        inputJson,
+      });
+    });
+    const card = await screen.findByRole("group", { name: "Approve Edit file" });
+    expect(within(card).queryByLabelText("Arguments")).not.toBeInTheDocument();
+    const diff = within(card).getByLabelText("Changes to style.css");
+    const rows = [...diff.querySelectorAll("[data-diff]")].map((r) => [
+      r.getAttribute("data-diff"),
+      r.textContent,
+    ]);
+    // Only the changed lines, with a little context, not the whole passages.
+    expect(rows).toEqual([
+      ["hunk", "@@ Edit 1 of 2 @@"],
+      ["same", " .title {"],
+      ["remove", "-  color: red;"],
+      ["add", "+  color: navy;"],
+      ["same", " }"],
+      ["hunk", "@@ Edit 2 of 2 @@"],
+      ["remove", "-  margin: 0;"],
+      ["add", "+  margin: 4px;"],
+    ]);
+    expect(card).toHaveTextContent("+2−2");
+    fireEvent.click(within(card).getByRole("button", { name: "Allow once" }));
+
+    act(() => {
+      finishReplyWith("c2", [
+        { type: "text", text: "Partial" },
+        {
+          type: "toolUse",
+          id: "t1",
+          name: "edit_file",
+          inputJson,
+          server: null,
+          tool: "edit_file",
+        },
+        {
+          type: "toolResult",
+          toolUseId: "t1",
+          content: [
+            { type: "text", text: "Edited style.css: 2 edits applied: lines 1–3, line 6." },
+          ],
+          isError: false,
+        },
+        { type: "text", text: "Done." },
+      ]);
+    });
+    const reply = (await screen.findByText("Done.")).closest("article") as HTMLElement;
+    // The call's details show the diff, not the JSON.
+    fireEvent.click(within(reply).getByRole("button", { name: /style\.css/ }));
+    expect(await within(reply).findByLabelText("Changes to style.css")).toBeInTheDocument();
+    expect(within(reply).getByText(/2 edits applied/)).toBeInTheDocument();
+  });
+
   it("denies, and offers waiting approvals the window didn't see live", async () => {
     renderApp("/chat/c2");
     await screen.findByText(/warm neutral palette/);
