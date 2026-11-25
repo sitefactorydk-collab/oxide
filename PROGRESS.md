@@ -115,6 +115,12 @@ Committed `bafa407` (every check green, 13:12). **Measured (the user's run, 13:1
 
 **Windows run 1 (`no-thinking.cmd`, 13:33–13:38):** everything green except one Vitest test this change doesn't touch: `Artifacts.test.tsx` “render documents, SVG, Mermaid, and HTML…” didn't find the demo chat within Testing Library's 1 s default (a timing flake under load; it passed in every earlier run). Its `heldReply` helper now waits up to 5 s. Not committed; run `no-thinking.cmd` again.
 
+**Windows run 2:** every check green; committed `ca384a3` (13:45). **Measured (13:47–13:50, the same kind of change):** LM Studio honours the switch for `google/gemma-4-12b-qat` (`thinking_off=true`, `thinking_s=0.0`, no “thinking switch refused”). `admin.php` blocks 17 s (one block missed; the retry fixed it in 6 s), `site.php` blocks 30 s, against 45 s and 124 s with thinking; the file steps went from ~170 s to ~53 s. The plan, still thinking, took 145 s (139 s thinking, 24.6k characters) and is now most of the ~3.3 minutes. Reading the prompt: 1–12 s for ~10k tokens, writing ~53 tokens/s.
+
+**Follow-up 4 (2026-11-25 13:54, the user's request): thinking switches in the apps' Settings.** `scripts\win\thinking-settings.cmd`, message `logs\commit-msg-thinking-settings.txt`. Both creator apps' **Settings** dialog has a **Thinking** section: “Think before planning a change” (`Settings.thinkPlan`, default on) and “Think before writing or editing each file” (`thinkFiles`, default off), passed as `thinking` to the plan's `ai.json` and to each file's `ai.text` / `ai.edit` (`true` = the model's default, `false` = asked not to think). Saved with the other settings in the app's storage; older saved settings get the defaults. Vitest: the defaults, switching both, saved, and reaching the requests.
+
+**Windows run 1 (`thinking-settings.cmd`, 14:14–14:16):** everything green except the new Vitest test (a test mistake: it looked for **Settings** in the editor, but the button is on the addon list). The test now switches the settings on the list, then opens the addon. Not committed; run `thinking-settings.cmd` again.
+
 ## Phase 25 — Plugin creator apps (SP Page Builder, Elementor) — 2026-11-22
 Status: **built**, waiting for the Windows run (`scripts\win\creator-apps.cmd`) and the manual checks.
 

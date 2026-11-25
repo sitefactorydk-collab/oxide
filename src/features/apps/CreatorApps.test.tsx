@@ -445,7 +445,7 @@ describe("the plugin creator apps", () => {
     expect(ctx).toContain("## The plan");
     // The file requests ask for no thinking; the plan keeps the model's default.
     expect((sdk.ai.edit.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(false);
-    expect((sdk.ai.json.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBeUndefined();
+    expect((sdk.ai.json.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(true);
     // The second edit sees the first one's result.
     expect(asked[1]?.context).toContain(after);
 
@@ -461,6 +461,43 @@ describe("the plugin creator apps", () => {
       ),
     ).toBeInTheDocument();
     expect(sdk.ai.text).not.toHaveBeenCalled();
+  });
+
+  it("SP Page Builder: Settings turn thinking on or off for the plan and the files", async () => {
+    const { api } = memoryFolder(inFolder("plg_sppagebuilder_c10faq", sppbFiles()));
+    const sdk = fakeSdk(api);
+    mount(sppbApp, sppbBench, sdk);
+    // Settings is on the addon list. Defaults: think before planning, not before each file.
+    // Switch both.
+    await screen.findByRole("button", { name: "Edit C10 FAQ widget" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const plan = await screen.findByRole("checkbox", { name: /Think before planning/ });
+    const files = screen.getByRole("checkbox", { name: /Think before writing or editing/ });
+    expect(plan).toBeChecked();
+    expect(files).not.toBeChecked();
+    fireEvent.click(plan);
+    fireEvent.click(files);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(sdk.storage.set).toHaveBeenCalledWith(
+        "settings",
+        expect.objectContaining({ thinkPlan: false, thinkFiles: true }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit C10 FAQ widget" }));
+    await screen.findByRole("heading", { level: 1, name: /C10 FAQ widget/ });
+    sdk.ai.json.mockResolvedValue({
+      summary: "Done.",
+      files: [{ path: "addons/c10faq/site.php", action: "edit", purpose: "a subtitle" }],
+    });
+    sdk.ai.edit.mockResolvedValue(edited("<?php // edited\n"));
+    fireEvent.change(screen.getByLabelText("What to change"), {
+      target: { value: "Add a subtitle" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Apply changes/ }));
+    expect(await screen.findByText("Done.")).toBeInTheDocument();
+    expect((sdk.ai.json.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(false);
+    expect((sdk.ai.edit.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(true);
   });
 
   it("SP Page Builder: a planned rewrite writes the whole file through ai.edit", async () => {

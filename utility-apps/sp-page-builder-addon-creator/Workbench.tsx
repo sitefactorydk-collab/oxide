@@ -52,7 +52,16 @@ export interface Settings {
   vendor: string;
   /** Added to every request to the model. */
   instructions: string;
+  /** Let the model think before it plans a change (better plans, slower with local models). */
+  thinkPlan: boolean;
+  /** Let the model think before it writes or edits each file (usually not needed). */
+  thinkFiles: boolean;
 }
+
+/** The settings that are text fields. */
+type TextSetting = {
+  [K in keyof Settings]: Settings[K] extends string ? K : never;
+}[keyof Settings];
 
 /** A text file of a plugin (`content`), or a binary one (`content: null`). */
 export interface PluginFile {
@@ -207,6 +216,8 @@ const DEFAULT_SETTINGS: Settings = {
   category: "",
   vendor: "",
   instructions: "",
+  thinkPlan: true,
+  thinkFiles: false,
 };
 
 const PLAN_SCHEMA = {
@@ -940,6 +951,8 @@ export function Workbench({ platform }: { platform: Platform }) {
         images,
         schema: PLAN_SCHEMA,
         maxTokens: PLAN_TOKENS,
+        // Settings → Thinking: false asks the model not to think first.
+        thinking: settings.thinkPlan,
         signal,
       });
       run.summary = plan.summary?.trim() ?? "";
@@ -970,9 +983,9 @@ export function Workbench({ platform }: { platform: Platform }) {
             prompt: `${planned}\n\n${FILE_RULES(step)}`,
             images,
             maxTokens: FILE_TOKENS,
-            // The plan did the thinking; a file is written from it (local reasoning models
-            // otherwise think for minutes per file).
-            thinking: false,
+            // Settings → Thinking (off by default: the plan did the thinking, and local
+            // reasoning models otherwise think for minutes per file).
+            thinking: settings.thinkFiles,
             signal,
             onText: (_delta, all) => show(i, { chars: all.length }),
           });
@@ -1006,7 +1019,7 @@ export function Workbench({ platform }: { platform: Platform }) {
               images,
               mode: step.action === "rewrite" ? "rewrite" : "edit",
               maxTokens: FILE_TOKENS,
-              thinking: false,
+              thinking: settings.thinkFiles,
               signal,
               onStage: (stage) =>
                 show(i, {
@@ -2186,7 +2199,7 @@ function SettingsDialog({
   onSaveSettings: (s: Settings) => Promise<void>;
 }) {
   const [s, setS] = useState(settings);
-  const field = (key: keyof Settings, label: string, placeholder: string, help?: string) => (
+  const field = (key: TextSetting, label: string, placeholder: string, help?: string) => (
     <label className="block space-y-1">
       <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">{label}</span>
       <input
@@ -2238,6 +2251,44 @@ function SettingsDialog({
             onChange={(e) => setS({ ...s, instructions: e.target.value })}
           />
         </label>
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+            Thinking
+          </legend>
+          <label className="flex items-start gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={s.thinkPlan}
+              onChange={(e) => setS({ ...s, thinkPlan: e.target.checked })}
+            />
+            <span>
+              Think before planning a change
+              <span className="block text-xs text-neutral-500">
+                Better plans for bigger changes; with a local model this can take minutes.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={s.thinkFiles}
+              onChange={(e) => setS({ ...s, thinkFiles: e.target.checked })}
+            />
+            <span>
+              Think before writing or editing each file
+              <span className="block text-xs text-neutral-500">
+                Usually not needed, since the plan already says what goes in each file. Much slower
+                with a local model.
+              </span>
+            </span>
+          </label>
+          <span className="block text-xs text-neutral-500">
+            Off asks the model not to think first. Models that can't switch it off answer as they
+            always do.
+          </span>
+        </fieldset>
         <div className="flex justify-end gap-2">
           <button type="button" className={btn} onClick={onClose}>
             Cancel
