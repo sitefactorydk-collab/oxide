@@ -28,7 +28,8 @@ async function send(text: string) {
 /** A held reply in c2, ready for tool events. */
 async function heldReply(text = "Make me something") {
   renderApp("/chat/c2", { backend: { replies: "hold" } });
-  await screen.findByText(/warm neutral palette/);
+  // The demo chat can take a while to appear when every test file runs at once.
+  await screen.findByText(/warm neutral palette/, undefined, { timeout: 5000 });
   await send(text);
   const live = await screen.findByLabelText("Reply in progress");
   await within(live).findByText("Partial");

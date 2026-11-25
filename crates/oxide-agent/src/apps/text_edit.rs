@@ -121,7 +121,8 @@ impl AppRuntime {
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_MAX_TOKENS);
         let media = |mut v: Value| {
-            for key in ["images", "documents"] {
+            // Media, and `thinking` (false: no thinking for these requests).
+            for key in ["images", "documents", "thinking"] {
                 if let Some(m) = p.get(key) {
                     v[key] = m.clone();
                 }

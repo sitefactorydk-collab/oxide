@@ -702,11 +702,16 @@ impl AppRuntime {
         }
         let stream = p.get("stream").and_then(Value::as_bool).unwrap_or(false);
         let want_thinking = p.get("thinking").and_then(Value::as_bool).unwrap_or(false);
+        // `thinking: false` asked for explicitly: switch it off on local OpenAI-compatible
+        // servers too, whose models' switch isn't known (LM Studio's Gemma 4 thinks for
+        // minutes otherwise). A server that refuses the switch is asked again without it.
+        let force_off = p.get("thinking").and_then(Value::as_bool) == Some(false)
+            && !matches!(config.kind, ProviderKind::OpenAi | ProviderKind::Anthropic);
         // The schema also goes to the provider as structured output (OpenAI-compatible
         // `response_format`, Anthropic `output_config.format`), so servers that constrain
         // sampling with it (LM Studio, llama.cpp) can only answer with matching JSON.
         let schema = json_mode.clone().flatten();
-        let base = |messages: Vec<ChatMessage>, structured: bool| {
+        let base = |messages: Vec<ChatMessage>, structured: bool, off: bool| {
             let mut r = ChatRequest::new(model, messages);
             r.system = (!system.is_empty()).then(|| system.clone());
             if structured {
@@ -718,11 +723,12 @@ impl AppRuntime {
                 .get("maxTokens")
                 .and_then(Value::as_u64)
                 .map(|n| n.clamp(16, 200_000) as u32);
-            if !want_thinking
-                && ((config.kind == ProviderKind::Anthropic
-                    && caps.thinking == ThinkingStyle::Adaptive
-                    && caps.thinking_off)
-                    || caps.thinking == ThinkingStyle::Switch)
+            if off
+                || !want_thinking
+                    && ((config.kind == ProviderKind::Anthropic
+                        && caps.thinking == ThinkingStyle::Adaptive
+                        && caps.thinking_off)
+                        || caps.thinking == ThinkingStyle::Switch)
             {
                 r.thinking = Thinking::Off;
             }
@@ -765,12 +771,22 @@ impl AppRuntime {
             }
         };
         let live = stream && json_mode.is_none();
-        let (text, stop) = match run(base(messages.clone(), true), live).await {
+        let mut off = force_off;
+        let mut first = run(base(messages.clone(), true, off), live).await;
+        if let Err(e) = &first
+            && off
+        {
+            // A server that refuses the thinking switch: ask again with the model's default.
+            tracing::info!(model = %model_id, error = %e.message, "thinking switch refused");
+            off = false;
+            first = run(base(messages.clone(), true, off), live).await;
+        }
+        let (text, stop) = match first {
             Err(e) if schema.is_some() => {
                 // A server that refuses structured output: ask once more without it (the
                 // system prompt still asks for the JSON).
                 tracing::info!(model = %model_id, error = %e.message, "structured output refused");
-                run(base(messages.clone(), false), live).await?
+                run(base(messages.clone(), false, off), live).await?
             }
             r => r?,
         };
@@ -802,7 +818,7 @@ impl AppRuntime {
                 retry.push(ChatMessage::user(format!(
                     "That wasn't usable: {first}. Reply again with only the JSON value."
                 )));
-                let (again, stop) = run(base(retry, true), false).await?;
+                let (again, stop) = run(base(retry, true, off), false).await?;
                 if stop == Some(StopReason::MaxTokens) && parse_json_answer(&again).is_err() {
                     return Err(failed(cut_off(again.chars().count())));
                 }

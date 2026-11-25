@@ -308,6 +308,7 @@ describe("the plugin creator apps", () => {
     expect(ed.request).toContain("a title color field");
     expect(ed.context).toContain("## The plan");
     expect(ed.context).toContain("--- FILE: addons/c10faq/site.php ---");
+    expect((sdk.ai.text.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(false);
     const second = (sdk.ai.text.mock.calls[0]?.[0] as { prompt: string }).prompt;
     expect(second).toContain("Write the complete content of addons/c10faq/assets/css/c10faq.css");
     expect(second).toContain("--- FILE: addons/c10faq/admin.php ---\n<?php // with color");
@@ -442,6 +443,9 @@ describe("the plugin creator apps", () => {
     expect(ctx).not.toContain("--- FILE: services/provider.php ---");
     expect(ctx).toMatch(/other files \(not shown here[^)]*\): .*services\/provider\.php/);
     expect(ctx).toContain("## The plan");
+    // The file requests ask for no thinking; the plan keeps the model's default.
+    expect((sdk.ai.edit.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBe(false);
+    expect((sdk.ai.json.mock.calls[0]?.[0] as { thinking?: boolean }).thinking).toBeUndefined();
     // The second edit sees the first one's result.
     expect(asked[1]?.context).toContain(after);
 

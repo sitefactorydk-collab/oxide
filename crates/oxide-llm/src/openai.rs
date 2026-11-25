@@ -354,6 +354,11 @@ pub(crate) async fn request_body(kind: ProviderKind, req: &ChatRequest) -> Resul
             "chat_template_kwargs".into(),
             json!({ "enable_thinking": false }),
         );
+        // LM Studio (0.4.8+) also reads `reasoning_effort` on this endpoint, and some of its
+        // models (Gemma 4) ignore the chat template switch.
+        if kind == ProviderKind::LmStudio {
+            body.insert("reasoning_effort".into(), json!("none"));
+        }
     }
     if let Some(schema) = &req.json_schema {
         // OpenAI's structured outputs shape, which LM Studio and llama.cpp servers take too.
@@ -977,6 +982,15 @@ mod tests {
             json!({"enable_thinking": false})
         );
         assert!(body.get("reasoning_effort").is_none());
+        // LM Studio gets reasoning_effort "none" as well (Gemma 4 ignores the template switch).
+        let lm = request_body(ProviderKind::LmStudio, &req)
+            .await
+            .expect("builds");
+        assert_eq!(
+            lm["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+        assert_eq!(lm["reasoning_effort"], "none");
         let content = body["messages"][0]["content"].as_str().expect("text only");
         assert!(content.contains("can't see images"), "{content}");
         assert!(content.contains("scan.pdf"), "{content}");

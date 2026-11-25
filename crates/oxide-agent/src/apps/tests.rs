@@ -932,3 +932,35 @@ async fn ai_edit_keeps_the_blocks_that_match_and_asks_only_about_the_rest() {
     assert_eq!(r["edits"].as_array().map(Vec::len), Some(2));
     assert_eq!(f.fake.requests().len(), 4);
 }
+
+#[tokio::test]
+async fn thinking_false_switches_thinking_off_and_survives_a_server_that_refuses_it() {
+    let f = fixture(vec![
+        vec![text("quick")],
+        vec![Step::Reject(
+            400,
+            "reasoning_effort is not supported for this model",
+        )],
+        vec![text("still answered")],
+        vec![text("default")],
+    ])
+    .await;
+    allow(&f, META, &[AppCapability::Text]).await;
+    let ask = |id: &'static str, p: Value| f.runtime.call(META, id, "text.generate", p, quiet());
+    let r = ask("a", json!({ "prompt": "hi", "thinking": false }))
+        .await
+        .expect("off");
+    assert_eq!(r["text"], "quick");
+    assert_eq!(f.fake.requests()[0].thinking, oxide_llm::Thinking::Off);
+    // Refused: asked again with the model's own default.
+    let r = ask("b", json!({ "prompt": "hi", "thinking": false }))
+        .await
+        .expect("again");
+    assert_eq!(r["text"], "still answered");
+    let reqs = f.fake.requests();
+    assert_eq!(reqs[1].thinking, oxide_llm::Thinking::Off);
+    assert_eq!(reqs[2].thinking, oxide_llm::Thinking::Default);
+    // Not asked for: the model's default, as before.
+    ask("c", json!({ "prompt": "hi" })).await.expect("default");
+    assert_eq!(f.fake.requests()[3].thinking, oxide_llm::Thinking::Default);
+}

@@ -970,6 +970,9 @@ export function Workbench({ platform }: { platform: Platform }) {
             prompt: `${planned}\n\n${FILE_RULES(step)}`,
             images,
             maxTokens: FILE_TOKENS,
+            // The plan did the thinking; a file is written from it (local reasoning models
+            // otherwise think for minutes per file).
+            thinking: false,
             signal,
             onText: (_delta, all) => show(i, { chars: all.length }),
           });
@@ -1003,6 +1006,7 @@ export function Workbench({ platform }: { platform: Platform }) {
               images,
               mode: step.action === "rewrite" ? "rewrite" : "edit",
               maxTokens: FILE_TOKENS,
+              thinking: false,
               signal,
               onStage: (stage) =>
                 show(i, {

@@ -197,6 +197,11 @@ export interface EditOptions {
   maxTokens?: number;
   /** `"rewrite"` skips edit blocks and has the whole file written (most of it changes). */
   mode?: "edit" | "rewrite";
+  /**
+   * `false` asks the model not to think first (much faster with local reasoning models; a
+   * server that refuses the switch answers with its default). Left out: the model's default.
+   */
+  thinking?: boolean;
   /** Hears the steps: `edits`, `retry` (the first blocks didn't apply), `rewrite`. */
   onStage?: (stage: "edits" | "retry" | "rewrite", note: string | null) => void;
   /** Streams a whole-file rewrite: each new piece and the text so far. */
@@ -313,6 +318,7 @@ export const ai = {
         documents: o.documents ? await Promise.all(o.documents.map(encode)) : undefined,
         maxTokens: o.maxTokens,
         mode: o.mode,
+        thinking: o.thinking,
         stream: Boolean(o.onText),
       },
       {
