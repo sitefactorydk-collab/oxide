@@ -49,7 +49,7 @@ Utility Apps are small, focused AI tools — a translator, an SEO helper, a plug
 | AI Meta Tag Generator | SEO | Three optimized meta titles and descriptions for a page, from its URL or pasted HTML |
 | llms.txt Generator | SEO | Crawls your site, lets AI pick the pages worth reading, and bundles `llms.txt` and `llms-full.txt` |
 | AI Plugin Creator | Code | Generates installable WordPress plugins, Joomla plugins and modules, and Drupal modules, or modifies one you upload as a ZIP |
-| SP Page Builder Addon Creator | Code | Makes and edits SP Page Builder 6 addons as installable Joomla 5/6 plugins from a description and screenshots, in a folder you choose: a browser of your addons (edit, clone, delete, import a ZIP), a file tree, a code editor, and **Download installable zip** |
+| SP Page Builder Addon Creator | Code | Makes and edits SP Page Builder 6 addons as installable Joomla 5/6 plugins from a description and screenshots, in a folder you choose: a browser of your addons (edit, clone, delete, import a ZIP), a file tree, a code editor, and **Download installable zip**. Changes are planned first and then made file by file with edit blocks; **Settings → Thinking** turns the model's thinking on or off for the plan and for each file |
 | Elementor Widget Creator | Code | The same for Elementor widgets as installable WordPress plugins (classic widgets for Elementor 3 and 4) |
 | AI HTML Table from Image | Code | Turns a screenshot or photo of a table into clean HTML table code |
 | AI SVG Creator | Design | Creates and refines SVG graphics and icons from a description, a reference image or an SVG, optionally animated |
@@ -109,6 +109,7 @@ Oxide treats a model on your own computer as an equal to a cloud model, not a fa
 
 **Agentic work**
 - Folders you share with a chat, with file tools confined to them.
+- Edit blocks: models change existing files (and artifacts, and apps in the builder) by replacing exact passages, so only those parts change, with a red/green diff in the chat. A whole-file rewrite is the fallback.
 - A task list, and a session panel showing progress and what the chat used.
 - Managed Python (`uv`, installed on first use), shell commands (off by default), and a Docker sandbox per chat.
 - A browser agent (Browser-Use) and a Chrome extension that lets Oxide act in your own browser.
