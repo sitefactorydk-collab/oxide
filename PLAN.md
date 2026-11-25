@@ -554,6 +554,8 @@ Requested by the user on 2026-11-22: two built-in Utility Apps, **SP Page Builde
 
 **Exit:** on Windows: in each app, choose a folder; make a new addon/widget from a description (and a screenshot with a vision model); edit a file by hand and save; change it with AI and undo; clone it and check the copy's machine name; import the user's `plg_sppagebuilder_c10faq` ZIP (SP Page Builder) and see it in the browser with its name and version; download the installable ZIP and install it in Joomla 5/6 with SP Page Builder 6 Pro (the addon appears in its category) and in WordPress with Elementor (the widget appears in the panel); delete one.
 
+*Done 2026-11-25* (see PROGRESS.md; `fb2626e` and follow-ups, every manual check confirmed by the user). Deviations: a new SDK capability `folder` instead of files.pick/save; the workbench is an identical file in each app; Delete is for good (the app asks first); changes are planned first and then made file by file (output limits of local models), with edit blocks since Phase 26.
+
 
 ### Phase 26 — Edit blocks everywhere (with full rewrites as the fallback)
 Requested by the user on 2026-11-23, after asking how the plugin creator apps change a file (they rewrite every file they touch in full): changes to existing files should work **exactly like Claude Code's approach**: the model sends edit blocks ("this exact existing text" → "this new text") and only those parts change; a whole-file rewrite is the fallback. **In all of Oxide, not only the two new apps.**
